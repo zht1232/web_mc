@@ -31,6 +31,11 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   wolf: { model: WolfModel, texture: 'wolf/wolf' },
   rabbit: { model: RabbitModel, texture: 'rabbit/rabbit_brown' },
   bat: { model: BatModel, texture: 'bat/bat' },
+  // Zombie / skeleton variants share the base humanoid model; only the skin differs.
+  husk: { model: ZombieModel, texture: 'zombie/husk' },
+  drowned: { model: ZombieModel, texture: 'zombie/drowned' },
+  stray: { model: SkeletonModel, texture: 'skeleton/stray' },
+  bogged: { model: SkeletonModel, texture: 'skeleton/bogged' },
   // QuadrupedModel is exported for standalone use / as a fallback.
   quadruped: { model: QuadrupedModel, texture: 'pig/pig_temperate' },
 };

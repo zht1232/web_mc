@@ -144,6 +144,9 @@ export class EntityRenderDispatcher {
     void this.init(base).catch(() => { /* headless / missing assets are non-fatal */ });
   }
 
+  /** True when this entity type has a renderer (types without one would spawn invisible). */
+  canRender(typeName: string): boolean { return this.renderers.has(typeName); }
+
   /** Loads all entity textures. Safe to call multiple times (idempotent). */
   init(base = '/mc/textures/entity'): Promise<void> {
     if (!this.loading) this.loading = this.loadTextures(base);

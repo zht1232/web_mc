@@ -29,6 +29,7 @@ import { setSpawnBlockTags } from '../vanilla/world/entity/SpawnPlacements.js';
 import { ExperienceOrb } from '../vanilla/world/entity/ExperienceOrb.js';
 import { LivingEntity } from '../vanilla/world/entity/LivingEntity.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
+import { ENTITY_TYPES } from '../vanilla/world/entity/EntityType.js';
 import { ScreenManager } from './gui/ScreenManager.js';
 import type { ContainerMenuLike, GuiOptions, ScreenRef } from './gui/Types.js';
 import { SurvivalState, loadWorldData, type PlayerMoved } from '../vanilla/gameplay/SurvivalState.js';
@@ -310,6 +311,8 @@ export class Game {
 
     this.onStatus?.('Loading entity textures', 0.96);
     this.entityRenderer = new EntityRenderDispatcher(this.gl);
+    // A type without a renderer would spawn invisible and still attack: take it out of natural spawning and /summon.
+    ENTITY_TYPES.forEach((t) => { if (t.factory && !this.entityRenderer.canRender(t.name)) t.factory = null; });
     await this.entityRenderer.init('/mc/textures/entity');
 
     // Environment passes (sky / clouds / weather) + particles + audio.

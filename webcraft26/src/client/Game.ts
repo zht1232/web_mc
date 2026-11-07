@@ -42,6 +42,7 @@ import { CloudRenderer } from './renderer/environment/CloudRenderer.js';
 import { WeatherRenderer } from './renderer/environment/WeatherRenderer.js';
 import type { LevelLike } from './renderer/environment/EnvCommon.js';
 import { ParticleEngine, spawnBlockBreakParticles } from './particle/ParticleEngine.js';
+import { AmbientParticles } from './particle/AmbientParticles.js';
 import { SoundEngine } from './audio/SoundEngine.js';
 import { WorldSaveManager, type LoadedWorld } from './world/save/WorldSaveManager.js';
 import { Autosave } from './world/save/Autosave.js';
@@ -119,6 +120,8 @@ export class Game {
   cloudRenderer!: CloudRenderer;
   weatherRenderer!: WeatherRenderer;
   particles!: ParticleEngine;
+  /** Torch flames, lava pops, fire smoke: ClientLevel.animateTick sampling around the player. */
+  ambientParticles!: AmbientParticles;
   sounds!: SoundEngine;
   /** First-person arm / held item / screen effects (hand package). */
   handRenderer!: HandRenderer;
@@ -313,6 +316,7 @@ export class Game {
     this.particles = new ParticleEngine(this.gl, 4000);
     ParticleEngine.setInstance(this.particles);
     this.particles.blockLayerForState = (state) => this.blockLayerFor(state);
+    this.ambientParticles = new AmbientParticles(this.mc);
     await Promise.all([
       this.skyRenderer.init(),
       this.cloudRenderer.init(),
@@ -1273,6 +1277,7 @@ export class Game {
     this.playStepSound();
 
     this.particles.tick();
+    this.ambientParticles.tick(this.level, this.player.pos.x, this.player.eyeY, this.player.pos.z);
     const cam = {
       x: this.player.pos.x, y: this.player.eyeY, z: this.player.pos.z,
       yaw: this.player.yaw, pitch: this.player.pitch,

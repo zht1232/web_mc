@@ -259,8 +259,10 @@ precision highp float;
 layout(location = 0) in vec3 aPos;
 uniform mat4 uViewProj;
 uniform vec3 uOffset;
+uniform vec2 uClipOffset;   // sub-pixel shift in NDC, used to thicken GL_LINES (always 1px wide)
 void main() {
   gl_Position = uViewProj * vec4(aPos + uOffset, 1.0);
+  gl_Position.xy += uClipOffset * gl_Position.w;
 }`;
 
 export const LINE_FRAG = `#version 300 es

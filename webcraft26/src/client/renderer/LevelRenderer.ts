@@ -859,7 +859,14 @@ export class LevelRenderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.bindVertexArray(vao);
-    gl.drawArrays(gl.LINES, 0, p.length / 3);
+    // Vanilla draws the hit outline ~2.5px wide (LevelRenderer#submitHitOutline); GL lines are 1px and FXAA
+    // nearly erases a 1px line, so draw it four times shifted by half a pixel to get a crisp 2px line.
+    const px = 1 / Math.max(1, gl.drawingBufferWidth), py = 1 / Math.max(1, gl.drawingBufferHeight);
+    for (const [sx, sy] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) {
+      this.line.set2f('uClipOffset', sx * px * 2, sy * py * 2);
+      gl.drawArrays(gl.LINES, 0, p.length / 3);
+    }
+    this.line.set2f('uClipOffset', 0, 0);
     gl.disable(gl.BLEND);
   }
   private selectionVao: WebGLVertexArrayObject | null = null;

@@ -113,12 +113,28 @@ export class ClientLevel {
     this.generator.generateChunk(chunk);
     this.chunks.set(key, chunk);
     this.light.lightChunk(chunk);
+    this.markNeighboursDirty(cx, cz);
     return chunk;
   }
 
   addChunk(chunk: LevelChunk): void {
     this.chunks.set(chunkKey(chunk.x, chunk.z), chunk);
     this.light.lightChunk(chunk);
+    this.markNeighboursDirty(chunk.x, chunk.z);
+  }
+
+  /**
+   * A chunk that just arrived changes what the border faces of its 8 neighbours should look like
+   * (water/leaf walls, ambient occlusion, smooth light), so they must remesh (vanilla: LevelRenderer.onChunkLoaded).
+   */
+  private markNeighboursDirty(cx: number, cz: number): void {
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dz === 0) continue;
+        const n = this.chunks.get(chunkKey(cx + dx, cz + dz));
+        if (n) n.dirty = true;
+      }
+    }
   }
 
   // ---- chunk unloading ----------------------------------------------------

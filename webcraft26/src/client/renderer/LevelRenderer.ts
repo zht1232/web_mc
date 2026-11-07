@@ -210,25 +210,31 @@ export class LevelRenderer {
     const r = this.renderDistance;
 
     // enqueue dirty chunks
+    let pushed = false;
     for (let dz = -r; dz <= r; dz++) {
       for (let dx = -r; dx <= r; dx++) {
         const chunk = level.getChunk(cx + dx, cz + dz);
         if (!chunk || !chunk.dirty) continue;
+        if (!this.neighboursReady(level, chunk, cx, cz, r, started)) continue;
         chunk.dirty = false;
+        this.waitingSince.delete(chunk);
         for (let sy = chunk.minSectionY; sy <= chunk.maxSectionY; sy++) {
           this.rebuildQueue.push({ chunkX: chunk.x, chunkZ: chunk.z, sectionY: sy });
         }
+        pushed = true;
       }
     }
 
     if (!this.rebuildQueue.length) { this.lastMeshMs = 0; return; }
 
-    // nearest first
-    this.rebuildQueue.sort((a, b) => {
-      const da = (a.chunkX - cx) ** 2 + (a.chunkZ - cz) ** 2;
-      const db = (b.chunkX - cx) ** 2 + (b.chunkZ - cz) ** 2;
-      return da - db;
-    });
+    // nearest first (only needed when something was added; sorting thousands of entries every frame is not free)
+    if (pushed) {
+      this.rebuildQueue.sort((a, b) => {
+        const da = (a.chunkX - cx) ** 2 + (a.chunkZ - cz) ** 2;
+        const db = (b.chunkX - cx) ** 2 + (b.chunkZ - cz) ** 2;
+        return da - db;
+      });
+    }
 
     const tints = this.tintSource(level);
     let built = 0;
@@ -239,6 +245,30 @@ export class LevelRenderer {
     }
     this.lastMeshMs = performance.now() - started;
     this.meshCount = built;
+  }
+
+  /** Chunk -> first time it was found waiting for a neighbour (see neighboursReady). */
+  private readonly waitingSince = new WeakMap<object, number>();
+
+  /**
+   * A section is meshed from an 18x18x18 copy of its surroundings, and a missing neighbour chunk reads as
+   * open air, so faces on the chunk border would be emitted. Opaque terrain hides them, but they show up
+   * as walls inside water and leaves. Vanilla remeshes when the neighbour arrives; we additionally hold
+   * the first mesh back until the 4 orthogonal neighbours that are going to be loaded (inside the view
+   * radius) exist, so each chunk is normally meshed once instead of up to five times while streaming in.
+   * Gives up after 6 s so a chunk whose neighbour failed to generate still gets drawn.
+   */
+  private neighboursReady(level: ClientLevel, chunk: { x: number; z: number }, cx: number, cz: number, r: number, now: number): boolean {
+    for (let i = 0; i < 4; i++) {
+      const nx = chunk.x + (i === 0 ? 1 : i === 1 ? -1 : 0);
+      const nz = chunk.z + (i === 2 ? 1 : i === 3 ? -1 : 0);
+      if (level.hasChunk(nx, nz)) continue;
+      if (Math.max(Math.abs(nx - cx), Math.abs(nz - cz)) > r) continue; // never requested: edge of the view
+      let since = this.waitingSince.get(chunk);
+      if (since === undefined) { since = now; this.waitingSince.set(chunk, now); }
+      if (now - since < 6000) return false;
+    }
+    return true;
   }
 
   private buildSection(level: ClientLevel, chunkX: number, chunkZ: number, sy: number, tints: TintSource): void {

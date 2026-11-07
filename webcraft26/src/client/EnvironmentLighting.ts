@@ -19,8 +19,8 @@ function argb(r: number, g: number, b: number, a = 255): number {
   return ((a & 255) << 24 | (r & 255) << 16 | (g & 255) << 8 | (b & 255)) >>> 0;
 }
 
-/** Vanilla ARGB.colorFromFloat, input 0..1 */
-function colorFromFloat(r: number, g: number, b: number, a = 1): number {
+/** Vanilla ARGB.colorFromFloat(alpha, red, green, blue), input 0..1. Mind the argument order. */
+function colorFromFloat(a: number, r: number, g: number, b: number): number {
   return argb(Math.round(r * 255), Math.round(g * 255), Math.round(b * 255), Math.round(a * 255));
 }
 

@@ -59,9 +59,26 @@ export interface PlayerMoved {
   sprint: boolean;
   jumped: boolean;
   swam: boolean;
+  /** Player.isEyeInFluid(FluidTags.WATER): drives the 300-tick air supply. */
+  underwater?: boolean;
+  /** Entity.isInLava(): lava burn damage. */
+  inLava?: boolean;
 }
 
 export type Gamemode = 'survival' | 'creative';
+
+/**
+ * Damage types whose armour absorption is skipped, from
+ * data/minecraft/tags/damage_type/bypasses_armor.json (26.2):
+ * on_fire, in_wall, cramming, drown, fly_into_wall, generic, wither, dragon_breath,
+ * starve, fall, ender_pearl, freeze, stalagmite, magic, indirect_magic, out_of_world,
+ * generic_kill, sonic_boom, outside_border.
+ */
+const BYPASSES_ARMOR: ReadonlySet<string> = new Set([
+  'fire', 'on_fire', 'in_wall', 'cramming', 'drown', 'fly_into_wall', 'generic',
+  'wither', 'dragon_breath', 'starve', 'fall', 'ender_pearl', 'freeze', 'stalagmite',
+  'magic', 'indirect_magic', 'out_of_world', 'generic_kill', 'sonic_boom', 'outside_border',
+]);
 
 export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   readonly mc: MinecraftData;
@@ -92,6 +109,21 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   private experienceProgress = 0;
   private totalXp = 0;
 
+  // ---- P4 survival additions (net/minecraft/world/entity/{Entity,LivingEntity}.java) ----
+  /** Entity.getAirSupply / getMaxAirSupply: 300 ticks, -20..300 while swimming. */
+  private air = 300;
+  /** LivingEntity.hurtTime / hurtDuration: 10 ticks of render-side red flash. */
+  private hurtTicks = 0;
+  /** LivingEntity.invulnerableTime: 10 ticks of i-frames after a hit. */
+  private invulnerableTicks = 0;
+  /** DamageSource type of the last hit (death screen cause line). */
+  private lastDamageCause = '';
+  /** Set once when health reaches 0; cleared by respawn(). */
+  private dead = false;
+
+  /** Called by the main game when health first reaches 0 (death screen + loot). */
+  onDeath?: () => void;
+
   constructor(mc: MinecraftData, seed: bigint, data?: WorldData) {
     this.mc = mc;
     this.seed = seed;
@@ -119,6 +151,16 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   /** 0..1 progress toward the next level (Player.experienceProgress). */
   get experience(): number { return this.experienceProgress; }
   get totalExperience(): number { return this.totalXp; }
+  /** Entity.getAirSupply: 300 = full, values <= 0 are the drowning bubble countdown. */
+  get airSupply(): number { return this.air; }
+  get maxAirSupply(): number { return 300; }
+  /** Player.getArmorValue(), so the HUD can draw the armor bar without another import. */
+  get armorValue(): number { return this.inventory.getArmorValue(); }
+  get armorToughness(): number { return this.inventory.getArmorToughness(); }
+  /** LivingEntity.hurtTime: 10 down to 0, drives the red damage flash. */
+  get hurtTime(): number { return this.hurtTicks; }
+  get isDead(): boolean { return this.dead; }
+  get lastHurtBy(): string { return this.lastDamageCause; }
 
   getXpNeededForNextLevel(): number {
     const l = this.experienceLevel;
@@ -143,11 +185,17 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
     if (this.experienceProgress < 0) this.experienceProgress = 0;
   }
 
-  /** Player.hurt / getDamageAfterArmorAbsorb (stars bypass armor). */
+  /**
+   * Player.hurt / getDamageAfterArmorAbsorb (stars bypass armor).
+   * Creative mode is invulnerable (Player.abilities.invulnerable); the 10-tick
+   * LivingEntity.invulnerableTime applies to every non-starvation source.
+   */
   damage(amount: number, source: string): void {
     if (amount <= 0 || this.hp <= 0) return;
+    if (this.gamemode === 'creative') return;
+    if (this.invulnerableTicks > 0 && source !== 'starve' && source !== 'drown') return;
     let dmg = amount;
-    if (source !== 'starve') {
+    if (!BYPASSES_ARMOR.has(source)) {
       this.inventory.hurtArmor(dmg);
       const armor = this.inventory.getArmorValue();
       const toughness = this.inventory.getArmorToughness();
@@ -156,10 +204,51 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
       const g = Math.max(0, Math.min(20, armor) - dmg / f);
       dmg = dmg * (1 - g / 25);
       if (dmg < 0) dmg = 0;
-      this.food.addExhaustion(0.1); // DamageSource.getFoodExhaustion (generic)
+      // DamageSource.getFoodExhaustion: 0.1 for player attacks / explosions.
+      if (source === 'explosion' || source === 'player') this.food.addExhaustion(0.1);
     }
+    this.invulnerableTicks = 10;
+    this.hurtTicks = 10;
+    this.lastDamageCause = source;
     this.hp = Math.max(0, this.hp - dmg);
+    if (this.hp <= 0 && !this.dead) {
+      this.dead = true;
+      if (this.onDeath) this.onDeath();
+    }
   }
+
+  /**
+   * LivingEntity.causeFallDamage (26.2):
+   *   calculateFallPower = fallDistance + 1e-6 - SAFE_FALL_DISTANCE(3.0)
+   *   damage = Mth.floor(power * damageModifier(1) * fallDamageMultiplier(1))
+   * NOTE: the task text says "distance-3 向上取整"; the 26.2 source uses floor()
+   * with a +1e-6 epsilon (LivingEntity.java:1837-1848), which this follows.
+   */
+  fallDamage(fallDistance: number): number {
+    const dmg = Math.floor(fallDistance + 1e-6 - 3.0);
+    if (dmg > 0) this.damage(dmg, 'fall');
+    return Math.max(0, dmg);
+  }
+
+  /**
+   * Entity/LivingEntity fire + lava damage, called once per game tick from the
+   * main loop with the player's current block interaction state.
+   *   Entity.baseTick: fire ticks -> 1 damage every 20 ticks
+   *   Entity.lavaHurt: 4 damage every 10 ticks while in lava, 15 s of fire
+   */
+  tickEnvironment(inLava: boolean, inWater: boolean, onFire: boolean): void {
+    if (this.hp <= 0 || this.gamemode === 'creative') return;
+    if (inLava) {
+      if (this.envTickCounter++ % 10 === 0) this.damage(4, 'lava');
+      return;
+    }
+    if (onFire && !inWater) {
+      if (this.envTickCounter++ % 20 === 0) this.damage(1, 'fire');
+    } else {
+      this.envTickCounter = 0;
+    }
+  }
+  private envTickCounter = 0;
 
   // ---- FoodTickPlayer -----------------------------------------------------
 
@@ -181,14 +270,66 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
 
   // ---- tick ---------------------------------------------------------------
 
-  /** One 20 Hz tick. Movement exhaustion follows ServerPlayer.checkMovementStatistics. */
+  /**
+   * One 20 Hz tick. Movement exhaustion follows ServerPlayer.checkMovementStatistics.
+   * Also ticks hurt/invulnerability timers and the air supply
+   * (LivingEntity.baseTick: eye in water -> air-1; air <= -20 -> 2 drown damage and
+   * air reset to 0; not underwater -> air +4 clamped to 300).
+   */
   tick(playerMoved: PlayerMoved): void {
+    if (this.hurtTicks > 0) this.hurtTicks--;
+    if (this.invulnerableTicks > 0) this.invulnerableTicks--;
+
+    if (this.hp > 0 && this.gamemode !== 'creative') {
+      if (playerMoved.underwater) {
+        this.air--;
+        if (this.air <= -20) {
+          this.air = 0;
+          this.damage(2, 'drown');
+        }
+      } else if (this.air < this.maxAirSupply) {
+        this.air = Math.min(this.maxAirSupply, this.air + 4);
+      }
+    }
+
     if (playerMoved.jumped) this.food.onJump(playerMoved.sprint);
     if (playerMoved.sprint) this.food.onSprint(28); // 0.2806 blocks/tick ~ 28 cm
     if (playerMoved.swam) this.food.onSwim(20);
     this.food.tick(this, this.difficulty, this.naturalRegen);
     this.inventory.tick();
     this.cooldowns.tick();
+  }
+
+  /** Player.dropEquipment / Inventory.dropAllItems: everything on death. */
+  dropAllOnDeath(): { stacks: ItemStack[]; experience: number } {
+    const stacks: ItemStack[] = [];
+    for (let i = 0; i < 36; i++) {
+      const stack = this.inventory.getItem(i);
+      if (stack && !stack.isEmpty()) {
+        stacks.push(stack.copy());
+        this.inventory.setItem(i, ItemStack.EMPTY);
+      }
+    }
+    this.inventory.setItem(this.inventory.getSelectedSlot(), ItemStack.EMPTY);
+    const experience = this.totalXp;
+    return { stacks, experience };
+  }
+
+  /** Player.respawn: health/food/air/XP reset, inventory already dropped. */
+  respawn(): void {
+    this.hp = this.maxHp;
+    this.air = this.maxAirSupply;
+    this.hurtTicks = 0;
+    this.invulnerableTicks = 0;
+    this.dead = false;
+    this.lastDamageCause = '';
+    this.food.setFoodLevel(20);
+    this.food.setSaturation(5);
+    this.food.setExhaustion(0);
+    this.experienceLevel = 0;
+    this.experienceProgress = 0;
+    this.totalXp = 0;
+    this.breaking.reset();
   }
 
   /** Convenience for the main agent: Game.ts currently renders the hotbar as number[]. */

@@ -41,6 +41,11 @@ export interface MobWorld {
   getSkyDarken(): number;
   spawnEntity(e: Entity): void;
   removeEntity(e: Entity): void;
+  /**
+   * Explosion hook (net/minecraft/world/level/Explosion): the main game listens
+   * for it to damage the local player, break blocks and drop their loot.
+   */
+  explode?(x: number, y: number, z: number, power: number): void;
 }
 
 export interface DamageSource {

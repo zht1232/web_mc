@@ -244,10 +244,16 @@ export class WorldSaveManager implements WorldListProvider {
     const rec = await this.db.worlds.get(id) as WorldRecord | undefined;
     if (!rec) return;
     const root = await LevelStorage.deserialize(rec.levelDat);
+    // WeatherData (PrimaryLevelData): Raining / RainTime / Thundering / ThunderTime.
+    const weather = level.getWeatherState();
     LevelStorage.updateLevelDat(root, {
       Time: level.gameTime,
       DayTime: level.time,
       LastPlayed: Date.now(),
+      Raining: weather.raining,
+      RainTime: weather.rainTime,
+      Thundering: weather.thundering,
+      ThunderTime: weather.thunderTime,
     });
     rec.levelDat = await LevelStorage.serialize(root);
     rec.lastPlayed = Date.now();

@@ -2,24 +2,40 @@
 //
 // Binds the concrete entity classes to their EntityType registry entries so
 // that the natural spawner and the test harness can create an entity by name.
+//
+// Every type listed in a `biomes[].spawners` table of worldgen.json that this
+// port can create is bound here; the natural spawner skips the remaining types
+// instead of counting them as spawn failures (see EntityManager.tryNaturalSpawn).
 
 import type { ClientLevel } from '../level/ClientLevel.js';
 import type { Entity } from './Entity.js';
 import { ENTITY_TYPES } from './EntityType.js';
 
 import { Zombie } from './monster/Zombie.js';
+import { Drowned } from './monster/Drowned.js';
+import { Husk } from './monster/Husk.js';
+import { ZombieVillager } from './monster/ZombieVillager.js';
 import { Skeleton } from './monster/Skeleton.js';
+import { Stray } from './monster/Stray.js';
+import { Bogged } from './monster/Bogged.js';
 import { Creeper } from './monster/Creeper.js';
 import { Spider } from './monster/Spider.js';
+import { CaveSpider } from './monster/CaveSpider.js';
 import { Enderman } from './monster/Enderman.js';
 import { Silverfish } from './monster/Silverfish.js';
+import { Slime } from './monster/Slime.js';
+import { Witch } from './monster/Witch.js';
 import { Pig } from './animal/Pig.js';
 import { Cow } from './animal/Cow.js';
 import { Sheep } from './animal/Sheep.js';
 import { Chicken } from './animal/Chicken.js';
 import { Wolf } from './animal/Wolf.js';
+import { Fox } from './animal/Fox.js';
 import { Rabbit } from './animal/Rabbit.js';
+import { Cat, Ocelot } from './animal/Cat.js';
+import { Parrot } from './animal/Parrot.js';
 import { Bat } from './ambient/Bat.js';
+import { Squid, GlowSquid, Cod, Salmon } from './animal/WaterAnimal.js';
 import { ItemEntity } from './item/ItemEntity.js';
 import { ExperienceOrb } from './ExperienceOrb.js';
 import { Arrow } from './projectile/Arrow.js';
@@ -27,19 +43,40 @@ import { Arrow } from './projectile/Arrow.js';
 type Ctor = (level: ClientLevel) => Entity;
 
 const CTORS: Record<string, Ctor> = {
+  // monsters
   zombie: l => new Zombie(l),
+  drowned: l => new Drowned(l),
+  husk: l => new Husk(l),
+  zombie_villager: l => new ZombieVillager(l),
   skeleton: l => new Skeleton(l),
+  stray: l => new Stray(l),
+  bogged: l => new Bogged(l),
   creeper: l => new Creeper(l),
   spider: l => new Spider(l),
+  cave_spider: l => new CaveSpider(l),
   enderman: l => new Enderman(l),
   silverfish: l => new Silverfish(l),
+  slime: l => new Slime(l),
+  witch: l => new Witch(l),
+  // passive animals
   pig: l => new Pig(l),
   cow: l => new Cow(l),
   sheep: l => new Sheep(l),
   chicken: l => new Chicken(l),
   wolf: l => new Wolf(l),
+  fox: l => new Fox(l),
   rabbit: l => new Rabbit(l),
+  cat: l => new Cat(l),
+  ocelot: l => new Ocelot(l),
+  parrot: l => new Parrot(l),
+  // ambient
   bat: l => new Bat(l),
+  // water creatures
+  squid: l => new Squid(l),
+  glow_squid: l => new GlowSquid(l),
+  cod: l => new Cod(l),
+  salmon: l => new Salmon(l),
+  // non-mob
   item: l => new ItemEntity(l, 0, 0, 0, { id: 'minecraft:stone', count: 1 }),
   experience_orb: l => new ExperienceOrb(l, 0, 0, 0, 1),
   arrow: l => new Arrow(l, 0, 0, 0),

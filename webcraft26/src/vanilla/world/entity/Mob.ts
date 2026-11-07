@@ -12,6 +12,15 @@ import type { Targetable, MobWorld } from './Entity.js';
 import { GoalSelector } from './ai/goal/GoalSelector.js';
 import { GroundPathNavigation, type PathNavigation } from './ai/navigation/GroundPathNavigation.js';
 
+/**
+ * Vanilla entity_type tag `minecraft:burn_in_daylight` (data/minecraft/tags/entity_type/
+ * burn_in_daylight.json), restricted to the types this port creates.
+ */
+const BURN_IN_DAYLIGHT: ReadonlySet<string> = new Set([
+  'skeleton', 'stray', 'wither_skeleton', 'bogged', 'zombie', 'zombie_horse',
+  'zombie_villager', 'drowned', 'zombie_nautilus', 'phantom',
+]);
+
 export class Mob extends LivingEntity {
   readonly goalSelector = new GoalSelector();
   readonly targetSelector = new GoalSelector();
@@ -90,6 +99,31 @@ export class Mob extends LivingEntity {
   protected readonly playerPredicate = (e: Targetable): boolean => e.getTypeName() === 'player';
 
   // ---- AI tick ------------------------------------------------------------
+
+  /**
+   * Source: net/minecraft/world/entity/Mob.java#aiStep / #burnUndead / #isSunBurnTick.
+   * Undead mobs in the BURN_IN_DAYLIGHT tag ignite for 8 s when the sun is up,
+   * their eye position sees the sky and they are not in water/rain. A helmet
+   * (sunProtectionSlot) would prevent it in vanilla; the port has no equipment
+   * wear simulation for mobs, so it always burns.
+   */
+  aiStep(): void {
+    super.aiStep();
+    if (BURN_IN_DAYLIGHT.has(this.type.name) && this.isSunBurnTick()) this.setOnFire(160);
+  }
+
+  private isSunBurnTick(): boolean {
+    const eyeX = Math.floor(this.x);
+    const eyeY = Math.floor(this.getEyeY());
+    const eyeZ = Math.floor(this.z);
+    const brightness = Math.min(1, this.level.getBrightness(eyeX, eyeY, eyeZ) / 15);
+    if (brightness <= 0.5) return false;
+    const rain = this.level.getRainLevel() > 0.2 && this.level.canSeeSky(eyeX, eyeY, eyeZ);
+    if (this.inWater || rain) return false;
+    if (!this.level.canSeeSky(eyeX, eyeY, eyeZ)) return false;
+    // Mob.isSunBurnTick: random.nextFloat() * 30 < (br - 0.4) * 2
+    return this.random.nextFloat() * 30 < (brightness - 0.4) * 2;
+  }
 
   /** Vanilla Mob.serverAiStep. */
   serverAiStep(): void {

@@ -569,34 +569,78 @@ const SCENES = [
   {
     no: 8,
     name: 'placeBlock',
-    timeout: 45000,
+    timeout: 60000,
     async run(ctx) {
+      // Deterministic placement harness. The old scene looked straight down (pitch=88), so the
+      // raycast hit the block under the player's feet, the target cell was the player's own
+      // column and after the first block every attempt was rejected by the "target occupied"
+      // rule (3/10). Now each of the 10 attempts: aim at the ground ~1.4 blocks ahead
+      // (pitch=50), remove whatever plant occupies the target cell (a player would break it
+      // first), place, then restore the cell so every attempt starts from the same clean state.
+      // 10/10 is the assertion; the per-attempt state names are printed for debugging.
       const res = await ctx.ev(async () => {
         const mc = window.__mc;
-        mc.player.flying = false;
-        mc.player.pitch = 88;
-        mc.selectedSlot = 1; // stone
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        mc.player.flying = true; // freeze the eye position for the whole scene
+        mc.player.pitch = 50;
+        // pick any hotbar slot that holds a placeable block instead of assuming slot 1
+        const stacks = mc.survival.hotbarStacks();
+        let slot = stacks.findIndex((s) => s.item && s.item.block);
+        if (slot < 0) slot = 1;
+        mc.selectedSlot = slot;
         const out = [];
         for (let i = 0; i < 10; i++) {
           const hit = mc.raycast();
-          let placed = false;
-          let target = null;
-          if (hit) {
-            const dx = [0, 0, 0, 0, -1, 1][hit.face];
-            const dy = [0, 1, 0, 0, 0, 0][hit.face];
-            const dz = [-1, 0, 1, -1, 0, 0][hit.face];
-            target = [hit.x + dx, hit.y + dy, hit.z + dz];
-            const s0 = mc.level.getBlockState(target[0], target[1], target[2]);
-            mc.useItem();
-            placed = mc.level.getBlockState(target[0], target[1], target[2]) !== s0;
+          if (!hit) {
+            out.push({ placed: false, reason: 'raycast=null', target: null });
+            await sleep(320);
+            continue;
           }
-          out.push({ placed, target });
-          await new Promise((r) => setTimeout(r, 320));
+          const dx = [0, 0, 0, 0, -1, 1][hit.face];
+          const dy = [0, 1, 0, 0, 0, 0][hit.face];
+          const dz = [-1, 0, 1, -1, 0, 0][hit.face];
+          const target = [hit.x + dx, hit.y + dy, hit.z + dz];
+          const original = mc.level.getBlockState(target[0], target[1], target[2]);
+          const originalName = mc.mc.blockOf(original).name;
+          // target must be air for a vanilla-legal placement: clear the plant if there is one
+          if (original !== 0) mc.level.setBlockState(target[0], target[1], target[2], 0);
+          mc.useItem();
+          const after = mc.level.getBlockState(target[0], target[1], target[2]);
+          const placed = after !== 0;
+          // restore the probe cell (also stops the test from stacking a pillar into the camera)
+          mc.level.setBlockState(target[0], target[1], target[2], original);
+          out.push({
+            placed,
+            target,
+            face: hit.face,
+            original: originalName,
+            placedState: mc.mc.blockOf(after).name,
+            restored: mc.level.getBlockState(target[0], target[1], target[2]) === original,
+          });
+          await sleep(320); // useCooldown is 4 ticks (200 ms)
         }
-        return { out, slotItem: mc.hotbar[mc.selectedSlot] };
+        const p = mc.player.pos;
+        return {
+          out,
+          slot,
+          slotItem: mc.hotbar[slot],
+          pos: [p.x, p.y, p.z],
+          flying: !!mc.player.flying,
+        };
       });
       const ok = res.out.filter((r) => r.placed).length;
-      return { notes: [`放置成功 ${ok}/10`, `slot1 item=${res.slotItem}`], warn: ok === 0 ? ['右键 10 次没有放下方块'] : [] };
+      const rows = res.out.map((r, i) => `${i + 1}: ${r.placed ? 'OK' : 'FAIL'} `
+        + `${r.target ? r.target.join(',') : '-'} ${r.original}->${r.placedState ?? '-'}`
+        + `${r.reason ? ` (${r.reason})` : ''}${r.restored === false ? ' (restore failed)' : ''}`);
+      return {
+        notes: [
+          `放置成功 ${ok}/10`,
+          `slot${res.slot} item=${res.slotItem} pos=${res.pos.map((v) => v.toFixed(1)).join('/')} flying=${res.flying}`,
+          ...rows,
+        ],
+        fail: ok < 10,
+        warn: ok < 10 ? [`放置只有 ${ok}/10 成功：检查 raycast / stateForPlacement / 目标格占用`] : [],
+      };
     },
   },
   {
@@ -786,9 +830,34 @@ const SCENES = [
   {
     no: 15,
     name: 'teleportFar',
-    timeout: 60000,
+    timeout: 120000,
     async run(ctx) {
+      // Full acceptance for the chunk-unload work (TASK-bugs #2):
+      //  1. edit a marker block near spawn (level.setBlockState -> chunk is pinned as modified)
+      //  2. teleport 2000 blocks away and sample 15 s: chunk count must settle back to the
+      //     (2*renderDistance+1)^2 enter ring, not keep every chunk ever loaded
+      //  3. teleport back: the marker block must still be there (in-session edit survives;
+      //     the client has no save-first chunk source, so edited chunks are never dropped)
       const a = await ctx.probe();
+      const marker = await ctx.ev(() => {
+        const mc = window.__mc;
+        const p = mc.player.pos;
+        const x = Math.floor(p.x) + 2;
+        const y = Math.floor(p.y) + 2;
+        const z = Math.floor(p.z) + 2;
+        const gold = mc.mc.stateOf('gold_block');
+        const before = mc.level.getBlockState(x, y, z);
+        const changed = mc.level.setBlockState(x, y, z, gold);
+        return {
+          x, y, z, gold, before, changed,
+          beforeName: mc.mc.blockOf(before).name,
+          now: mc.level.getBlockState(x, y, z) === gold,
+        };
+      });
+      const origin = await ctx.ev(() => {
+        const p = window.__mc.player.pos;
+        return [p.x, p.y, p.z];
+      });
       await ctx.ev(() => {
         const mc = window.__mc;
         mc.player.flying = true;
@@ -808,22 +877,62 @@ const SCENES = [
       const b = await ctx.probe();
       const rd = b.renderDistance ?? 8;
       const expected = (2 * rd + 1) ** 2;
-      const originStillLoaded = await ctx.ev(
-        (c) => (c && c.length === 2 ? window.__mc.level.hasChunk(c[0], c[1]) : null),
-        a.chunk,
-      );
+      const peak = samples.reduce((m, s) => Math.max(m, s.chunks ?? 0), 0);
+      const last3 = samples.slice(-3).map((s) => s.chunks ?? 0);
+      const originInfo = await ctx.ev((c) => {
+        if (!c || c.length !== 2) return null;
+        const level = window.__mc.level;
+        const chunk = level.getChunk(c[0], c[1]);
+        return {
+          loaded: level.hasChunk(c[0], c[1]),
+          modified: level.isChunkModified ? level.isChunkModified(c[0], c[1]) : null,
+          dirtySections: chunk ? chunk.dirtySections.size : null,
+        };
+      }, a.chunk);
+
+      // teleport back to the recorded position, wait for the ring to come back
+      await ctx.ev((o) => {
+        const mc = window.__mc;
+        const p = mc.player.pos;
+        mc.player.pos = mc.player.pos.add(o[0] - p.x, o[1] - p.y, o[2] - p.z);
+        mc.player.vel.x = 0;
+        mc.player.vel.y = 0;
+        mc.player.vel.z = 0;
+      }, origin);
+      let back = null;
+      for (let i = 0; i < 20; i++) {
+        await ctx.sleep(1000);
+        back = await ctx.probe();
+        const markerChunk = await ctx.ev((m) => ({
+          loaded: window.__mc.level.hasChunk(m.x >> 4, m.z >> 4),
+        }), marker);
+        if ((back.chunks ?? 0) >= expected * 0.5 && markerChunk.loaded) break;
+      }
+      const markerAfter = await ctx.ev((m) => {
+        const level = window.__mc.level;
+        const state = level.getBlockState(m.x, m.y, m.z);
+        return { state, name: window.__mc.mc.blockOf(state).name };
+      }, marker);
+
+      const settled = (b.chunks ?? 0) <= expected * 1.4 && last3.every((c) => c <= expected * 1.4);
+      const recovered = (back.chunks ?? 0) >= expected * 0.5 && (back.chunks ?? 0) <= expected * 1.4;
+      const markerOk = markerAfter.state === marker.gold;
       return {
         notes: [
+          `marker ${marker.x},${marker.y},${marker.z} ${marker.beforeName} -> gold_block changed=${marker.changed} now=${marker.now}`,
           `chunk ${a.chunk?.join(',')} -> ${b.chunk?.join(',')}`,
-          `chunks ${a.chunks}->${b.chunks} (满视野≈${expected})`,
-          `原位置区块仍加载=${originStillLoaded}`,
-          `queue=${b.queue} inflight=${b.inflight}`,
-          `mesh=${b.mesh?.sections} sections`,
+          `chunks ${a.chunks} -> 峰值 ${peak} -> ${b.chunks} (满视野≈${expected}, 最后3样本 ${last3.join('/')})`,
+          `原位置区块 ${a.chunk?.join(',')} 仍加载=${originInfo?.loaded} modified=${originInfo?.modified} dirtySections=${originInfo?.dirtySections}`,
+          `传送回来 chunks=${back?.chunks} (满视野≈${expected}), marker=${markerAfter.name}`,
+          `queue=${b.queue} inflight=${b.inflight} mesh=${b.mesh?.sections} sections`,
         ],
         samples,
+        fail: !(settled && recovered && markerOk),
         warn: [
-          ...(b.chunks < 9 ? ['传送后 15 s 内区块几乎没加载（空洞）'] : []),
-          ...((b.chunks ?? 0) > expected * 1.4 ? [`区块未卸载：${b.chunks} > 满视野 ${expected}，长途移动会持续吃内存`] : []),
+          ...(!settled ? [`区块未卸载：chunks ${b.chunks} / 最后3样本 ${last3.join('/')} > 满视野 ${expected} 的 1.4 倍`] : []),
+          ...(peak === 0 ? ['采样期间 chunks 一直为 0（页面可能无响应）'] : []),
+          ...(!recovered ? [`传送回来后区块数异常：${back?.chunks}（满视野≈${expected}）`] : []),
+          ...(!markerOk ? [`会话内丢档：标记方块 ${markerAfter.name} != gold_block`] : []),
         ],
       };
     },
@@ -859,29 +968,49 @@ const SCENES = [
   {
     no: 17,
     name: 'save',
-    timeout: 30000,
+    timeout: 40000,
     async run(ctx) {
       const s = await ctx.probe();
       const which = Object.entries(s.saves).filter(([, v]) => v).map(([k]) => k);
       if (!which.length) return { skip: true, notes: ['存档模块未接线（无 saveManager/autosave），跳过'] };
-      const r = await ctx.ev(() => {
+      // WorldSaveManager.flushDirty(level, player, budgetMs) is async and returns
+      // Promise<number>. The old scene did `m[fn]()` with no arguments, so flushDirty got
+      // `undefined` for `level` and threw "Cannot read properties of undefined (reading
+      // 'chunks')". Pass the real signature and await the promise.
+      const r = await ctx.ev(async () => {
         const mc = window.__mc;
         const m = mc.saveManager || mc.autosave || mc.save;
-        const tried = [];
-        for (const fn of ['flush', 'flushDirty', 'saveAll', 'save', 'tick']) {
-          if (m && typeof m[fn] === 'function') {
-            try {
-              m[fn]();
-              tried.push(`${fn}()`);
-              break;
-            } catch (e) {
-              tried.push(`${fn}() threw ${e && e.message}`);
-            }
+        const out = { tried: [], wrote: null, err: null, keys: [] };
+        out.keys = m ? Object.keys(m).slice(0, 12) : [];
+        try {
+          if (m && typeof m.flushDirty === 'function') {
+            out.wrote = await m.flushDirty(mc.level, mc.player, 50);
+            out.tried.push('flushDirty(level, player, 50)');
+          } else if (m && typeof m.flushAll === 'function') {
+            out.wrote = await m.flushAll(mc.level, mc.player, {}, 50);
+            out.tried.push('flushAll(level, player, {}, 50)');
+          } else if (m && typeof m.flushNow === 'function') {
+            await m.flushNow('manual');
+            out.tried.push("flushNow('manual')");
+          } else {
+            out.tried.push('no usable flush method');
           }
+        } catch (e) {
+          out.err = String((e && e.message) || e);
         }
-        return { tried, keys: m ? Object.keys(m).slice(0, 12) : [] };
+        return out;
       });
-      return { notes: [`存在 ${which.join(',')}`, `调用 ${r.tried.join('; ') || '无可用方法'}`], warn: r.tried.length ? [] : ['找到存档对象但没有可调用方法'] };
+      const notes = [
+        `存在 ${which.join(',')}`,
+        `调用 ${r.tried.join('; ') || '无可用方法'}`,
+        r.wrote === null ? 'wrote=未返回' : `wrote=${r.wrote} chunks`,
+        `方法: ${r.keys.join(',')}`,
+      ];
+      if (r.err) return { fail: true, notes: [...notes, `flush threw: ${r.err}`] };
+      if (r.wrote === null) {
+        return { notes, warn: ['flush 未返回写入数：签名可能又变了（应为 Promise<number>）'] };
+      }
+      return { notes };
     },
   },
   {

@@ -9,23 +9,31 @@
 //      single bufferData/bufferSubData pair,
 //   4. issues one drawArrays per non-empty texture (<= 15 draw calls).
 //
+// Lighting: every vertex carries the entity's lightmap levels (sampled at the
+// entity's eye position, vanilla EntityRenderer.getPackedLightCoords) so a
+// single batched draw can still light each mob independently. Fog uses the same
+// cylindrical formula as the terrain pass; the environment (lightmap texture,
+// fog colour, render distance) is pushed once per frame by the caller.
+//
 // Integration (called from LevelRenderer by the main agent):
 //   const dispatcher = new EntityRenderDispatcher(gl);  // auto-loads textures
 //   await dispatcher.init();                            // optional, waits for PNGs
+//   dispatcher.setEnvironment(textures.lightmap, skyState.fogColor, renderDistance);
 //   dispatcher.render(manager.getEntities(), viewProj, camera, partialTick);
 
 import { GlProgram, createTexture2D, loadImage } from '../gl/Gl.js';
 import { ENTITY_VERT, ENTITY_FRAG } from './EntityShaders.js';
-import { EntityBatch, EntityRenderer } from './EntityRenderer.js';
+import { EntityBatch, EntityRenderer, FLOATS_PER_VERTEX } from './EntityRenderer.js';
 import { MobRenderer } from './MobRenderer.js';
 import { ItemEntityRenderer } from './ItemEntityRenderer.js';
 import { ArrowRenderer } from './ArrowRenderer.js';
 import { ALL_TEXTURE_KEYS, WHITE_TEXTURE, MODEL_REGISTRY } from './model/ModelRegistry.js';
+import { computeFog, argbFromRgb } from '../environment/FogState.js';
+import type { SkyState } from '../../EnvironmentLighting.js';
 import type { Entity } from '../../../vanilla/world/entity/Entity.js';
 
 export interface EntityCamera { x: number; y: number; z: number; }
 
-const FLOATS_PER_VERTEX = 8;
 const VERTEX_STRIDE = FLOATS_PER_VERTEX * 4;
 
 export class EntityRenderDispatcher {
@@ -42,6 +50,16 @@ export class EntityRenderDispatcher {
   private combined: Float32Array = new Float32Array(4096 * FLOATS_PER_VERTEX);
   private readonly n: number;
   private loading: Promise<void> | null = null;
+
+  /** 1x1 white fallback used until the real 16x16 lightmap arrives. */
+  private readonly whiteLightmap: WebGLTexture;
+  private lightmap: WebGLTexture;
+  private fogColor: [number, number, number] = [1, 1, 1];
+  private fogEnvStart = 0;
+  private fogEnvEnd = 1024;
+  private fogRenderStart = 128;
+  private fogRenderEnd = 192;
+  private fogKey = '';
 
   /** Entities farther than this (blocks) are culled. */
   renderDistance = 96;
@@ -61,6 +79,8 @@ export class EntityRenderDispatcher {
     if (whiteId !== undefined) {
       this.textures[whiteId] = createTexture2D(gl, 1, 1, new Uint8Array([255, 255, 255, 255]), gl.NEAREST);
     }
+    this.whiteLightmap = createTexture2D(gl, 1, 1, new Uint8Array([255, 255, 255, 255]), gl.NEAREST);
+    this.lightmap = this.whiteLightmap;
 
     // VAO + dynamic VBO (attribute layout is fixed)
     const vao = gl.createVertexArray();
@@ -70,6 +90,8 @@ export class EntityRenderDispatcher {
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, VERTEX_STRIDE, 0);
     gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, VERTEX_STRIDE, 12);
     gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, VERTEX_STRIDE, 20);
+    gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 2, gl.FLOAT, false, VERTEX_STRIDE, 32);
+    gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 2, gl.FLOAT, false, VERTEX_STRIDE, 40);
     gl.bindVertexArray(null);
     this.vao = vao;
     this.vbo = vbo;
@@ -91,6 +113,34 @@ export class EntityRenderDispatcher {
   init(base = '/mc/textures/entity'): Promise<void> {
     if (!this.loading) this.loading = this.loadTextures(base);
     return this.loading;
+  }
+
+  /**
+   * Per-frame environment: the shared lightmap texture and the fog, both owned
+   * by other packages. `sky` is the single source of truth (SkyState) and the
+   * fog numbers come from the light package's FogState.computeFog().
+   */
+  setEnvironment(lightmap: WebGLTexture | null, sky: SkyState, renderDistance: number): void {
+    this.lightmap = lightmap ?? this.whiteLightmap;
+    const key = `${renderDistance}|${sky.fogColor[0]},${sky.fogColor[1]},${sky.fogColor[2]}`
+      + `|${sky.skyColor[0]},${sky.skyColor[1]},${sky.skyColor[2]}|${sky.sunAngleDeg}`;
+    if (key === this.fogKey) return;
+    this.fogKey = key;
+    // NOTE: rainLevel / sunrise alpha are not available on SkyState yet, so the
+    // fog is computed for clear weather (vanilla defaults for those inputs).
+    const fog = computeFog({
+      renderDistanceBlocks: renderDistance * 16,
+      fogColorArgb: argbFromRgb(sky.fogColor),
+      skyColorArgb: argbFromRgb(sky.skyColor),
+      sunAngleDeg: sky.sunAngleDeg,
+    });
+    this.fogColor[0] = fog.color[0];
+    this.fogColor[1] = fog.color[1];
+    this.fogColor[2] = fog.color[2];
+    this.fogEnvStart = fog.environmentalStart;
+    this.fogEnvEnd = fog.environmentalEnd;
+    this.fogRenderStart = fog.renderDistanceStart;
+    this.fogRenderEnd = fog.renderDistanceEnd;
   }
 
   private async loadTextures(base: string): Promise<void> {
@@ -155,6 +205,16 @@ export class EntityRenderDispatcher {
     this.program.use();
     this.program.setMat4('uViewProj', viewProj);
     this.program.set1i('uTex', 0);
+    this.program.set1i('uLightmap', 1);
+    this.program.set3f('uFogColor', this.fogColor[0], this.fogColor[1], this.fogColor[2]);
+    this.program.set1f('uFogEnvStart', this.fogEnvStart);
+    this.program.set1f('uFogEnvEnd', this.fogEnvEnd);
+    this.program.set1f('uFogRenderStart', this.fogRenderStart);
+    this.program.set1f('uFogRenderEnd', this.fogRenderEnd);
+    this.program.set3f('uCameraPos', camera.x, camera.y, camera.z);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.lightmap);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindVertexArray(this.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);

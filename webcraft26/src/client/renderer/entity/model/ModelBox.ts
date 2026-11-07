@@ -2,18 +2,23 @@
 //         MeshDefinition,LayerDefinition,CubeDefinition} + net.minecraft.client.model.geom.ModelPart
 //
 // The Java entity models are built from hard-coded `addBox(...)` / `PartPose`
-// calls. This module turns those into a DATA-DRIVEN description (BoxDef /
-// PartDef / ModelDef) and bakes them ONCE into static vertex buffers:
+// calls. This module turns those into a DATA-DRIVEN hierarchy (BoxDef /
+// PartDef / ModelDef) and bakes the box geometry ONCE into static vertex
+// buffers that are LOCAL TO EACH PART:
 //
-//   * box corners are in "model units" (16 units = 1 block),
-//   * PartPose offset/rotation are applied as a 4x4 matrix per part,
-//   * the vanilla root transform (scale(-1,-1,1) + translate(0,-1.501,0))
-//     is baked in so the result is entity-local: +Y up, feet at y=0,
-//     centred on x=0/z=0, head toward -Z,
-//   * UV rectangles follow ModelPart.Cube exactly (6 faces per box),
-//   * each vertex is (x,y,z, u,v, r,g,b) where r,g,b is a directional face shade.
+//   * a part keeps its rest offset + rest rotation (ModelPart.x/y/z, xRot/yRot/zRot),
+//     exactly like PartPose.offset / offsetAndRotation;
+//   * a part's boxes are stored in model units, local to that part, so the
+//     renderer can rebuild the vanilla matrix stack every frame
+//     (ModelPart.translateAndRotate: translate -> rotateZ -> rotateY -> rotateX);
+//   * UV rectangles follow ModelPart.Cube exactly (6 faces per box, optional
+//     `mirror` like CubeListBuilder.mirror());
+//   * each vertex is (x,y,z, u,v, shade) — shade is the vanilla directional
+//     face lighting approximation.
 //
-// Baking happens at module load, never per frame.
+// Per-frame animation is applied by a ModelAnimator: it writes PartPoseAnim
+// overrides (rotation + position deltas, same units/signs as the Java
+// `setupAnim` code it was transcribed from). Nothing is allocated per frame.
 
 export interface BoxDef {
   /** min corner in model units */
@@ -28,16 +33,15 @@ export interface BoxDef {
 }
 
 export interface PartPose {
-  /** offset in model units */
+  /** offset in model units (PartPose.offset) */
   x?: number; y?: number; z?: number;
-  /** rotation in radians */
+  /** rest rotation in radians (PartPose.rotation) */
   rx?: number; ry?: number; rz?: number;
-  /** limb-swing amplitude for this part (0 = static) */
-  swing?: number;
 }
 
 export interface PartDef {
-  name?: string;
+  /** vanilla part name, e.g. "head" / "right_arm" (used by the animators) */
+  name: string;
   pose?: PartPose;
   boxes?: BoxDef[];
   children?: PartDef[];
@@ -46,83 +50,69 @@ export interface PartDef {
 export interface ModelDef {
   texW: number;
   texH: number;
-  root: PartDef;
+  /** root children; the root itself only carries the vanilla -1.501 root transform */
+  children: PartDef[];
+}
+
+/** Per-part animation override; rotation radians, position in MODEL UNITS (like Java). */
+export interface PartPoseAnim {
+  x: number; y: number; z: number;
+  rx: number; ry: number; rz: number;
+}
+
+export interface AnimContext {
+  /** EntityRenderState.ageInTicks = tickCount + partialTick */
+  ageInTicks: number;
+  /** WalkAnimationState.position(partialTick) */
+  limbSwing: number;
+  /** WalkAnimationState.speed(partialTick) */
+  limbSwingAmount: number;
+  /** head yaw relative to the body, radians (LivingEntityRenderState.yRot) */
+  headYaw: number;
+  /** head pitch, radians (LivingEntityRenderState.xRot) */
+  headPitch: number;
+  /** getAttackAnim(partialTick), 0..1 */
+  attackTime: number;
+  isAggressive: boolean;
+  isHoldingBow: boolean;
+  /** Creeper.getSwelling(partialTick), 0..1 */
+  swell: number;
+  /** chicken wing flap angle: (sin(flap) + 1) * flapSpeed */
+  flapAngle: number;
 }
 
 export interface BakedPart {
-  /** pivot in entity-local space (y-up, feet=0) */
-  pivot: [number, number, number];
-  swing: number;
-  /** interleaved (x,y,z,u,v,r,g,b) triangles, 8 floats per vertex */
-  vertices: Float32Array;
+  name: string;
+  /** index of the parent part, -1 for a root part */
+  parent: number;
+  /** rest offset in BLOCK units (PartPose offset / 16) */
+  ox: number; oy: number; oz: number;
+  /** rest rotation in radians */
+  rx: number; ry: number; rz: number;
+  /** interleaved (x,y,z,u,v,shade) triangles in BLOCK units, local to this part */
+  verts: Float32Array;
 }
+
+/** Writes animation overrides into model.poses. Never allocates. */
+export type ModelAnimator = (model: BakedModel, ctx: AnimContext) => void;
 
 export interface BakedModel {
   parts: BakedPart[];
-  /** total vertex count across all parts */
+  /** part name -> index in parts */
+  byName: Map<string, number>;
+  /** reusable per-part pose overrides (reset before each animate call) */
+  poses: PartPoseAnim[];
+  /** reusable per-part 3x4 world matrices (row-major, [a,b,c,tx, d,e,f,ty, g,h,i,tz]) */
+  mats: Float64Array;
   vertexCount: number;
+  animate: ModelAnimator | null;
 }
 
 // ---------------------------------------------------------------------------
-// 4x4 column-major matrices (only used at bake time)
+// Storage constants
 // ---------------------------------------------------------------------------
 
-type M4 = Float64Array;
-
-function identity(): M4 {
-  const m = new Float64Array(16);
-  m[0] = m[5] = m[10] = m[15] = 1;
-  return m;
-}
-
-function mul(a: M4, b: M4): M4 {
-  const o = new Float64Array(16);
-  for (let c = 0; c < 4; c++) {
-    for (let r = 0; r < 4; r++) {
-      o[c * 4 + r] =
-        a[0 * 4 + r] * b[c * 4 + 0] +
-        a[1 * 4 + r] * b[c * 4 + 1] +
-        a[2 * 4 + r] * b[c * 4 + 2] +
-        a[3 * 4 + r] * b[c * 4 + 3];
-    }
-  }
-  return o;
-}
-
-function translation(x: number, y: number, z: number): M4 {
-  const m = identity();
-  m[12] = x; m[13] = y; m[14] = z;
-  return m;
-}
-
-function rotX(t: number): M4 {
-  const m = identity(), c = Math.cos(t), s = Math.sin(t);
-  m[5] = c; m[6] = s; m[9] = -s; m[10] = c;
-  return m;
-}
-function rotY(t: number): M4 {
-  const m = identity(), c = Math.cos(t), s = Math.sin(t);
-  m[0] = c; m[2] = -s; m[8] = s; m[10] = c;
-  return m;
-}
-function rotZ(t: number): M4 {
-  const m = identity(), c = Math.cos(t), s = Math.sin(t);
-  m[0] = c; m[1] = s; m[4] = -s; m[5] = c;
-  return m;
-}
-
-function transform(m: M4, x: number, y: number, z: number): [number, number, number] {
-  return [
-    m[0] * x + m[4] * y + m[8] * z + m[12],
-    m[1] * x + m[5] * y + m[9] * z + m[13],
-    m[2] * x + m[6] * y + m[10] * z + m[14],
-  ];
-}
-
-/** Vanilla root transform: S=scale(-1,-1,1) * T=translate(0,-1.501,0). */
-function toEntityLocal(p: [number, number, number]): [number, number, number] {
-  return [-p[0], 1.501 - p[1], p[2]];
-}
+export const FLOATS_PER_MODEL_VERTEX = 6;
 
 // ---------------------------------------------------------------------------
 // Face shading (vanilla directional lighting approximation)
@@ -133,32 +123,39 @@ const SHADE_DOWN = 0.5;
 const SHADE_Z = 0.8;   // north / south
 const SHADE_X = 0.6;   // east / west
 
-/** Emits a 2-triangle quad. UV rect may have v0>v1 (UP face), which is allowed. */
+/**
+ * Emits a 2-triangle quad from 4 corners (model units, part-local).
+ * UV order matches ModelPart.Polygon.remap: v0->(ub,va) v1->(ua,va)
+ * v2->(ua,vb) v3->(ub,vb). `mirror` reverses the vertex order exactly like
+ * ModelPart.Polygon does (the box's x extents were already swapped).
+ */
 function emitQuad(
-  out: number[], m: M4,
+  out: number[],
   corners: [number, number, number][],
   ua: number, va: number, ub: number, vb: number,
-  shade: number, texW: number, texH: number,
+  shade: number, texW: number, texH: number, mirror: boolean,
 ): void {
-  // matches ModelPart.Polygon remap: v0->(ub,va), v1->(ua,va), v2->(ua,vb), v3->(ub,vb)
   const uv: [number, number][] = [[ub, va], [ua, va], [ua, vb], [ub, vb]];
-  const order = [0, 1, 2, 0, 2, 3];
+  const order = mirror ? [3, 2, 1, 3, 1, 0] : [0, 1, 2, 0, 2, 3];
   for (let k = 0; k < 6; k++) {
     const i = order[k];
     const c = corners[i];
-    const p = transform(m, c[0] / 16, c[1] / 16, c[2] / 16);
-    const e = toEntityLocal(p);
-    out.push(e[0], e[1], e[2], uv[i][0] / texW, uv[i][1] / texH, shade, shade, shade);
+    out.push(
+      c[0] / 16, c[1] / 16, c[2] / 16,
+      uv[i][0] / texW, uv[i][1] / texH,
+      shade,
+    );
   }
 }
 
-function bakeBoxes(boxes: BoxDef[], m: M4, texW: number, texH: number): Float32Array {
+/** Bakes one part's boxes into part-local vertices (blocks, 6 floats per vertex). */
+function bakeBoxes(boxes: BoxDef[], texW: number, texH: number): Float32Array {
   const out: number[] = [];
   for (const b of boxes) {
     const g = b.grow ?? 0;
     let ax = b.x - g, ay = b.y - g, az = b.z - g;
     let bx = b.x + b.w + g, by = b.y + b.h + g, bz = b.z + b.d + g;
-    if (b.mirror) { const t = ax; ax = bx; bx = t; } // harmless for centred boxes
+    if (b.mirror) { const t = ax; ax = bx; bx = t; } // ModelPart.Cube: swap minX/maxX
     const t0: [number, number, number] = [ax, ay, az];
     const t1: [number, number, number] = [bx, ay, az];
     const t2: [number, number, number] = [bx, by, az];
@@ -172,60 +169,78 @@ function bakeBoxes(boxes: BoxDef[], m: M4, texW: number, texH: number): Float32A
     const u1 = u0 + b.d, u2 = u1 + b.w, u22 = u2 + b.w;
     const u3 = u2 + b.d, u4 = u3 + b.w;
     const v1 = v0 + b.d, v2 = v1 + b.h;
+    const m = b.mirror === true;
 
-    emitQuad(out, m, [l1, l0, t0, t1], u1, v0, u2, v1, SHADE_DOWN, texW, texH); // DOWN
-    emitQuad(out, m, [t2, t3, l3, l2], u2, v1, u22, v0, SHADE_UP, texW, texH);   // UP
-    emitQuad(out, m, [t0, l0, l3, t3], u0, v1, u1, v2, SHADE_X, texW, texH);     // WEST
-    emitQuad(out, m, [t1, t0, t3, t2], u1, v1, u2, v2, SHADE_Z, texW, texH);     // NORTH
-    emitQuad(out, m, [l1, t1, t2, l2], u2, v1, u3, v2, SHADE_X, texW, texH);     // EAST
-    emitQuad(out, m, [l0, l1, l2, l3], u3, v1, u4, v2, SHADE_Z, texW, texH);     // SOUTH
+    emitQuad(out, [l1, l0, t0, t1], u1, v0, u2, v1, SHADE_DOWN, texW, texH, m); // DOWN
+    emitQuad(out, [t2, t3, l3, l2], u2, v1, u22, v0, SHADE_UP, texW, texH, m);  // UP
+    emitQuad(out, [t0, l0, l3, t3], u0, v1, u1, v2, SHADE_X, texW, texH, m);    // WEST
+    emitQuad(out, [t1, t0, t3, t2], u1, v1, u2, v2, SHADE_Z, texW, texH, m);    // NORTH
+    emitQuad(out, [l1, t1, t2, l2], u2, v1, u3, v2, SHADE_X, texW, texH, m);    // EAST
+    emitQuad(out, [l0, l1, l2, l3], u3, v1, u4, v2, SHADE_Z, texW, texH, m);    // SOUTH
   }
   return new Float32Array(out);
 }
 
-function partMatrix(pose: PartPose | undefined): M4 {
-  let m = translation((pose?.x ?? 0) / 16, (pose?.y ?? 0) / 16, (pose?.z ?? 0) / 16);
-  if (pose?.rz) m = mul(m, rotZ(pose.rz));
-  if (pose?.ry) m = mul(m, rotY(pose.ry));
-  if (pose?.rx) m = mul(m, rotX(pose.rx));
-  return m;
-}
+// ---------------------------------------------------------------------------
+// Baking
+// ---------------------------------------------------------------------------
 
-function bakePart(def: PartDef, parent: M4, model: ModelDef, parts: BakedPart[]): void {
-  const acc = mul(parent, partMatrix(def.pose));
-  if (def.boxes && def.boxes.length > 0) {
-    const verts = bakeBoxes(def.boxes, acc, model.texW, model.texH);
-    const p = transform(acc, 0, 0, 0);
-    parts.push({
-      pivot: toEntityLocal(p),
-      swing: def.pose?.swing ?? 0,
-      vertices: verts,
-    });
-  }
+function bakePart(def: PartDef, parent: number, model: ModelDef, out: BakedPart[]): void {
+  const pose = def.pose;
+  const index = out.length;
+  out.push({
+    name: def.name,
+    parent,
+    ox: (pose?.x ?? 0) / 16,
+    oy: (pose?.y ?? 0) / 16,
+    oz: (pose?.z ?? 0) / 16,
+    rx: pose?.rx ?? 0,
+    ry: pose?.ry ?? 0,
+    rz: pose?.rz ?? 0,
+    verts: def.boxes && def.boxes.length > 0 ? bakeBoxes(def.boxes, model.texW, model.texH) : EMPTY_VERTS,
+  });
   if (def.children) {
-    for (let i = 0; i < def.children.length; i++) bakePart(def.children[i], acc, model, parts);
+    for (let i = 0; i < def.children.length; i++) bakePart(def.children[i], index, model, out);
   }
 }
 
-/** Bakes a ModelDef into static geometry. Call ONCE per model type. */
+const EMPTY_VERTS = new Float32Array(0);
+
+/** Bakes a ModelDef into a static part hierarchy. Call ONCE per model type. */
 export function bakeModel(model: ModelDef): BakedModel {
   const parts: BakedPart[] = [];
-  bakePart(model.root, identity(), model, parts);
+  for (let i = 0; i < model.children.length; i++) bakePart(model.children[i], -1, model, parts);
+  const byName = new Map<string, number>();
   let vertexCount = 0;
-  for (let i = 0; i < parts.length; i++) vertexCount += parts[i].vertices.length / 8;
-  return { parts, vertexCount };
+  const poses: PartPoseAnim[] = new Array(parts.length);
+  for (let i = 0; i < parts.length; i++) {
+    byName.set(parts[i].name, i);
+    vertexCount += parts[i].verts.length / FLOATS_PER_MODEL_VERTEX;
+    poses[i] = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0 };
+  }
+  return {
+    parts,
+    byName,
+    poses,
+    mats: new Float64Array(parts.length * 12),
+    vertexCount,
+    animate: null,
+  };
+}
+
+/** Attaches a setupAnim transcription to a baked model. */
+export function withAnimator(model: BakedModel, animate: ModelAnimator): BakedModel {
+  model.animate = animate;
+  return model;
 }
 
 /** Convenience: a single-box model (used by items / projectiles). */
 export function singleBoxModel(
   x: number, y: number, z: number, w: number, h: number, d: number,
-  u: number, v: number, texW: number, texH: number, swing = 0,
+  u: number, v: number, texW: number, texH: number,
 ): BakedModel {
   return bakeModel({
     texW, texH,
-    root: {
-      pose: { swing },
-      boxes: [{ x, y, z, w, h, d, u, v }],
-    },
+    children: [{ name: 'cube', boxes: [{ x, y, z, w, h, d, u, v }] }],
   });
 }

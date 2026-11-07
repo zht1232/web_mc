@@ -1,18 +1,20 @@
-// Source: net.minecraft.world.entity.monster.Skeleton
+// Source: net.minecraft.world.entity.monster.skeleton.Skeleton
 //
 // Ranged attacker: RangedBowAttackGoal drives the strafing, while
-// rangedAttack() spawns an Arrow toward the target.
+// rangedAttack() spawns an Arrow toward the target. The constructor takes an
+// explicit EntityType so variant subclasses (Stray, Bogged) share the AI.
 
 import { Monster } from './Monster.js';
 import { RangedBowAttackGoal } from '../ai/goal/RangedBowAttackGoal.js';
 import { Arrow } from '../projectile/Arrow.js';
 import { entityType } from '../EntityType.js';
+import type { EntityType } from '../EntityType.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
 import type { Targetable } from '../Entity.js';
 
 export class Skeleton extends Monster {
-  constructor(level: ClientLevel) {
-    super(entityType('skeleton'), level);
+  constructor(level: ClientLevel, type: EntityType = entityType('skeleton')) {
+    super(type, level);
     this.speed = 0.25;
     this.maxHealth = 20; this.health = 20;
     this.attackDamage = 2;
@@ -26,6 +28,7 @@ export class Skeleton extends Monster {
     const world = this.getWorld();
     if (!world) return;
     const arrow = new Arrow(this.level, this.x, this.getEyeY() - 0.1, this.z);
+    arrow.owner = this;
     const dx = target.getX() - this.x;
     const dy = (target.getY() + target.getHeight() * 0.5) - arrow.y;
     const dz = target.getZ() - this.z;

@@ -14,6 +14,8 @@ import type { TextureManager } from './TextureManager.js';
 import type { BiomeColors } from './BiomeColors.js';
 import type { SkyState } from '../EnvironmentLighting.js';
 import { chunkKey } from '../../vanilla/core/Geometry.js';
+import { PostProcessor } from './post/PostProcessor.js';
+import { ShadowMap } from './post/ShadowMap.js';
 
 export interface Camera {
   x: number; y: number; z: number;
@@ -37,6 +39,20 @@ export class LevelRenderer {
   private readonly sky: GlProgram;
   private readonly celestial: GlProgram;
   private readonly line: GlProgram;
+
+  /**
+   * HDR post-processing chain (bloom / tonemap / FXAA) described in TASK-render Phase A.
+   * `shadersEnabled`/`shaderQuality` are the live hooks the VideoSettings screen and
+   * window.__mc read (src/client/gui/OptionsBridge.ts).
+   */
+  readonly post: PostProcessor;
+  /** Orthographic sun/moon depth map (TASK-render Phase B). */
+  readonly shadow: ShadowMap;
+
+  private readonly sunDir: [number, number, number] = [0, 1, 0];
+  private readonly lightDir: [number, number, number] = [0, 1, 0];
+  private readonly sunColor: [number, number, number] = [1, 1, 1];
+  private shadowsActive = false;
 
   private readonly sections = new Map<number, SectionGpu>();
   private readonly rebuildQueue: { chunkX: number; chunkZ: number; sectionY: number }[] = [];
@@ -79,6 +95,34 @@ export class LevelRenderer {
     this.sky = new GlProgram(gl, SKY_VERT, SKY_FRAG, 'sky');
     this.celestial = new GlProgram(gl, CELESTIAL_VERT, CELESTIAL_FRAG, 'celestial');
     this.line = new GlProgram(gl, LINE_VERT, LINE_FRAG, 'line');
+    this.post = new PostProcessor(gl);
+    // 2048 is the task default; the quality tier re-sizes it in render().
+    this.shadow = new ShadowMap(gl, 2048);
+  }
+
+  // ------------------------------------------------------- post-processing hooks
+
+  /** Shader quality tier: off / low / medium / high / ultra (OptionsBridge reads this). */
+  get shaderQuality(): string { return this.post.quality; }
+  set shaderQuality(value: string) { this.post.setQuality(value); }
+
+  /** Master shaders toggle (F6 / window.__mc.setShaders / VideoSettings). */
+  get shadersEnabled(): boolean { return this.post.enabled; }
+  set shadersEnabled(value: boolean) { this.post.setEnabled(value); }
+
+  /** Called by Game.render right after the default framebuffer has been cleared. */
+  beginScene(): void {
+    this.post.beginScene();
+  }
+
+  /** Resolves HDR -> tone mapped/FXAA image into the default framebuffer. */
+  endScene(): void {
+    this.post.endScene();
+  }
+
+  /** Allocates/resizes the HDR + bloom targets; safe to call on every window resize. */
+  resize(width: number, height: number): void {
+    this.post.resize(width, height);
   }
 
   async init(): Promise<void> {
@@ -499,6 +543,93 @@ export class LevelRenderer {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
+  /**
+   * Sun/moon direction and direct-light colour for this frame.
+   *
+   * The sun position matches renderer/environment/SkyRenderer.ts:305-306 exactly, i.e.
+   * theta = timeOfDay*2PI and the sun on a (0, sin, cos) circle around the X axis; the moon is
+   * drawn at -sunDir (SkyRenderer.ts:370-372). NOTE: SkyState.sunAngleDeg from
+   * EnvironmentLighting.ts:207 is a *different* value (t/24000*360+90); using it here would put
+   * the shadow a quarter turn away from the drawn sun, so this uses the SkyRenderer formula.
+   */
+  private updateSunLight(level: ClientLevel): void {
+    const phase = (((level.time % 24000) + 24000) % 24000) / 24000;
+    const theta = phase * Math.PI * 2;
+    this.sunDir[0] = 0;
+    this.sunDir[1] = Math.sin(theta);
+    this.sunDir[2] = Math.cos(theta);
+
+    const rainLevel = (level as unknown as { getRainLevel?: () => number }).getRainLevel;
+    const rain = typeof rainLevel === 'function' ? Math.min(1, Math.max(0, level.getRainLevel())) : 0;
+    const smoothstep = (a: number, b: number, x: number) => {
+      const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+
+    const up = this.sunDir[1];
+    if (up >= 0) {
+      // Day: white-warm direct sun, dying out in the last few degrees above the horizon.
+      const warmth = Math.min(1, up * 2.5);
+      const strength = smoothstep(0.015, 0.30, up) * 0.55 * (1 - rain * 0.7);
+      this.lightDir[0] = this.sunDir[0];
+      this.lightDir[1] = this.sunDir[1];
+      this.lightDir[2] = this.sunDir[2];
+      this.sunColor[0] = 1.0 * strength;
+      this.sunColor[1] = (0.58 + (0.97 - 0.58) * warmth) * strength;
+      this.sunColor[2] = (0.32 + (0.90 - 0.32) * warmth) * strength;
+    } else {
+      // Night: weak bluish moonlight, from the opposite direction.
+      const strength = smoothstep(0.015, 0.30, -up) * 0.10 * (1 - rain * 0.85);
+      this.lightDir[0] = -this.sunDir[0];
+      this.lightDir[1] = -this.sunDir[1];
+      this.lightDir[2] = -this.sunDir[2];
+      this.sunColor[0] = 0.55 * strength;
+      this.sunColor[1] = 0.65 * strength;
+      this.sunColor[2] = 1.00 * strength;
+    }
+  }
+
+  /**
+   * Depth-only shadow pass (TASK-render Phase B.1). Only SOLID+CUTOUT casters are drawn, so
+   * water never blocks sunlight, and sections are culled against the *light* frustum rather
+   * than the camera frustum.
+   */
+  private renderShadowPass(camera: Camera): void {
+    const gl = this.gl;
+    const r = this.renderDistance;
+    const camCX = Math.floor(camera.x) >> 4;
+    const camCZ = Math.floor(camera.z) >> 4;
+
+    this.shadow.setSize(this.post.shadowSize);
+    this.shadow.update(camera, this.lightDir);
+    this.shadow.begin();
+
+    const program = this.shadow.programHandle;
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
+    program.set1i('uAtlas', 3);
+    program.set1f('uAlphaTest', 0.1);
+
+    for (const section of this.sections.values()) {
+      if (section.empty) continue;
+      if (Math.abs(section.cx - camCX) > r + 1 || Math.abs(section.cz - camCZ) > r + 1) continue;
+      const minX = section.cx << 4, minZ = section.cz << 4, minY = section.sy << 4;
+      if (!boxInFrustum(this.shadow.frustum, minX, minY, minZ, minX + 16, minY + 16, minZ + 16)) continue;
+      program.set3f('uChunkOrigin', minX, minY, minZ);
+      for (const layer of [RenderLayer.SOLID, RenderLayer.CUTOUT]) {
+        const count = section.counts[layer];
+        const vao = section.vaos[layer];
+        if (!count || !vao) continue;
+        gl.bindVertexArray(vao);
+        gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, 0);
+      }
+    }
+
+    this.shadow.end();
+    // The pass above bound its own framebuffer: put the HDR scene target back.
+    this.post.bindSceneTarget();
+  }
+
   render(level: ClientLevel, camera: Camera, sky: SkyState, partialTicks: number): void {
     const gl = this.gl;
     this.updateMatrices(camera);
@@ -524,6 +655,11 @@ export class LevelRenderer {
     opaque.sort((a, b) => a.dist - b.dist);
     translucent.sort((a, b) => b.dist - a.dist);
 
+    // Sun/moon shadow map. Off when shaders are off (the shader path must equal vanilla then).
+    this.updateSunLight(level);
+    this.shadowsActive = this.post.enabled && this.post.shadowsEnabled && this.post.shadowSize > 0;
+    if (this.shadowsActive) this.renderShadowPass(camera);
+
     this.terrain.use();
     this.terrain.setMat4('uViewProj', this.viewProj);
     this.terrain.set3f('uFogColor', sky.fogColor[0], sky.fogColor[1], sky.fogColor[2]);
@@ -535,6 +671,13 @@ export class LevelRenderer {
     this.terrain.set1f('uAlphaTest', 0.1);
     this.terrain.set1f('uTranslucent', 0);
     this.terrain.set1i('uDebug', this.debugMode);
+    // Direct sun / moon term is only enabled when a shadow map was rendered this frame; with
+    // uUseShadows = 0 the fragment shader keeps the exact vanilla lightmap result.
+    this.terrain.set1i('uUseShadows', this.shadowsActive ? 1 : 0);
+    this.terrain.setMat4('uLightViewProj', this.shadow.lightViewProjection);
+    this.terrain.set3f('uSunDir', this.lightDir[0], this.lightDir[1], this.lightDir[2]);
+    this.terrain.set3f('uSunColor', this.sunColor[0], this.sunColor[1], this.sunColor[2]);
+    this.terrain.set1f('uShadowTexel', 1 / this.shadow.size);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
@@ -542,6 +685,11 @@ export class LevelRenderer {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.textures.lightmap);
     this.terrain.set1i('uLightmap', 1);
+    // Shadow map on unit 3 (needs COMPARE_REF_TO_TEXTURE sampling).
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadow.texture);
+    this.terrain.set1i('uShadowMap', 3);
+    gl.activeTexture(gl.TEXTURE0);
 
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);

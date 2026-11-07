@@ -92,13 +92,20 @@ export class ItemIconAtlas {
     this.program.set1f('uAlphaTest', 0.02);
     this.program.set1f('uTranslucent', 0);
 
-    // isometric camera: 30 degrees down, 45 degrees around Y
+    // Block items: isometric camera (30 degrees down, 45 degrees around Y) approximating the
+    // block model's "gui" display transform (vanilla block/models/*.json display.gui =
+    // rotation [30, 225, 0], scale 0.625, applied inside the GUI item atlas).
     const proj = ortho(-0.95, 0.95, -0.95, 0.95, -8, 8);
     const yaw = Math.PI / 4;
     const pitch = Math.atan(1 / Math.sqrt(2));
     const view = isoView(yaw, pitch);
-    const vp = mat4Mul(proj, view, new Float32Array(16));
-    this.program.setMat4('uViewProj', vp);
+    const isoVp = mat4Mul(proj, view, new Float32Array(16));
+    // Flat items: GuiItemAtlas.drawToSlot (net/minecraft/client/gui/render/GuiItemAtlas.java:103-108)
+    // does *not* rotate a generated item model - it only translates to the slot centre and
+    // scale(slotTextureSize), so the sprite faces the GUI camera and fills the whole slot.
+    // Model space runs 0..1; centring it and using a 1-unit ortho box makes the quad fill the cell.
+    const flatVp = ortho(-0.5, 0.5, -0.5, 0.5, -8, 8);
+    this.program.setMat4('uViewProj', isoVp);
 
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
@@ -140,6 +147,9 @@ export class ItemIconAtlas {
 
       gl.viewport(cx, ATLAS - cy - CELL, CELL, CELL);
       gl.clear(gl.DEPTH_BUFFER_BIT);
+      // Flat sprites are drawn screen-aligned (see flatVp above); blocks use the iso camera.
+      const flatIcon = entry.kind === 'flat' || entry.kind === 'special';
+      this.program.setMat4('uViewProj', flatIcon ? flatVp : isoVp);
 
       if (entry.kind === 'block' && entry.model !== undefined) {
         this.drawModel(entry.model, vao, vbo, ibo, verts, dv, indices, entry.guiLight === 'front');
@@ -181,6 +191,9 @@ export class ItemIconAtlas {
     const gl = this.gl;
     const model = this.models.getModel(modelIndex);
     if (!model.quads.length) return;
+    // Re-bind the block array: a flat icon drawn just before this leaves the item array on unit 0.
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
     const buffer = new Uint8Array(model.quads.length * 4 * 24);
     const bdv = new DataView(buffer.buffer);
     const indexBuffer = new Uint32Array(model.quads.length * 6);
@@ -234,16 +247,17 @@ export class ItemIconAtlas {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, isItemArray ? this.textures.item.texture : this.textures.block.texture);
 
-    // a unit quad facing the camera, positioned like vanilla's generated item model
+    // A generated item model spans 0..1 in model space and faces +Z; centred on the origin and
+    // paired with flatVp it covers the whole CELL, exactly like a 16x16 GUI blit of the slot.
     const quad = [
-      [0.06, 0.94, 0, 0], [0.94, 0.94, 1, 0], [0.94, 0.06, 1, 1], [0.06, 0.06, 0, 1],
+      [-0.5, 0.5, 0, 0], [0.5, 0.5, 1, 0], [0.5, -0.5, 1, 1], [-0.5, -0.5, 0, 1],
     ];
     const buffer = new Uint8Array(4 * 24);
     const bdv = new DataView(buffer.buffer);
     quad.forEach(([x, y, u, v], i) => {
       const o = i * 24;
-      bdv.setFloat32(o, x - 0.5, true);
-      bdv.setFloat32(o + 4, y - 0.5, true);
+      bdv.setFloat32(o, x, true);
+      bdv.setFloat32(o + 4, y, true);
       bdv.setFloat32(o + 8, 0, true);
       bdv.setUint16(o + 12, Math.round(u * 4096), true);
       bdv.setUint16(o + 14, Math.round(v * 4096), true);

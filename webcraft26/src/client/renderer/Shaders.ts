@@ -36,6 +36,7 @@ void main() {
 export const TERRAIN_FRAG = `#version 300 es
 precision highp float;
 precision highp sampler2DArray;
+precision highp sampler2DShadow;
 
 in vec2 vUV;
 flat in uint vLayer;
@@ -52,6 +53,14 @@ uniform vec3 uCameraPos;
 uniform float uAlphaTest;
 uniform float uTranslucent;
 uniform int uDebug;
+
+// Shader-pipeline only (TASK-render Phase B.2). uUseShadows == 0 keeps the vanilla path.
+uniform int uUseShadows;
+uniform sampler2DShadow uShadowMap;
+uniform mat4 uLightViewProj;
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform float uShadowTexel;
 
 out vec4 fragColor;
 
@@ -71,6 +80,35 @@ void main() {
 
   vec3 color = tex.rgb * vColor.rgb * light;
   float alpha = tex.a * (uTranslucent > 0.5 ? vColor.a : 1.0);
+
+  // Direct sun / moon with a PCF shadow term. Only active in shader mode; translucent water
+  // receives the lightmap result (it does not cast into the shadow map either).
+  if (uUseShadows == 1 && uTranslucent < 0.5) {
+    vec3 n = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+    float ndl = max(dot(n, uSunDir), 0.0);
+    if (ndl > 0.0) {
+      // slope-scaled, world-space normal offset + a small constant depth bias
+      float slope = clamp(1.0 - ndl, 0.0, 1.0);
+      vec4 sc = uLightViewProj * vec4(vWorldPos + n * (0.05 + 0.25 * slope), 1.0);
+      vec3 ndc = sc.xyz / max(sc.w, 1e-5);
+      vec2 suv = ndc.xy * 0.5 + 0.5;
+      float sdepth = ndc.z * 0.5 + 0.5;
+      float lit = 1.0;
+      if (sc.w > 0.0 && suv.x > 0.002 && suv.x < 0.998 && suv.y > 0.002 && suv.y < 0.998) {
+        // 3x3 PCF on top of the hardware 2x2 comparison = soft penumbra
+        float sum = 0.0;
+        for (int sx = -1; sx <= 1; sx++) {
+          for (int sy = -1; sy <= 1; sy++) {
+            sum += texture(uShadowMap, vec3(suv + vec2(sx, sy) * uShadowTexel, sdepth - 0.0004));
+          }
+        }
+        lit = sum / 9.0;
+      }
+      // deep shade / caves keep the lightmap value only, like the vanilla direct term
+      float skyMask = smoothstep(0.0, 0.55, vLight.y / 15.0);
+      color += tex.rgb * vColor.rgb * uSunColor * ndl * lit * skyMask;
+    }
+  }
 
   // cylindrical fog like vanilla (max of horizontal distance and vertical distance)
   vec3 d = vWorldPos - uCameraPos;

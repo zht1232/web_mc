@@ -1,13 +1,17 @@
 // Source: net.minecraft.world.entity.monster.Zombie
+//
+// The constructor takes an explicit EntityType so variant subclasses (Drowned,
+// Husk, ZombieVillager) share the AI without duplicating it.
 
 import { Monster } from './Monster.js';
 import { MeleeAttackGoal } from '../ai/goal/MeleeAttackGoal.js';
 import { entityType } from '../EntityType.js';
+import type { EntityType } from '../EntityType.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
 
 export class Zombie extends Monster {
-  constructor(level: ClientLevel) {
-    super(entityType('zombie'), level);
+  constructor(level: ClientLevel, type: EntityType = entityType('zombie')) {
+    super(type, level);
     this.speed = 0.23;
     this.maxHealth = 20; this.health = 20;
     this.attackDamage = 3;

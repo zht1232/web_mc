@@ -61,6 +61,17 @@ export class LivingEntity extends Entity implements Targetable {
   swingProgress = 0;
   attackStrengthScale = 1;
 
+  /**
+   * Port of net/minecraft/world/entity/WalkAnimationState (vanilla fields
+   * speedOld / speed / position), consumed by the entity renderers:
+   *   speed  = smoothed distance moved this tick * 4, clamped to 1
+   *   pos    = running sum of speed (limb swing phase)
+   * Source: LivingEntity#aiStep -> this.walkAnimation.update(distance * 4, 0.4F).
+   */
+  walkAnimSpeed = 0;
+  walkAnimSpeedOld = 0;
+  walkAnimPos = 0;
+
   readonly moveControl = new MoveControl();
   /** indexed by EquipmentSlot.index / armorIndex+? ; 0..5 humanoid, 6 body */
   readonly equipment: (ItemStack | null)[] = new Array(7).fill(null);
@@ -175,6 +186,13 @@ export class LivingEntity extends Entity implements Targetable {
     this.walkDist += Math.hypot(dx, dz) * 0.6;
     this.animSwing = Math.sin(this.walkDist * 0.6662) * 0.5;
 
+    // WalkAnimationState.update(horizontalMovement * 4, 0.4)
+    this.walkAnimSpeedOld = this.walkAnimSpeed;
+    const moved = Math.hypot(dx, dz) * 4;
+    this.walkAnimSpeed += (moved - this.walkAnimSpeed) * 0.4;
+    if (this.walkAnimSpeed > 1) this.walkAnimSpeed = 1;
+    this.walkAnimPos += this.walkAnimSpeed;
+
     // head/body rotation follows the entity yaw (vanilla clamps head to body)
     this.yBodyRot = this.yaw;
     const diff = wrapDegrees(this.yaw - this.yBodyRot);
@@ -251,5 +269,26 @@ export class LivingEntity extends Entity implements Targetable {
   tick(): void {
     this.baseTick();
     this.aiStep();
+    this.tickDamageOverTime();
+  }
+
+  /**
+   * Port of the server-side fire/lava damage that Entity.baseTick and
+   * LivingEntity.baseTick apply (net/minecraft/world/entity/Entity.java:
+   * remainingFireTicks % 20 == 0 -> onFire damage 1; lavaHurt -> 4 damage).
+   */
+  private tickDamageOverTime(): void {
+    if (this.inLava) {
+      this.fireTicks = Math.max(this.fireTicks, 300); // lavaIgnite: 15 s
+      if (this.tickCount % 10 === 0) this.hurt(4, null);
+      return;
+    }
+    if (this.fireTicks > 0) {
+      if (this.inWater) {
+        this.fireTicks = Math.max(0, this.fireTicks - 4);
+      } else if (this.tickCount % 20 === 0) {
+        this.hurt(1, null);
+      }
+    }
   }
 }

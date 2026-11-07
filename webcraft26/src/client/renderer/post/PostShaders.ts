@@ -22,9 +22,19 @@ void main() {
 }`;
 
 /**
- * Final composite: shadowed sun + sky ambient already baked into the HDR buffer by the
- * terrain pass, so this pass only has to add bloom, apply the tone curve, grade, vignette
- * and output to the default framebuffer.
+ * Final composite + tonemap, ported from the pack's composite5/final stages:
+ *   composite5.glsl:36-87   DoCompTonemap (Lottes 2016; TM_EXPOSURE 1.00, TM_CONTRAST 1.05,
+ *                           hdrMax 8, midIn 0.25, midOut 0.25, TM_WHITE_PATH 1.00,
+ *                           TM_DARK_DESATURATION 0.25 - defaults in lib/common.glsl:279-284)
+ *   composite5.glsl:89-104  DoBSLColorSaturation (T_SATURATION 1.00, T_VIBRANCE 1.00)
+ *   composite5.glsl:142     bloom is MIXED in at BLOOM_STRENGTH 0.12 (lib/common.glsl:146)
+ *   final.glsl:155-162      brightness-aware vignette + 1/128 dither
+ *
+ * Colour space note: vanilla MC's render pipeline is display-referred (nothing linearises the
+ * lightmap/texture product), while Complementary's colortex0 is linear because its GBuffer is
+ * written in linear space. We therefore sRGB-decode the scene / bloom before the curve and
+ * keep the exact composite5 LinearToRGB encode afterwards; the round trip leaves mid grey at
+ * mid grey (0.25 in -> 0.257 out), so the vanilla look is preserved instead of washed out.
  */
 export const COMPOSITE_FRAG = `#version 300 es
 precision highp float;
@@ -35,43 +45,86 @@ uniform sampler2D uColor;
 uniform sampler2D uBloom;
 uniform vec2 uResolution;
 
-uniform float uExposure;
-uniform float uBloomStrength;
-uniform float uVignette;
-uniform float uSaturation;
-uniform float uContrast;
+uniform float uExposure;       // TM_EXPOSURE
+uniform float uBloomStrength;  // BLOOM_STRENGTH
 uniform float uTime;
 uniform int uDebug;
 
 out vec4 fragColor;
 
-// ---------------------------------------------------------------- tone mapping
-// Lottes-style filmic curve, the shape Complementary uses. hdrMax is the white point,
-// mid is the middle grey, toe lifts the shadows so caves do not crush to pure black.
-vec3 tonemapLottes(vec3 color) {
-  const float hdrMax = 8.0;
-  const float mid = 0.25;
-  const float contrast = 1.05;
+// GetLuminance, lib/util/commonFunctions.glsl:21
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
 
-  color *= uExposure;
-  color = max(color, vec3(0.0));
+vec3 srgbToLinear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
 
-  // contrast around the middle grey
-  vec3 x = color / hdrMax;
-  vec3 xc = pow(x, vec3(contrast));
-  vec3 curve = xc / (xc + vec3(0.6));
-  vec3 mapped = curve * hdrMax;
-
-  // keep the mid grey anchored, then lift the toe a little
-  float midRef = mid / (mid + 0.6) * hdrMax;
-  mapped = mapped / max(midRef, 1e-4) * mid;
-  mapped = mapped / (1.0 + mapped * (1.0 / hdrMax));
-  return mapped;
+// LinearToRGB, composite5.glsl:31-34
+vec3 linearToSrgb(vec3 c) {
+  const vec3 k = vec3(0.055);
+  return mix((vec3(1.0) + k) * pow(c, vec3(1.0 / 2.4)) - k, 12.92 * c, lessThan(c, vec3(0.0031308)));
 }
 
-vec3 saturateColor(vec3 c, float amount) {
-  float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  return mix(vec3(luma), c, amount);
+// DoCompTonemap, composite5.glsl:36-87 - constants kept exactly as in the pack.
+vec3 tonemapComplementary(vec3 color) {
+  color = uExposure * color;
+  float initialLuminance = dot(color, LUMA);
+
+  vec3 a      = vec3(1.05);  // TM_CONTRAST
+  vec3 d      = vec3(1.0);   // roll-off control
+  vec3 hdrMax = vec3(8.0);   // maximum input brightness
+  vec3 midIn  = vec3(0.25);  // input middle gray
+  vec3 midOut = vec3(0.25);  // output middle gray
+
+  vec3 a_d = a * d;
+  vec3 hdrMaxA = pow(hdrMax, a);
+  vec3 hdrMaxAD = pow(hdrMax, a_d);
+  vec3 midInA = pow(midIn, a);
+  vec3 midInAD = pow(midIn, a_d);
+  vec3 HM1 = hdrMaxA * midOut;
+  vec3 HM2 = hdrMaxAD - midInAD;
+
+  vec3 b = (-midInA + HM1) / (HM2 * midOut);
+  vec3 c = (hdrMaxAD * midInA - HM1 * midInAD) / (HM2 * midOut);
+
+  vec3 colorOut = pow(color, a) / (pow(color, a_d) * b + c);
+
+  colorOut = linearToSrgb(colorOut);
+
+  // Remove tonemapping from darker colors for better readability (composite5.glsl:66-71).
+  const float darkLiftStart = 0.1;
+  const float darkLiftMix = 0.75;
+  float darkLift = smoothstep(darkLiftStart, 0.0, initialLuminance);
+  vec3 smoothColor = pow(color, vec3(1.0 / 2.2));
+  colorOut = mix(colorOut, smoothColor, darkLift * darkLiftMix * max(0.0, 0.55 - abs(1.05 - 1.05)) / 0.55);
+
+  // Path to White (composite5.glsl:73-78); TM_WHITE_PATH = 1.00.
+  const float wpInputCurveStart = 0.0;
+  const float wpInputCurveMax = 16.0;
+  float modifiedLuminance = pow(initialLuminance / wpInputCurveMax, 2.0 - 1.00) * wpInputCurveMax;
+  float whitePath = smoothstep(wpInputCurveStart, wpInputCurveMax, modifiedLuminance);
+  colorOut = mix(colorOut, vec3(1.0), whitePath);
+
+  // Desaturate dark colors (composite5.glsl:80-84); TM_DARK_DESATURATION = 0.25.
+  const float dpInputCurveStart = 0.1;
+  const float dpInputCurveMax = 0.0;
+  float desaturatePath = smoothstep(dpInputCurveStart, dpInputCurveMax, initialLuminance);
+  colorOut = mix(colorOut, vec3(dot(colorOut, LUMA)), desaturatePath * 0.25);
+
+  return clamp(colorOut, 0.0, 1.0);
+}
+
+// DoBSLColorSaturation, composite5.glsl:89-104 with T_SATURATION = 1.00, T_VIBRANCE = 1.00.
+vec3 bslSaturation(vec3 color) {
+  float saturationFactor = 1.00 + 0.07;
+  float grayVibrance = (color.r + color.g + color.b) / 3.0;
+  float graySaturation = grayVibrance;
+  float mn = min(color.r, min(color.g, color.b));
+  float mx = max(color.r, max(color.g, color.b));
+  float sat = (1.0 - (mx - mn)) * (1.0 - mx) * grayVibrance * 5.0;
+  vec3 lightness = vec3((mn + mx) * 0.5);
+  // T_VIBRANCE = 1.0 makes the two vibrance mixes no-ops; kept for fidelity with the source.
+  color = mix(color, mix(color, lightness, 1.0 - 1.00), sat);
+  color = mix(color, lightness, (1.0 - lightness) * (2.0 - 1.00) / 2.0 * abs(1.00 - 1.00));
+  return color * saturationFactor - graySaturation * (saturationFactor - 1.0);
 }
 
 float hash12(vec2 p) {
@@ -81,37 +134,35 @@ float hash12(vec2 p) {
 }
 
 void main() {
-  vec3 color = texture(uColor, vUV).rgb;
-  vec3 bloom = texture(uBloom, vUV).rgb;
+  vec3 color = srgbToLinear(texture(uColor, vUV).rgb);
+  vec3 bloom = texture(uBloom, vUV).rgb;   // prefilter already stores linear values
 
-  if (uDebug == 1) { fragColor = vec4(color, 1.0); return; }
+  if (uDebug == 1) { fragColor = vec4(texture(uColor, vUV).rgb, 1.0); return; }
   if (uDebug == 2) { fragColor = vec4(bloom, 1.0); return; }
 
-  // Complementary mixes the bloom in at 0.12 instead of adding it on top.
-  color = mix(color, max(color, bloom), uBloomStrength);
+  // composite5.glsl:142 - mix, never add.
+  color = mix(color, bloom, uBloomStrength);
 
-  color = tonemapLottes(color);
+  color = tonemapComplementary(color);
+  color = bslSaturation(color);
 
-  // grading: slight contrast, desaturate the shadows, keep the highlights warm
-  color = saturateColor(color, uSaturation);
-  color = clamp((color - 0.5) * uContrast + 0.5, 0.0, 1.0);
-
-  // brightness-aware vignette (Complementary fades it out on bright frames)
-  float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  // final.glsl:155-159 - brightness-aware vignette.
   vec2 d = vUV - 0.5;
-  float vig = 1.0 - uVignette * dot(d, d) * (1.0 - luma * 0.6);
-  color *= vig;
+  float vignette = 1.0 - dot(d, d) * (1.0 - dot(color, LUMA));
+  color *= vignette;
 
-  // fine dithering to hide 8-bit banding in the sky gradient
-  float dither = (hash12(vUV * uResolution + uTime) - 0.5) / 255.0;
-  color += dither;
+  // final.glsl:161-162 - dither before the 8-bit write.
+  float dither = hash12(vUV * uResolution + uTime);
+  color += vec3((dither - 0.25) / 128.0);
 
   fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }`;
 
 /**
- * Bloom prefilter: soft-knee threshold. Keeps a little energy below the threshold so the
- * bloom does not pop when a highlight crosses it.
+ * Bloom prefilter: sRGB-decode (same reason as the composite), 4-tap box downsample that
+ * doubles as the first blur step, then a soft-knee threshold. The pack has no threshold
+ * (composite4.glsl:31-51 blurs the whole scene), so the threshold here is deliberately low
+ * and only trims the mid-tones; the 0.12 mix strength does the heavy lifting.
  */
 export const BLOOM_PREFILTER_FRAG = `#version 300 es
 precision highp float;
@@ -129,6 +180,7 @@ void main() {
   c += texture(uColor, vUV + uTexel * vec2(-0.5,  0.5)).rgb;
   c += texture(uColor, vUV + uTexel * vec2( 0.5,  0.5)).rgb;
   c *= 0.25;
+  c = pow(max(c, vec3(0.0)), vec3(2.2));   // linear working space
 
   float br = max(c.r, max(c.g, c.b));
   float knee = uThreshold * uSoftKnee + 1e-5;
@@ -137,6 +189,17 @@ void main() {
   float contribution = max(soft, br - uThreshold) / max(br, 1e-5);
 
   fragColor = vec4(c * contribution, 1.0);
+}`;
+
+/** Weighted bilinear upsample used in additive mode (ONE, ONE) to reconstruct the bloom. */
+export const UPSAMPLE_FRAG = `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uColor;
+uniform float uWeight;
+out vec4 fragColor;
+void main() {
+  fragColor = vec4(texture(uColor, vUV).rgb * uWeight, 1.0);
 }`;
 
 /** Separable 9-tap gaussian. Run twice (horizontal, vertical) per mip. */
@@ -218,18 +281,35 @@ void main() {
 }`;
 
 /**
- * Depth-only pass used to build the sun shadow map. Reuses the chunk VAO, so the only
- * inputs are the position attribute and the section origin.
+ * Depth-only pass used to build the sun shadow map (TASK-render Phase B.1). It reuses the
+ * chunk VAO, so it needs the same attribute layout as TERRAIN_VERT: position (location 0),
+ * texel UV (1), texture-array layer (2). UV/layer feed the alpha test so leaves and plants
+ * cast cut-out shadows; water is never drawn into this pass by the caller.
  */
 export const SHADOW_VERT = `#version 300 es
 precision highp float;
 layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec2 aUV;      // texel space * 256, same encoding as TERRAIN_VERT
+layout(location = 2) in uint aLayer;
 uniform mat4 uLightViewProj;
 uniform vec3 uChunkOrigin;
+out vec2 vUV;
+flat out uint vLayer;
 void main() {
+  vUV = aUV / 4096.0;
+  vLayer = aLayer;
   gl_Position = uLightViewProj * vec4(aPos + uChunkOrigin, 1.0);
 }`;
 
 export const SHADOW_FRAG = `#version 300 es
 precision highp float;
-void main() {}`;
+precision highp sampler2DArray;
+in vec2 vUV;
+flat in uint vLayer;
+uniform sampler2DArray uAtlas;
+uniform float uAlphaTest;
+out vec4 fragColor;
+void main() {
+  if (texture(uAtlas, vec3(vUV, float(vLayer))).a < uAlphaTest) discard;
+  fragColor = vec4(1.0);
+}`;

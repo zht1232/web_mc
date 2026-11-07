@@ -2,7 +2,7 @@
 // Structure follows Minecraft.runTick / GameRenderer.render.
 
 import { MinecraftData, setMinecraftData } from '../vanilla/world/level/block/state/BlockState.js';
-import { ClientLevel, DAY_LENGTH } from '../vanilla/world/level/ClientLevel.js';
+import { ClientLevel, CHUNK_RETAIN_MARGIN, DAY_LENGTH } from '../vanilla/world/level/ClientLevel.js';
 import { LevelChunk } from '../vanilla/world/level/chunk/LevelChunk.js';
 import { Player, TICK_MS, type PlayerInput } from '../vanilla/world/entity/player/Player.js';
 import { ModelSource } from './renderer/model/ModelSource.js';
@@ -12,16 +12,27 @@ import { LevelRenderer, type Camera } from './renderer/LevelRenderer.js';
 import { LevelChunk as Chunk } from '../vanilla/world/level/chunk/LevelChunk.js';
 import { buildLightmap, computeSkyState, DAY_PERIOD, type SkyState } from './EnvironmentLighting.js';
 import { FontRenderer } from './gui/FontRenderer.js';
-import { GuiTextures, Hud, HUD_SPRITES, type HudState } from './gui/Hud.js';
+import {
+  GuiTextures, Hud, HUD_SPRITES, layoutDebugScreen,
+  type DebugEntryOutput, type HudItemSlot, type HudState, type HudSurvivalExtensions,
+} from './gui/Hud.js';
 import { ItemIconAtlas } from './gui/ItemIconAtlas.js';
 import { AABB, Vec3 } from '../vanilla/core/Geometry.js';
+import { placeBlock, type PlacementContext } from './interaction/Placement.js';
 import { NoiseChunkGenerator, loadWorldgenData } from '../vanilla/world/level/levelgen/NoiseChunkGenerator.js';
 import { ChunkProvider } from './world/ChunkProvider.js';
+import {
+  findSpawnSpot as selectSpawnSpot, refineSpawnColumn, nearestWaterDistance, isTreeBlock,
+} from './world/SpawnSelector.js';
 import { EntityManager } from '../vanilla/world/entity/EntityManager.js';
+import { setSpawnBlockTags } from '../vanilla/world/entity/SpawnPlacements.js';
+import { ExperienceOrb } from '../vanilla/world/entity/ExperienceOrb.js';
+import { LivingEntity } from '../vanilla/world/entity/LivingEntity.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
 import { ScreenManager } from './gui/ScreenManager.js';
 import type { ContainerMenuLike, GuiOptions, ScreenRef } from './gui/Types.js';
 import { SurvivalState, loadWorldData, type PlayerMoved } from '../vanilla/gameplay/SurvivalState.js';
+import { SLOT_OFFHAND } from '../vanilla/world/entity/player/Inventory.js';
 import { ItemStack } from '../vanilla/world/item/ItemStack.js';
 import { ItemEntity } from '../vanilla/world/entity/item/ItemEntity.js';
 import { ContainerInput } from '../vanilla/world/inventory/ClickAction.js';
@@ -38,6 +49,8 @@ import {
   ChunkSerializer, MinecraftDataBlockStateCodec, ReversibleBiomeCodec, type ChunkCodecOptions,
 } from '../vanilla/world/level/storage/ChunkSerializer.js';
 import { PlayerData, type ItemStackData } from '../vanilla/world/level/storage/PlayerData.js';
+import { HandRenderer } from './renderer/hand/HandRenderer.js';
+import { BreakingOverlay } from './renderer/BreakingOverlay.js';
 
 export interface GameOptions {
   renderDistance: number;
@@ -45,6 +58,10 @@ export interface GameOptions {
   fov: number;
   brightness: number;
   gamemode: 'survival' | 'creative';
+  /** Complementary-style HDR pipeline (bloom / tonemap / FXAA). F6 toggles it. */
+  shaders: boolean;
+  /** off / low / medium / high / ultra (TASK-render Phase A.3). */
+  shaderQuality: string;
   seed?: number;
   /** worker pool size override (defaults to min(hardwareConcurrency, 4)) */
   workers?: number;
@@ -56,6 +73,8 @@ const DEFAULT_OPTIONS: GameOptions = {
   fov: 70,
   brightness: 0,
   gamemode: 'creative',
+  shaders: true,
+  shaderQuality: 'high',
   seed: 0x2602c0de,
 };
 
@@ -99,6 +118,12 @@ export class Game {
   weatherRenderer!: WeatherRenderer;
   particles!: ParticleEngine;
   sounds!: SoundEngine;
+  /** First-person arm / held item / screen effects (hand package). */
+  handRenderer!: HandRenderer;
+  /** Block breaking decal (hand package). */
+  breakingOverlay!: BreakingOverlay;
+  /** Screenshot harness: force the break overlay progress (0 = use the live mining progress). */
+  breakingDemo = 0;
   /**
    * EnvCommon.LevelLike declares `rainLevel?: number` publicly, but ClientLevel keeps it private,
    * so the level is not structurally assignable. One cast here keeps both modules untouched.
@@ -206,10 +231,16 @@ export class Game {
 
     this.onStatus?.('Creating world', 0.55);
     this.level = new ClientLevel(this.mc, this.generator, BigInt(this.options.seed ?? 0x2602c0de));
+    // BiomeColors samples the multi-noise biome source for the 5x5 `biomeBlendRadius` average
+    // (vanilla ClientLevel.calculateBlockTint); without it the tint falls back to the single biome.
+    this.biomeColors.setBiomeSource((x, y, z) => this.generator!.getBiome(x, y, z));
 
     this.onStatus?.('Building renderer', 0.65);
     this.renderer = new LevelRenderer(this.gl, this.mc, this.models, this.textures, this.biomeColors);
     this.renderer.renderDistance = this.options.renderDistance;
+    // Initial shader state; the VideoSettings screen and F6 mutate it live afterwards.
+    this.renderer.shadersEnabled = this.options.shaders;
+    this.renderer.shaderQuality = this.options.shaderQuality;
     await this.renderer.init();
 
     this.onStatus?.('Finding spawn point', 0.68);
@@ -229,9 +260,12 @@ export class Game {
     // Survival facade: owns health/hunger/XP, the recipe+loot tables and the player inventory.
     this.onStatus?.('Loading survival data', 0.9);
     const worldData = await loadWorldData('/mc');
+    // Exact 26.2 block tags for the spawn rules (animals_spawnable_on, bats_spawnable_on, ...).
+    setSpawnBlockTags(worldData.tags);
     this.survival = new SurvivalState(this.mc, BigInt(this.options.seed ?? 0x2602c0de), worldData);
     this.survival.gamemode = this.options.gamemode;
     this.survival.onDrop = (stack) => this.dropItem(stack);
+    this.survival.onDeath = () => this.onPlayerDeath();
 
     this.initHotbar();
     this.spawnPlayer();
@@ -242,6 +276,12 @@ export class Game {
     this.entityManager = new EntityManager(this.level, this.player, BigInt(this.options.seed ?? 0x2602c0de), {
       despawnDistance: 128,
     });
+    // PlayerTarget forwards mob/arrow damage here; the survival facade owns armor, i-frames and death.
+    const pt = this.entityManager.getPlayerTarget();
+    if (pt) pt.onHurt = (amount, attacker) => {
+      this.survival.damage(amount, attacker ? attacker.getTypeName() : 'mob');
+    };
+    this.entityManager.explosionHandler = (x, y, z, power) => this.explode(x, y, z, power);
     void this.entityManager.loadSpawnConfig('/mc');
 
     this.onStatus?.('Loading entity textures', 0.96);
@@ -265,6 +305,13 @@ export class Game {
       this.weatherRenderer.init(),
       this.particles.init({ blockArray: this.textures.block.texture }),
     ]);
+
+    // First-person hand + block-breaking decal (hand package). They own their own shaders and
+    // draw into whatever framebuffer is current, so they work with the HDR scene target too.
+    this.onStatus?.('Preparing first-person view', 0.975);
+    this.handRenderer = new HandRenderer(this.gl, this.mc, this.models, this.textures);
+    this.breakingOverlay = new BreakingOverlay(this.gl, this.mc, this.models, this.textures);
+    await Promise.all([this.handRenderer.init('/mc'), this.breakingOverlay.init()]);
 
     this.sounds = new SoundEngine();
     this.sounds.autoUnlock(); // browser autoplay policy: resume on the first gesture
@@ -293,7 +340,7 @@ export class Game {
       callbacks: {
         onPlay: () => this.closeScreen(),
         onOptionChange: (key, value) => { (this.options as unknown as Record<string, unknown>)[key] = value; },
-        onRespawn: () => this.spawnPlayer(),
+        onRespawn: () => this.respawnPlayer(),
         onChatMessage: (text) => { console.log('[chat]', text); },
         onQuit: () => { this.screens.open('title'); },
       },
@@ -343,33 +390,20 @@ export class Game {
   }
 
   /**
-   * Nearest land column above sea level, searched outwards from the origin.
-   *
-   * Only uses `generator.getSurfaceHeight` (pure noise, no chunk generation), so a 512 block
-   * radius costs ~100 ms. The returned column is validated against real block states later in
-   * `spawnPlayer()` — the noise surface alone is not enough because features can place
-   * non-collidable blocks (grass, seagrass) on top of water.
+   * Picks the spawn column before any terrain exists, using only noise queries so the loading
+   * screen still generates chunks around the real spawn only. The search itself is a pure function
+   * in src/client/world/SpawnSelector.ts: it prefers plains/forest/birch_forest, wants water within
+   * 24 blocks and flat ground, and is deterministic for a given seed (~20 ms warm).
    */
   private findSpawnSpot(): { x: number; z: number; y: number } {
-    const sea = this.level.seaLevel;
-    let highest: { x: number; z: number; y: number } = { x: 8, z: 8, y: sea + 1 };
-    const maxRadius = 512;
-    const step = 4;
-    for (let r = 0; r <= maxRadius; r += step) {
-      for (let dz = -r; dz <= r; dz += step) {
-        for (let dx = -r; dx <= r; dx += step) {
-          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-          const x = 8 + dx;
-          const z = 8 + dz;
-          const h = this.generator.getSurfaceHeight(x, z);
-          if (h > highest.y) highest = { x, z, y: h };
-          // Land: the terrain surface is at or above sea level (ocean columns stop below it).
-          if (h >= sea + 1) return { x, z, y: h };
-        }
-      }
-    }
-    // Everywhere is ocean: retreat to the highest ground we sampled.
-    return highest;
+    const spot = selectSpawnSpot(this.generator!);
+    console.log(
+      `[spawn] ${spot.x},${spot.z} ${spot.biome} preferred=${spot.preferred}` +
+      ` water=${spot.waterDistance === Infinity ? 'none' : spot.waterDistance} relief=${spot.relief}` +
+      ` score=${spot.score.toFixed(1)} ${spot.elapsedMs.toFixed(1)}ms` +
+      ` (${spot.columnsSampled} columns, ${spot.biomeQueries} biome queries)`,
+    );
+    return { x: spot.x, z: spot.z, y: spot.y };
   }
 
   /**
@@ -398,6 +432,15 @@ export class Game {
     // The spawn chunk is loaded by now, so the column can be validated with real block states.
     let x = spot.x;
     let z = spot.z;
+    // Trees are placed by the feature pass, which the noise-only search cannot see. Vanilla lands
+    // the player on the block floor, never on a canopy, so shift up to 4 blocks off a leaf/log top.
+    const refined = refineSpawnColumn(x, z, (cx, cz) => {
+      const top = this.level.getHeight(cx, cz);
+      return !isTreeBlock(this.mc.blockOf(this.level.getBlockState(cx, top, cz)).name);
+    }, 4);
+    if (refined.x !== x || refined.z !== z) console.log(`[spawn] moved off a canopy: ${x},${z} -> ${refined.x},${refined.z}`);
+    x = refined.x;
+    z = refined.z;
     let standing = this.findStandingY(x, z);
     if (standing === null) {
       // Spiral again over the already generated area and take the first column that qualifies.
@@ -420,11 +463,24 @@ export class Game {
     this.player = new Player(x + 0.5, (standing ?? fallbackY) + 1 + 0.01, z + 0.5);
     this.player.yaw = 0;
     this.player.pitch = 0;
-    console.log(`[spawn] ${x + 0.5}, ${(standing ?? fallbackY) + 1}, ${z + 0.5} (sea ${this.level.seaLevel}, standing ${standing ?? 'fallback'})`);
+    // Re-measure the water distance with real blocks: the selector's noise estimate is an upper
+    // bound (preliminary surface is lower than the generated terrain, so ponds were invisible).
+    const realWater = nearestWaterDistance(
+      x, z,
+      (wx, wz) => this.mc.isLiquid(this.level.getBlockState(wx, this.level.seaLevel, wz)),
+      24,
+    );
+    console.log(
+      `[spawn] ${x + 0.5}, ${(standing ?? fallbackY) + 1}, ${z + 0.5}` +
+      ` (sea ${this.level.seaLevel}, standing ${standing ?? 'fallback'},` +
+      ` water<=${realWater === Infinity ? '>24' : realWater})`,
+    );
   }
 
   private initHotbar(): void {
-    const defaults = ['grass_block', 'stone', 'oak_planks', 'oak_log', 'glass', 'torch', 'crafting_table', 'oak_stairs', 'water'];
+    // Slot 8 used to be `water`, which is not an item (blank icon and nothing to place);
+    // a fence block is both a real item and a good demo of the multipart connection states.
+    const defaults = ['grass_block', 'stone', 'oak_planks', 'oak_log', 'glass', 'torch', 'crafting_table', 'oak_stairs', 'oak_fence'];
     defaults.forEach((name, i) => {
       const stack = ItemStack.fromName(this.survival.registry, name, 64);
       if (!stack.isEmpty()) this.survival.inventory.setItem(i, stack);
@@ -544,6 +600,14 @@ export class Game {
     if (dayTime > 0) this.level.time = dayTime;
     if (gameTime > 0) this.level.gameTime = gameTime;
 
+    // level.dat WeatherData: Raining / RainTime / Thundering / ThunderTime.
+    this.level.setWeatherState({
+      raining: data.getBooleanOr('Raining', false),
+      rainTime: data.getIntOr('RainTime', 0),
+      thundering: data.getBooleanOr('Thundering', false),
+      thunderTime: data.getIntOr('ThunderTime', 0),
+    });
+
     // The restored position is usually outside the 5x5 spawn area: build its column synchronously
     // so the player does not fall through unloaded chunks on the first tick.
     const px = Math.floor(this.player.pos.x) >> 4;
@@ -618,6 +682,7 @@ export class Game {
         return;
       }
       if (e.code === 'F3') { this.showDebug = !this.showDebug; e.preventDefault(); return; }
+      if (e.code === 'F6') { this.setShaders(!this.renderer.shadersEnabled); e.preventDefault(); return; }
       if (e.code === 'Escape') { this.openScreen('pause'); e.preventDefault(); return; }
       this.keys.add(e.code);
       if (e.code.startsWith('Digit')) {
@@ -868,10 +933,113 @@ export class Game {
    * ClientLevel has no weather simulation (rainLevel is a private field that is never advanced),
    * so the rain pass can only be driven from outside. Exposed for the console / future commands.
    */
-  setRain(amount: number): void {
-    (this.level as unknown as { rainLevel: number }).rainLevel = Math.max(0, Math.min(1, amount));
+  /** Master shaders toggle (F6); exposed as window.__mc.setShaders(on) for verification. */
+  setShaders(on: boolean): void {
+    this.options.shaders = on;
+    this.renderer.shadersEnabled = on;
   }
 
+  /** Also reachable from the console: __mc.setShaderQuality('low' | ... | 'ultra'). */
+  setShaderQuality(quality: string): void {
+    this.options.shaderQuality = quality;
+    this.renderer.shaderQuality = quality;
+  }
+
+  /**
+   * Weather is simulated by ClientLevel (ServerLevel.advanceWeatherCycle); this is a manual
+   * override for the console / tests. Call setRain(-1) to hand control back to the simulation.
+   */
+  setRain(amount: number): void {
+    this.level.setRainOverride(amount < 0 ? null : amount);
+  }
+
+  // ---------------------------------------------------------- survival / damage
+
+  /** Entity.isEyeInFluid(FluidTags.WATER) for the player's eye block. */
+  private playerEyeInWater(): boolean {
+    const x = Math.floor(this.player.pos.x);
+    const y = Math.floor(this.player.eyeY);
+    const z = Math.floor(this.player.pos.z);
+    const state = this.level.getBlockState(x, y, z);
+    return state !== 0 && this.mc.blockOf(state).name === 'water';
+  }
+
+  /** Entity.isInLava for the player's feet block. */
+  private playerInLava(): boolean {
+    const x = Math.floor(this.player.pos.x);
+    const y = Math.floor(this.player.pos.y + 0.1);
+    const z = Math.floor(this.player.pos.z);
+    const state = this.level.getBlockState(x, y, z);
+    return state !== 0 && this.mc.blockOf(state).name === 'lava';
+  }
+
+  /** Vanilla Entity remainingFireTicks for the player (lava/fire ignite, water extinguishes). */
+  private playerFireTicks = 0;
+
+  /**
+   * Explosion (net/minecraft/world/level/Explosion): damages the player by distance and
+   * breaks the blocks of the blast sphere (dropping their loot through the normal loot tables).
+   * Vanilla power 3 leaves a ~3 block radius; resistance/hardness are approximated.
+   */
+  private explode(x: number, y: number, z: number, power: number): void {
+    const f = power * 2;
+    const radius = Math.max(1, Math.floor(f));
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const d = Math.hypot(dx, dy, dz);
+          if (d > f) continue;
+          const bx = x + dx, by = y + dy, bz = z + dz;
+          const state = this.level.getBlockState(bx, by, bz);
+          if (state === 0) continue;
+          const meta = this.mc.blockOf(state);
+          if (meta.hardness < 0 || meta.resistance > 100) continue; // bedrock / barrier
+          const drops = this.survival.breakBlock((qx, qy, qz) => this.level.getBlockState(qx, qy, qz), bx, by, bz);
+          this.level.setBlockState(bx, by, bz, 0);
+          for (const stack of drops) this.dropItem(stack, bx, by, bz);
+          this.breakEffects(state, bx, by, bz);
+        }
+      }
+    }
+    this.updateNeighbors(Math.floor(x), Math.floor(y), Math.floor(z));
+    // Player damage: vanilla Explosion.getSeenPercent ~ (1 - d/f) falloff.
+    const d = Math.hypot(this.player.pos.x - x, this.player.pos.y - y, this.player.pos.z - z);
+    if (d < f) this.survival.damage((1 - d / f) * (power * 7 + 1) * 0.5, 'explosion');
+  }
+
+  /** Player death: drop inventory + XP, open the vanilla DeathScreen. */
+  private onPlayerDeath(): void {
+    const { stacks, experience } = this.survival.dropAllOnDeath();
+    for (const stack of stacks) this.dropItem(stack);
+    if (experience > 0) {
+      const orb = new ExperienceOrb(this.level, this.player.pos.x, this.player.pos.y + 0.5, this.player.pos.z, experience);
+      this.entityManager.spawnEntity(orb);
+    }
+    this.playerFireTicks = 0;
+    this.keys.clear();
+    this.mining = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.screens.open('death', this.survival.lastHurtBy, String(experience));
+  }
+
+  /** Player.respawn (DeathScreen "Respawn" button / callbacks.onRespawn). */
+  private respawnPlayer(): void {
+    this.survival.respawn();
+    this.spawnPlayer();
+    this.playerFireTicks = 0;
+    this.keys.clear();
+    // The entity manager holds a PlayerTarget proxy that points at the old Player instance.
+    this.entityManager.setPlayer(this.player);
+    this.screens.close();
+    this.autosave?.resume();
+  }
+
+  /**
+   * Right-click placement (vanilla PlayerGameMode.useItemOn -> BlockItem.place).
+   * The rule table itself lives in interaction/Placement.ts (port of BlockItem.place +
+   * Block.getStateForPlacement + BlockState.canSurvive); this method only builds the
+   * BlockPlaceContext equivalent from the crosshair hit and the player state.
+   */
   private useItem(): void {
     if (this.useCooldown > 0) return;
     this.useCooldown = 4;
@@ -881,50 +1049,43 @@ export class Game {
     const held = this.survival.getSelectedStack();
     if (!held || held.isEmpty() || !held.item || !held.item.block) return;
     const item = held.item;
-    const targetX = hit.x + [0, 0, 0, 0, -1, 1][hit.face];
-    const targetY = hit.y + [0, 1, 0, 0, 0, 0][hit.face];
-    const targetZ = hit.z + [-1, 0, 1, -1, 0, 0][hit.face];
-    const existing = this.level.getBlockState(targetX, targetY, targetZ);
-    if (existing !== 0 && !this.mc.isLiquid(existing)) return;
-
-    const state = this.stateForPlacement(item.block, hit.face, targetX, targetY, targetZ);
-    this.level.setBlockState(targetX, targetY, targetZ, state);
-    this.updateNeighbors(targetX, targetY, targetZ);
+    const ctx: PlacementContext = {
+      x: hit.x, y: hit.y, z: hit.z,
+      face: hit.face,
+      hitX: hit.point.x, hitY: hit.point.y, hitZ: hit.point.z,
+      yaw: this.player.yaw,
+      pitch: this.player.pitch,
+      heldBlockName: item.block,
+      // BlockItem.canPlace -> Level.isUnobstructed: entity collision shapes block placement
+      isUnobstructed: (state, x, y, z) => this.isUnobstructed(state, x, y, z),
+      // client redstone is not simulated (vanilla Level.hasNeighborSignal is a server-side query)
+      hasNeighborSignal: () => false,
+    };
+    const plan = placeBlock(this.mc, this.level, item.block, ctx);
+    if (!plan) return;
+    this.updateNeighbors(plan.x, plan.y, plan.z);
+    for (const extra of plan.extras) this.updateNeighbors(extra.x, extra.y, extra.z);
     if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
   }
 
-  /** Simplified Block.getStateForPlacement for the shapes that matter in play. */
-  private stateForPlacement(blockName: string, face: number, x: number, y: number, z: number): number {
-    let state = this.mc.stateOf(blockName);
-    const props = this.mc.blocks[this.mc.blockByName.get(blockName)!].props.map((p) => p.name);
-
-    if (props.includes('axis')) {
-      const axis = face === 0 || face === 1 ? 'y' : face === 2 || face === 3 ? 'z' : 'x';
-      state = this.mc.withProp(state, 'axis', axis);
+  /**
+   * Vanilla Level.isUnobstructed(BlockState, BlockPos, CollisionContext) (EntityGetter.java:33):
+   * an entity that blocks building — a LivingEntity (player or mob), not an item entity — inside
+   * the collision shape prevents the placement. Only visible with CollisionContext.placementContext
+   * from BlockItem.canPlace; that is why the old code could put blocks into the player.
+   */
+  private isUnobstructed(state: number, x: number, y: number, z: number): boolean {
+    const shapes = this.mc.collision(state);
+    if (shapes.length === 0) return true;
+    const blockedBy = (bb: AABB): boolean => shapes.some((s) => s.move(x, y, z).intersects(bb));
+    if (blockedBy(this.player.boundingBox())) return false;
+    for (const e of this.entityManager.getEntities()) {
+      // Entity.blocksBuilding defaults to false; LivingEntity sets it true (LivingEntity.java:291).
+      // Arrows, XP orbs and item entities therefore do not block placement (vanilla behaviour).
+      if (!(e instanceof LivingEntity) || e.isRemoved()) continue;
+      if (blockedBy(e.getBoundingBox())) return false;
     }
-    if (props.includes('facing')) {
-      const horizontal = [2, 3, 4, 5].includes(face) ? face : (Math.round(this.player.yaw / 90) % 4 + 4) % 4;
-      const name = ['down', 'up', 'north', 'south', 'west', 'east'][horizontal === 0 ? 2 : horizontal === 1 ? 5 : horizontal === 2 ? 3 : 4];
-      state = this.mc.withProp(state, 'facing', name);
-    }
-    if (props.includes('half')) {
-      const half = face === 0 ? 'top' : face === 1 ? 'bottom'
-        : (this.player.pitch > 0 ? 'top' : 'bottom');
-      state = this.mc.withProp(state, 'half', half);
-    }
-    if (props.includes('type') && blockName.endsWith('slab')) {
-      const below = this.level.getBlockState(x, y, z);
-      state = this.mc.withProp(state, 'type', face === 1 ? 'bottom' : 'bottom');
-    }
-    if (props.includes('face')) {
-      const faceName = face === 1 ? 'floor' : face === 0 ? 'ceiling' : 'wall';
-      state = this.mc.withProp(state, 'face', faceName);
-    }
-    if (props.includes('waterlogged')) {
-      const above = this.level.getBlockState(x, y + 1, z);
-      state = this.mc.withProp(state, 'waterlogged', this.mc.blockOf(above).name === 'water' ? 'true' : 'false');
-    }
-    return state;
+    return true;
   }
 
   /** Recomputes fence/wall/pane connections and stair shapes next to a change. */
@@ -1036,7 +1197,16 @@ export class Game {
       sprint: this.keys.has('ControlLeft'),
       jumpPressed: false,
     };
+    const wasOnGround = this.player.onGround;
+    const fallDistanceBefore = this.player.fallDistance;
     this.player.tick(this.level, input);
+
+    // Fall damage: LivingEntity.causeFallDamage runs when a falling entity lands. Player.tick
+    // resets fallDistance on the landing tick, so use the value accumulated before the move.
+    if (!this.survival.isDead && !wasOnGround && this.player.onGround && !this.player.flying) {
+      const fall = Math.max(fallDistanceBefore, this.player.fallDistance);
+      if (fall > 0) this.survival.fallDamage(fall);
+    }
 
     if (this.attackCooldown > 0) this.attackCooldown--;
     if (this.useCooldown > 0) this.useCooldown--;
@@ -1044,15 +1214,24 @@ export class Game {
 
     // survival: health/hunger/XP + inventory cooldowns
     this.survival.gamemode = this.options.gamemode;
+    const inLava = this.playerInLava();
+    if (inLava) this.playerFireTicks = 300;
+    else if (this.player.inWater) this.playerFireTicks = Math.max(0, this.playerFireTicks - 4);
+    else if (this.playerFireTicks > 0) this.playerFireTicks--;
     const moved: PlayerMoved = {
       sprint: this.player.sprinting,
       jumped: input.jump && this.player.onGround,
       swam: this.player.inWater,
+      underwater: this.playerEyeInWater(),
+      inLava,
     };
     this.survival.tick(moved);
+    this.survival.tickEnvironment(inLava, this.player.inWater, this.playerFireTicks > 0);
 
     // mining progress (BlockBreaking); replaces the hand-written breakProgress loop
     this.updateMining();
+    // first-person animations (swing / equip / bob) advance on the same 20 Hz clock
+    this.handRenderer.tick(this.player, this.survival);
     this.playStepSound();
 
     this.particles.tick();
@@ -1068,6 +1247,9 @@ export class Game {
     // finished chunks are applied here under a time budget
     this.ensureChunksAround();
     this.chunkProvider.drain(this.level, 6);
+    // ...and drop the chunks that fell out of the retention band behind us (vanilla
+    // ClientChunkCache), so a long trip does not keep the whole visited world in memory
+    this.unloadFarChunks();
 
     // entities last so they see the chunks that were just applied
     this.entityManager.tick();
@@ -1131,6 +1313,32 @@ export class Game {
     }
   }
 
+  /**
+   * Port of ClientChunkCache.dropOutOfRangeChunks / calculateStorageRange: chunks farther than
+   * renderDistance + CHUNK_RETAIN_MARGIN are dropped, the margin being the vanilla hysteresis band
+   * that stops walking back and forth over a chunk border from thrashing the cache.
+   *
+   * Order matters: dirty chunks are handed to the save layer first (flushDirty clears
+   * LevelChunk.dirtySections synchronously while it serializes, so a dirty chunk that missed this
+   * call's 16-chunk batch is simply kept until the next tick), then the clean far chunks are
+   * removed, their sections pruned from the renderer and their mobs unloaded.
+   * Chunks the player has edited are pinned inside ClientLevel.unloadFarChunks(): there is no
+   * save-first chunk load path yet, so regenerating one from the seed would show stale terrain.
+   */
+  private unloadFarChunks(): void {
+    const pcx = Math.floor(this.player.pos.x) >> 4;
+    const pcz = Math.floor(this.player.pos.z) >> 4;
+    const retain = this.options.renderDistance + CHUNK_RETAIN_MARGIN;
+    if (this.level.countChunksOutside(pcx, pcz, retain) === 0) return; // fast path, no allocation
+    if (this.saveManager && this.level.hasDirtyChunksOutside(pcx, pcz, retain)) {
+      void this.saveManager.flushDirty(this.level, this.player, 4).catch(() => {});
+    }
+    const removed = this.level.unloadFarChunks(pcx, pcz, retain);
+    if (removed.length === 0) return;
+    for (const c of removed) this.entityManager.unloadChunk(c.x, c.z);
+    this.renderer.prune(this.player.pos.x, this.player.pos.z);
+  }
+
   private resize(): void {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = window.innerWidth;
@@ -1144,6 +1352,7 @@ export class Game {
     this.guiCanvas.style.width = `${w}px`;
     this.guiCanvas.style.height = `${h}px`;
     this.gl.viewport(0, 0, this.glCanvas.width, this.glCanvas.height);
+    this.renderer?.resize(this.glCanvas.width, this.glCanvas.height);
     this.screens?.resize(w, h);
   }
 
@@ -1157,11 +1366,32 @@ export class Game {
 
   private render(partial: number): void {
     const gl = this.gl;
-    const skyState = computeSkyState(this.level.time + partial);
+    // Time of day timeline (Timelines.OVERWORLD_DAY) + weather attribute layers +
+    // per-biome visual attributes. `options.brightness` is the vanilla gamma slider
+    // (LightmapRenderStateExtractor.java:68 -> core/lightmap.fsh BrightnessFactor).
+    const biomeName = this.generator.biomeName(
+      this.level.getBiome(Math.floor(this.player.pos.x), Math.floor(this.player.pos.y), Math.floor(this.player.pos.z)),
+    );
+    const skyState = computeSkyState(this.level.time + partial, this.options.brightness, {
+      rainLevel: this.level.getRainLevel(),
+      thunderLevel: this.level.getThunderLevel(),
+      biomeName,
+    });
     this.sky = skyState;
 
     const lightmap = buildLightmap(skyState, this.lightmapData);
-    const key = `${skyState.skyFactor.toFixed(3)}|${skyState.skyLightColor.join(',')}|${skyState.brightness}`;
+    // Every SkyState field the lightmap formula reads must be part of the cache key.
+    const key = [
+      skyState.skyFactor.toFixed(3),
+      skyState.skyLightColor.map((v) => v.toFixed(3)).join(','),
+      skyState.blockLightTint.map((v) => v.toFixed(3)).join(','),
+      skyState.ambientColor.map((v) => v.toFixed(3)).join(','),
+      skyState.nightVisionIntensity.toFixed(3),
+      skyState.nightVisionColor.map((v) => v.toFixed(3)).join(','),
+      skyState.darknessScale.toFixed(3),
+      skyState.bossOverlayWorldDarkening.toFixed(3),
+      skyState.brightness.toFixed(3),
+    ].join('|');
     this.textures.updateLightmap(lightmap, key);
     this.textures.animate(this.level.time);
 
@@ -1180,6 +1410,10 @@ export class Game {
     gl.clearColor(skyState.fogColor[0], skyState.fogColor[1], skyState.fogColor[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+    // Everything below this line is drawn into the HDR scene target when shaders are on.
+    // Off mode binds nothing, so this is the exact pre-shader code path (pixel identical).
+    this.renderer.beginScene();
+
     // chunks are rebuilt lazily; do it before drawing
     this.renderer.update(this.level, camera.x, camera.z, 6);
 
@@ -1189,6 +1423,8 @@ export class Game {
     // NOTE: SkyRenderer's timeOfDay is `dayTime / 24000` (0 = sunrise, .25 = noon). That is *not*
     // ClientLevel.getTimeOfDay(), which is phase-shifted by -0.75 (0 = midnight), so convert.
     const skyPhase = (((this.level.time % DAY_LENGTH) + DAY_LENGTH) % DAY_LENGTH) / DAY_LENGTH;
+    // FogRenderer#setupFog: FogData.skyEnd = min(renderDistanceBlocks, SKY_FOG_END_DISTANCE).
+    this.skyRenderer.skyFogEnd = Math.min(skyState.skyFogEndDistance, this.renderer.renderDistance * 16);
     this.skyRenderer.render(
       this.renderer.viewMatrix,
       this.renderer.projection,
@@ -1202,6 +1438,9 @@ export class Game {
     this.renderer.render(this.level, camera, skyState, partial);
 
     // entities: viewProjection is refreshed by renderer.render() above
+    // (mobs package) hand the entity pass the shared lightmap + fog so mobs are
+    // lit/fogged exactly like the terrain they stand on.
+    this.entityRenderer.setEnvironment(this.textures.lightmap, skyState, this.renderer.renderDistance);
     this.entityRenderer.render(
       this.entityManager.getEntities(),
       this.renderer.viewProjection,
@@ -1211,17 +1450,48 @@ export class Game {
 
     // particles after the entities, weather over everything (vanilla order)
     this.particles.render(this.renderer.viewProjection, partial);
-    this.weatherRenderer.render(this.renderer.viewProjection, camera, this.level.time, this.levelLike);
 
+    // Block breaking decal (net.minecraft.client.renderer.LevelRenderer#submitBlockDestroyAnimation):
+    // progress comes from SurvivalState.breaking (08-regression issue 4) and the stage is
+    // floor(progress * 10). `breakingDemo` is the screenshot harness override.
     const hit = this.raycast();
+    if (hit) {
+      const progress = this.breakingDemo > 0
+        ? this.breakingDemo
+        : (this.mining && this.mouseLocked ? this.survival.breaking.progress : 0);
+      if (progress > 0) {
+        const state = this.level.getBlockState(hit.x, hit.y, hit.z);
+        if (state !== 0) {
+          this.breakingOverlay.render(this.level, camera, this.renderer.viewProjection, hit, state, progress);
+        }
+      }
+    }
+
+    // Weather uses the particle pipeline: lightmap-sampled light coords + environmental fog.
+    this.weatherRenderer.lightmap = this.textures.lightmap;
+    this.weatherRenderer.render(this.renderer.viewProjection, camera, this.level.time, this.levelLike, {
+      start: skyState.fogStartDistance,
+      end: skyState.fogEndDistance,
+      color: skyState.fogColor,
+    });
+
     if (hit && this.mouseLocked) {
       const state = this.level.getBlockState(hit.x, hit.y, hit.z);
-      const boxes = this.mc.outline(state);
-      if (boxes.length) {
-        const b = boxes[0];
+      // LevelRenderer#submitHitOutline: ARGB.black(102) => rgba(0, 0, 0, 0.4), and the *whole*
+      // outline VoxelShape is drawn (every box, not just the first one).
+      for (const b of this.mc.outline(state)) {
         this.renderer.drawSelection(hit.x + b.minX, hit.y + b.minY, hit.z + b.minZ, hit.x + b.maxX, hit.y + b.maxY, hit.z + b.maxZ);
       }
     }
+
+    // GameRenderer#renderLevel: the hand is drawn last, with its own hud projection (FOV 70) and
+    // a cleared depth buffer, then ScreenEffectRenderer's underwater overlay.
+    if (this.screens.current === null) {
+      this.handRenderer.render(partial, camera, this.player, this.level, this.survival);
+    }
+
+    // Resolve the HDR frame (bloom -> tonemap -> FXAA) into the default framebuffer.
+    this.renderer.endScene();
 
     this.renderHud();
 
@@ -1229,6 +1499,7 @@ export class Game {
     this.screens.render(partial);
   }
 
+  /** HudState assembly + canvas setup. Layout itself lives in gui/Hud.ts (Hud.java port). */
   private renderHud(): void {
     const ctx = this.guiCtx;
     const scale = this.guiScale;
@@ -1239,43 +1510,157 @@ export class Game {
     const w = window.innerWidth / scale;
     const h = window.innerHeight / scale;
 
-    const debug = [
-      `Minecraft 26.2 (web) ${this.fps} fps`,
-      `XYZ: ${this.player.pos.x.toFixed(3)} / ${this.player.pos.y.toFixed(3)} / ${this.player.pos.z.toFixed(3)}`,
-      `Chunk: ${Math.floor(this.player.pos.x) >> 4} ${Math.floor(this.player.pos.z) >> 4}`,
-      `Biome: ${this.generator.biomeName(this.level.getBiome(Math.floor(this.player.pos.x), Math.floor(this.player.pos.y), Math.floor(this.player.pos.z)))}`,
-      `Light: ${this.level.getBlockLight(Math.floor(this.player.pos.x), Math.floor(this.player.pos.y), Math.floor(this.player.pos.z))} sky ${this.level.getSkyLight(Math.floor(this.player.pos.x), Math.floor(this.player.pos.y), Math.floor(this.player.pos.z))}`,
-      `Time: ${Math.floor(this.level.time)} (${this.level.isDay() ? 'day' : 'night'})`,
-      `Chunks: ${this.level.chunks.size} meshed ${this.renderer.meshStats.sections}`,
-      `Entities: ${this.entityManager.getEntities().length} draw ${this.entityRenderer.lastDrawCallCount}`,
-      `Gen: ${this.chunkProvider.usingWorkers ? `${this.chunkProvider.workerCount}w` : 'sync'} queue ${this.chunkProvider.queueLength} inflight ${this.chunkProvider.inflight}`,
-      `Mesh: ${this.renderer.meshStats.ms.toFixed(1)} ms / ${this.renderer.meshStats.count} sections`,
-    ];
+    // survival.airSupply / maxAirSupply / armorValue exist since the survival package landed; the
+    // optional cast only covers fields that may still be missing (absorption / status effects).
+    const ext = this.survival as unknown as HudSurvivalExtensions;
+    const toSlot = (s: ItemStack): HudItemSlot => ({
+      item: s.item ? s.item.id : -1,
+      count: s.getCount(),
+      damage: s.getDamageValue(),
+      maxDamage: s.getMaxDamage(),
+      popTime: s.getPopTime(),
+    });
+    const offhandStack = this.survival.inventory.getItem(SLOT_OFFHAND);
+    const offhand = offhandStack.isEmpty() ? null : toSlot(offhandStack);
 
     const state: HudState = {
-      // survival.health is in half-hearts (20 = full), which is what HudState expects
+      // Player.getHealth() is in half-hearts (20 = full); HudState keeps the vanilla unit.
       hearts: Math.max(0, Math.ceil(this.survival.health)),
       maxHearts: this.survival.maxHealth,
+      absorption: ext.absorption ?? 0,
+      heartKind: ext.heartKind ?? 'normal',
+      hardcore: ext.hardcore ?? false,
       hunger: this.survival.hunger,
-      air: 300,
+      saturation: this.survival.saturation,
+      hungerEffect: ext.hungerEffect ?? false,
+      // Entity.getAirSupply() / getMaxAirSupply(): 300 = full, and 300 hides the bubbles.
+      air: this.survival.airSupply,
+      airMax: this.survival.maxAirSupply,
+      underwater: this.playerEyeInWater(),
+      armor: this.survival.armorValue,
       xpProgress: this.survival.experience,
       xpLevel: this.survival.level,
-      hotbar: this.survival.hotbarStacks().map((s) => ({
-        item: s.item ? s.item.id : -1,
-        count: s.getCount(),
-        damage: s.getDamageValue(),
-      })),
+      hotbar: this.survival.hotbarStacks().map(toSlot),
+      offhand,
+      offhandLeft: true, // main arm RIGHT -> offhand arm LEFT (HumanoidArm.getOpposite)
       selectedSlot: this.selectedSlot,
       itemNameTimer: this.itemNameTimer,
       itemName: this.itemName,
-      debug,
+      ...this.buildDebugColumns(),
       showDebug: this.showDebug,
-      fps: this.fps,
       gamemode: this.options.gamemode,
+      tickCount: this.tickCount,
     };
 
     this.hud.render(ctx, state, w, h, (c, item, x, y, size) => {
       this.icons.draw(c, item, x, y, size);
     });
+  }
+
+  /**
+   * The F3 screen. Format strings and the left/right split are copied from
+   * net.minecraft.client.gui.components.DebugScreenOverlay + DebugScreenEntries (26.2): entries are
+   * visited in Identifier path order, priority lines alternate columns, plain lines and groups are
+   * split in half. 26.2's DEFAULT profile only enables 9 entries (all IN_OVERLAY); biome/light/entity
+   * stats are enabled here because TASK-hud requires them (vanilla toggles them in the debug options).
+   */
+  private buildDebugColumns(): Pick<HudState, 'debugLeft' | 'debugRight'> {
+    const pos = this.player.pos;
+    const feetX = Math.floor(pos.x);
+    const feetY = Math.floor(pos.y);
+    const feetZ = Math.floor(pos.z);
+    const chunkX = feetX >> 4;
+    const chunkZ = feetZ >> 4;
+    // Mth.wrapDegrees(float)
+    const wrapDegrees = (deg: number): number => {
+      let f = deg % 360;
+      if (f >= 180) f -= 360;
+      if (f < -180) f += 360;
+      return f;
+    };
+    const pad2 = (v: number): string => (v < 10 ? `0${v}` : String(v));
+    // The clone's yaw is mirrored vs vanilla (cameraBasis forward = (sin yaw, ., cos yaw)); vanilla
+    // displays -yaw so that Direction.fromYRot lines up again.
+    const yaw = wrapDegrees(-this.player.yaw);
+    const pitch = wrapDegrees(this.player.pitch);
+    const facing = ['south', 'west', 'north', 'east'][Math.floor((yaw + 8) / 90) & 3];
+    const faceString = facing === 'north' ? 'Towards negative Z'
+      : facing === 'south' ? 'Towards positive Z'
+        : facing === 'west' ? 'Towards negative X' : 'Towards positive X';
+
+    const sky = this.level.getSkyLight(feetX, feetY, feetZ);
+    const block = this.level.getBlockLight(feetX, feetY, feetZ);
+    const rawBrightness = this.level.getBrightness(feetX, feetY, feetZ);
+    const biome = this.generator.biomeName(this.level.getBiome(feetX, feetY, feetZ));
+    const entities = this.entityManager.getEntities();
+    const stats = this.renderer.meshStats;
+    const vendor = String(this.gl.getParameter(this.gl.VENDOR) ?? '');
+    const gpu = String(this.gl.getParameter(this.gl.RENDERER) ?? '');
+    const glVersion = String(this.gl.getParameter(this.gl.VERSION) ?? '');
+    const target = this.raycast(20);
+    const targetLines: string[] = [];
+    if (target) {
+      targetLines.push(`Targeted Block: ${target.x}, ${target.y}, ${target.z}`);
+      targetLines.push(`minecraft:${this.mc.blockOf(this.level.getBlockState(target.x, target.y, target.z)).name}`);
+    }
+
+    const entries: DebugEntryOutput[] = [
+      // biome
+      { lines: [`Biome: minecraft:${biome}`] },
+      // chunk_generation_stats
+      { lines: [`Gen: ${this.chunkProvider.usingWorkers ? `${this.chunkProvider.workerCount}w` : 'sync'} queue ${this.chunkProvider.queueLength} inflight ${this.chunkProvider.inflight}`] },
+      // chunk_render_stats (LevelExtractor.sectionStatistics: "C: rendered/total ... D: distance, stats")
+      { lines: [`C: ${stats.sections} D: ${this.options.renderDistance}, ${stats.ms.toFixed(1)} ms`] },
+      // chunk_source_stats
+      { lines: [`ChunkSource: ${this.level.chunks.size} chunks, queue ${this.chunkProvider.queueLength}`] },
+      // day_count
+      { lines: [`Day #${Math.floor(this.level.time / 24000) + 1}`] },
+      // entity_render_stats (LevelExtractor.entityStatistics: "E: rendered/total, SD: n")
+      { lines: [`E: ${this.entityRenderer.lastDrawCallCount}/${entities.length}`] },
+      // fps (DebugEntryFps: "%d fps T: %s%s"; limit 260 prints "inf", no present mode in a browser)
+      { priority: [`${this.fps} fps T: inf`] },
+      // game_version (DebugEntryVersion)
+      { priority: ['Minecraft 26.2 (web/vanilla)'] },
+      // light_levels (DebugEntryLight)
+      { groups: [{ id: 'light', lines: [`Client Light: ${rawBrightness} (${sky} sky, ${block} block)`] }] },
+      // looking_at_block_state (DebugEntryLookingAt.BlockStateInfo, pick(20))
+      { groups: [{ id: 'looking_at_block', lines: targetLines }] },
+      // player_position (DebugEntryPosition)
+      {
+        groups: [{
+          id: 'position',
+          lines: [
+            `XYZ: ${pos.x.toFixed(3)} / ${pos.y.toFixed(5)} / ${pos.z.toFixed(3)}`,
+            `Block: ${feetX} ${feetY} ${feetZ}`,
+            `Chunk: ${chunkX} ${feetY >> 4} ${chunkZ} [${chunkX & 31} ${chunkZ & 31} in r.${chunkX >> 5}.${chunkZ >> 5}.mca]`,
+            `Facing: ${facing} (${faceString}) (${yaw.toFixed(1)} / ${pitch.toFixed(1)})`,
+            'minecraft:overworld FC: 0',
+          ],
+        }],
+      },
+      // player_section_position
+      {
+        groups: [{
+          id: 'position',
+          lines: [`Section-relative: ${pad2(feetX & 15)} ${pad2(feetY & 15)} ${pad2(feetZ & 15)}`],
+        }],
+      },
+      // simple_performance_impactors
+      { lines: ['fancy-clouds B: 0', 'Filtering: none'] },
+      // system_specs (DebugEntrySystemSpecs)
+      {
+        groups: [{
+          id: 'system',
+          lines: [
+            `Display: ${this.glCanvas.width}x${this.glCanvas.height} (${vendor})`,
+            `GPU: ${gpu}`,
+            `GL: ${glVersion}`,
+          ],
+        }],
+      },
+    ];
+
+    const { left, right } = layoutDebugScreen(entries);
+    return { debugLeft: left, debugRight: right };
   }
 }

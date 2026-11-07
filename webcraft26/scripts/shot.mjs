@@ -2,22 +2,13 @@
 // Usage: node scripts/shot.mjs [url] [outFile] [waitMs]
 
 import { chromium } from 'playwright';
+import { launchOptions } from './lib/browser.mjs';
 
 const url = process.argv[2] ?? 'http://127.0.0.1:5174/';
 const out = process.argv[3] ?? 'shots/shot.png';
 const waitMs = Number(process.argv[4] ?? 25000);
 
-const browser = await chromium.launch({
-  headless: true,
-  args: [
-    '--use-gl=angle',
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--disable-gpu-sandbox',
-    '--no-sandbox',
-    '--ignore-gpu-blocklist',
-  ],
-});
+const browser = await chromium.launch(launchOptions());
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 
 const logs = [];

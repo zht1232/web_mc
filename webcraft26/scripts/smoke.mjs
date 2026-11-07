@@ -9,6 +9,7 @@
 
 import { chromium } from 'playwright';
 import { PNG } from 'pngjs';
+import { chromePath, GL_ARGS } from './lib/browser.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -156,19 +157,8 @@ function startGlPolling() {
 }
 
 async function launch(mode) {
-  const args =
-    mode === 'swiftshader'
-      ? [
-          '--use-gl=angle',
-          '--use-angle=swiftshader',
-          '--enable-unsafe-swiftshader',
-          '--disable-gpu-sandbox',
-          '--no-sandbox',
-          '--ignore-gpu-blocklist',
-          '--enable-precise-memory-info',
-        ]
-      : ['--no-sandbox', '--ignore-gpu-blocklist', '--enable-precise-memory-info'];
-  const b = await chromium.launch({ headless: process.env.SMOKE_HEADED !== '1', args });
+  const args = [...GL_ARGS, '--enable-precise-memory-info'];
+  const b = await chromium.launch({ headless: process.env.SMOKE_HEADED !== '1', args, executablePath: chromePath() });
   const p = await b.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
   return { b, p };
 }

@@ -757,6 +757,12 @@ export class LevelRenderer {
     this.terrain.set1f('uAlphaTest', 0.1);
     this.terrain.set1f('uTranslucent', 0);
     this.terrain.set1i('uDebug', this.debugMode);
+    // Water waves belong to the Complementary-style look: only with the shader pipeline on (Off stays vanilla-flat)
+    const waterStill = this.textures.blockTextureLayer('block/water_still');
+    const waterFlow = this.textures.blockTextureLayer('block/water_flow');
+    const waves = this.post.enabled && waterStill >= 0;
+    this.terrain.set2i('uWaterLayers', waves ? waterStill : -1, waves ? waterFlow : -1);
+    this.terrain.set1f('uWaveTime', performance.now() / 1000);
     // Direct sun / moon term is only enabled when a shadow map was rendered this frame; with
     // uUseShadows = 0 the fragment shader keeps the exact vanilla lightmap result.
     this.terrain.set1i('uUseShadows', this.shadowsActive ? 1 : 0);

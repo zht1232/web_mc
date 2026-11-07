@@ -13,6 +13,10 @@ layout(location = 4) in vec4 aColor;
 uniform mat4 uViewProj;
 uniform vec3 uChunkOrigin;
 uniform float uTime;
+// Complementary WAVING_WATER_VERTEX (lib/materials/materialMethods/wavingBlocks.glsl:69-90): water surface vertices
+// bob by two sines. x = water_still layer, y = water_flow layer (-1 disables), uWaveTime is frameTimeCounter in seconds.
+uniform ivec2 uWaterLayers;
+uniform float uWaveTime;
 
 out vec2 vUV;
 flat out uint vLayer;
@@ -23,6 +27,13 @@ out vec3 vWorldPos;
 
 void main() {
   vec3 world = aPos + uChunkOrigin;
+  // uWaveTime stays 0 in programs that never set it (icon atlas), which keeps the displacement off there
+  if (uWaveTime > 0.0 && uWaterLayers.x >= 0 && (int(aLayer) == uWaterLayers.x || int(aLayer) == uWaterLayers.y) && fract(world.y + 0.005) > 0.06) {
+    float t = uWaveTime * 6.0;
+    vec2 p = world.xz * 14.0;
+    float wave = sin(t * 0.7 - p.y * 0.14 + p.x * 0.07) + sin(t * 0.5 - p.y * 0.10 + p.x * 0.05);
+    world.y += (wave * 0.1) * 0.125 - 0.05;
+  }
   vec4 clip = uViewProj * vec4(world, 1.0);
   gl_Position = clip;
   vUV = aUV / 4096.0;      // 16 texels -> 1.0

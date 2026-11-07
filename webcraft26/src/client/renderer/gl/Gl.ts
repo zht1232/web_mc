@@ -47,6 +47,11 @@ export class GlProgram {
     if (loc) this.gl.uniform1i(loc, v);
   }
 
+  set2i(name: string, x: number, y: number): void {
+    const loc = this.uniform(name);
+    if (loc) this.gl.uniform2i(loc, x, y);
+  }
+
   set2f(name: string, x: number, y: number): void {
     const loc = this.uniform(name);
     if (loc) this.gl.uniform2f(loc, x, y);

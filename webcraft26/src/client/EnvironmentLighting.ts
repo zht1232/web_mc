@@ -813,6 +813,23 @@ export function computeSkyState(worldTime: number, brightnessOption = 0, opts: S
   };
 }
 
+/**
+ * Level.isBrightOutside(): `!hasFixedTime() && skyDarken < 4` (Level.java:384).
+ * Gameplay only - the renderer never reads this.
+ */
+export function isBrightOutside(state: SkyState): boolean {
+  return state.skyDarken < 4;
+}
+
+/**
+ * LevelReader.getEffectiveSkyBrightness(pos) = raw sky light - skyDarken
+ * (LevelReader.java:173-175), and getRawBrightness uses the same subtraction.
+ * This is the gameplay light level used by mob spawning / daylight sensors.
+ */
+export function effectiveSkyBrightness(rawSkyLight: number, state: SkyState): number {
+  return rawSkyLight - state.skyDarken;
+}
+
 // ---------------------------------------------------------------------------
 // Lightmap: core/lightmap.fsh evaluated on the CPU for the 16x16 RGBA texture.
 // x = block light level, y = sky light level, both 0..15.

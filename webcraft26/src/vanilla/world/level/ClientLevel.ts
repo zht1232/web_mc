@@ -446,8 +446,9 @@ export class ClientLevel {
     this.gameTime += dt;
     this.lastTime = this.time;
     if (doDaylightCycle) {
+      // dt is in game ticks (1 per 20 Hz tick). Vanilla dayTime is a monotonic long, every
+      // consumer takes it modulo DAY_LENGTH itself, and the moon phase needs the day count.
       this.time += dt;
-      if (this.time >= DAY_LENGTH) this.time -= DAY_LENGTH;
     }
     // ServerLevel.tick -> "weather" -> advanceWeatherCycle, once per game tick.
     this.tickWeather();

@@ -192,9 +192,9 @@ check('3. drowning: 300 ticks of air, then 2 damage every 20 ticks', () => {
   const s = freshSurvival();
   s.naturalRegen = false; // isolate drowning damage from FoodData natural regen
   for (let t = 0; t < 319; t++) s.tick({ sprint: false, jumped: false, swam: true, underwater: true });
-  if (s.airSupply !== -19) return `air after 319 ticks = ${s.airSupply} expected -19`;
+  if (s.airSupply !== 0) return `air after 319 ticks = ${s.airSupply} expected 0 (public range 0..300)`;
   if (s.health !== 20) return `damaged before air ran out: hp=${s.health} air=${s.airSupply}`;
-  s.tick({ sprint: false, jumped: false, swam: true, underwater: true }); // 320: air <= -20
+  s.tick({ sprint: false, jumped: false, swam: true, underwater: true }); // 320: internal air <= -20
   if (s.health !== 18) return `hp after first drown tick = ${s.health} expected 18`;
   for (let t = 0; t < 19; t++) s.tick({ sprint: false, jumped: false, swam: true, underwater: true });
   if (s.health !== 18) return `second drown damage came too early: hp=${s.health}`;
@@ -245,6 +245,9 @@ check('5. death drops the inventory + XP and respawn resets the player', () => {
   s.damage(100, 'zombie');
   if (s.health !== 0 || !s.isDead) return `hp=${s.health} dead=${s.isDead}`;
   if (deathCalls !== 1) return `onDeath fired ${deathCalls} times`;
+  // A dead player must not regenerate back above 0 (FoodData is not ticked while dead).
+  for (let i = 0; i < 40; i++) s.tick({ sprint: false, jumped: false, swam: false });
+  if (s.health !== 0 || !s.isDead) return `dead player regenerated: hp=${s.health} dead=${s.isDead}`;
   const dropped = s.dropAllOnDeath();
   if (dropped.stacks.length !== 1 || dropped.stacks[0].count !== 17) {
     return `dropped ${dropped.stacks.map((d) => `${d.item?.name}x${d.count}`).join(',')}`;
@@ -427,6 +430,25 @@ check('12. every required natural-spawn type has a factory', () => {
     if (!createEntity(name, level, 0, GROUND, 0)) missing.push(name);
   }
   if (missing.length) return `missing factories: ${missing.join(',')}`;
+  return true;
+});
+
+// ------------------------------------------- 13. day/night spawn-light mapping
+
+check('13. day/night mapping drives spawn light (noon bright, midnight dark)', () => {
+  const level = new ClientLevel(mc, null, 1n);
+  level.time = 6000; // noon
+  if (!level.isDay()) return 'noon is not day';
+  if (level.getSkyDarken() < 0.99) return `noon skyDarken=${level.getSkyDarken()} expected 1`;
+  // Level.getBrightness() = max(blockLight, trunc(skyLight * skyDarken)); raw sky light is 15.
+  if (Math.trunc(15 * level.getSkyDarken()) !== 15) return 'noon brightness is not 15';
+  level.time = 18000; // midnight
+  if (level.isDay()) return 'midnight is reported as day';
+  if (Math.abs(level.getSkyDarken() - 0.2) > 1e-6) return `midnight skyDarken=${level.getSkyDarken()} expected 0.2`;
+  const nightBrightness = Math.trunc(15 * level.getSkyDarken());
+  if (nightBrightness > 3) return `midnight brightness=${nightBrightness} expected <= 3`;
+  // Monster spawn light test: brightness <= nextInt(8) => spawnable in the dark, never at 15.
+  if (nightBrightness > 7) return 'monsters could not spawn in the dark';
   return true;
 });
 

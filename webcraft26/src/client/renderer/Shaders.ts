@@ -36,7 +36,6 @@ void main() {
 export const TERRAIN_FRAG = `#version 300 es
 precision highp float;
 precision highp sampler2DArray;
-precision highp sampler2DShadow;
 
 in vec2 vUV;
 flat in uint vLayer;
@@ -55,8 +54,11 @@ uniform float uTranslucent;
 uniform int uDebug;
 
 // Shader-pipeline only (TASK-render Phase B.2). uUseShadows == 0 keeps the vanilla path.
+// The depth map is a plain sampler2D and the compare is done by hand: sampler2DShadow would
+// force every other user of TERRAIN_FRAG (gui/ItemIconAtlas) to back that unit with a depth
+// texture, and WebGL validates sampler/format pairs on every draw.
 uniform int uUseShadows;
-uniform sampler2DShadow uShadowMap;
+uniform sampler2D uShadowMap;
 uniform mat4 uLightViewProj;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
@@ -86,6 +88,8 @@ void main() {
   if (uUseShadows == 1 && uTranslucent < 0.5) {
     vec3 n = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
     float ndl = max(dot(n, uSunDir), 0.0);
+    if (uDebug == 12) { fragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
+    if (uDebug == 13) { fragColor = vec4(vec3(ndl), 1.0); return; }
     if (ndl > 0.0) {
       // slope-scaled, world-space normal offset + a small constant depth bias
       float slope = clamp(1.0 - ndl, 0.0, 1.0);
@@ -94,16 +98,20 @@ void main() {
       vec2 suv = ndc.xy * 0.5 + 0.5;
       float sdepth = ndc.z * 0.5 + 0.5;
       float lit = 1.0;
-      if (sc.w > 0.0 && suv.x > 0.002 && suv.x < 0.998 && suv.y > 0.002 && suv.y < 0.998) {
-        // 3x3 PCF on top of the hardware 2x2 comparison = soft penumbra
+      if (sc.w > 0.0 && suv.x > 0.004 && suv.x < 0.996 && suv.y > 0.004 && suv.y < 0.996) {
+        // 3x3 PCF, manual depth compare (see the sampler note above); 1.5 texel spacing gives a
+        // wider penumbra than the raw map resolution.
+        float ref = sdepth - 0.0006;
         float sum = 0.0;
         for (int sx = -1; sx <= 1; sx++) {
           for (int sy = -1; sy <= 1; sy++) {
-            sum += texture(uShadowMap, vec3(suv + vec2(sx, sy) * uShadowTexel, sdepth - 0.0004));
+            float stored = texture(uShadowMap, suv + vec2(sx, sy) * uShadowTexel * 1.5).r;
+            sum += ref <= stored ? 1.0 : 0.0;
           }
         }
         lit = sum / 9.0;
       }
+      if (uDebug == 11) { fragColor = vec4(vec3(lit), 1.0); return; }
       // deep shade / caves keep the lightmap value only, like the vanilla direct term
       float skyMask = smoothstep(0.0, 0.55, vLight.y / 15.0);
       color += tex.rgb * vColor.rgb * uSunColor * ndl * lit * skyMask;

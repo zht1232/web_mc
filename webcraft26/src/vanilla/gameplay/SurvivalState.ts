@@ -151,8 +151,11 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   /** 0..1 progress toward the next level (Player.experienceProgress). */
   get experience(): number { return this.experienceProgress; }
   get totalExperience(): number { return this.totalXp; }
-  /** Entity.getAirSupply: 300 = full, values <= 0 are the drowning bubble countdown. */
-  get airSupply(): number { return this.air; }
+  /**
+   * Entity.getAirSupply exposed for the HUD as 0..300 (the internal counter goes down to
+   * -20 so the 300-tick grace period is exact, see shouldTakeDrowningDamage).
+   */
+  get airSupply(): number { return Math.max(0, this.air); }
   get maxAirSupply(): number { return 300; }
   /** Player.getArmorValue(), so the HUD can draw the armor bar without another import. */
   get armorValue(): number { return this.inventory.getArmorValue(); }
@@ -255,7 +258,7 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   getHealth(): number { return this.hp; }
   getMaxHealth(): number { return this.maxHp; }
   isHurt(): boolean { return this.hp < this.maxHp; }
-  heal(amount: number): void { this.hp = Math.max(0, Math.min(this.maxHp, this.hp + amount)); }
+  heal(amount: number): void { if (this.hp > 0) this.hp = Math.max(0, Math.min(this.maxHp, this.hp + amount)); }
   hurt(amount: number, source: string): void { this.damage(amount, source); }
 
   // ---- MenuPlayer ---------------------------------------------------------
@@ -295,7 +298,9 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
     if (playerMoved.jumped) this.food.onJump(playerMoved.sprint);
     if (playerMoved.sprint) this.food.onSprint(28); // 0.2806 blocks/tick ~ 28 cm
     if (playerMoved.swam) this.food.onSwim(20);
-    this.food.tick(this, this.difficulty, this.naturalRegen);
+    // ServerPlayer only ticks FoodData while alive: a dead player must not regenerate
+    // health back above 0 (which would otherwise clear the death state).
+    if (this.hp > 0) this.food.tick(this, this.difficulty, this.naturalRegen);
     this.inventory.tick();
     this.cooldowns.tick();
   }

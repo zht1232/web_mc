@@ -245,7 +245,13 @@ export class WorldSaveManager implements WorldListProvider {
     if (!rec) return;
     const root = await LevelStorage.deserialize(rec.levelDat);
     // WeatherData (PrimaryLevelData): Raining / RainTime / Thundering / ThunderTime.
-    const weather = level.getWeatherState();
+    // The cast keeps headless test doubles (chunks/time only) working without weather state.
+    const levelLike = level as ClientLevel & {
+      getWeatherState?: () => { raining: boolean; rainTime: number; thundering: boolean; thunderTime: number };
+    };
+    const weather = typeof levelLike.getWeatherState === 'function'
+      ? levelLike.getWeatherState()
+      : { raining: false, rainTime: 0, thundering: false, thunderTime: 0 };
     LevelStorage.updateLevelDat(root, {
       Time: level.gameTime,
       DayTime: level.time,

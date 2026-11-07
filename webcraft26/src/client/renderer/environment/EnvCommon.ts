@@ -228,6 +228,35 @@ export async function loadEnvTexture(
   return tex;
 }
 
+/**
+ * Like loadEnvTexture, but decodes the PNG through a 2D canvas first. The vanilla
+ * sun/moon sprites are 8 bit palette PNGs whose palette is smaller than the stored
+ * indices (vanilla's stb decoder expands them, the WebGL texImage2D(img) path does
+ * not always agree), so the explicit RGBA read-back is the reliable path.
+ */
+export async function loadEnvTextureRGBA(
+  gl: WebGL2RenderingContext,
+  path: string,
+  wrap: number = gl.CLAMP_TO_EDGE,
+  filter: number = gl.NEAREST,
+): Promise<WebGLTexture> {
+  const img = await loadImage(`/mc/textures/${path}.png`);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(img, 0, 0);
+  const rgba = ctx.getImageData(0, 0, img.width, img.height).data;
+  const tex = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, img.width, img.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  return tex;
+}
+
 /** Creates a fullscreen clip-space quad VAO (two triangles, vec2 positions). */
 export function createFullscreenQuad(gl: WebGL2RenderingContext): WebGLVertexArrayObject {
   const vao = gl.createVertexArray()!;

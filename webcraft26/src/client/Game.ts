@@ -22,7 +22,7 @@ import { placeBlock, type PlacementContext } from './interaction/Placement.js';
 import { NoiseChunkGenerator, loadWorldgenData } from '../vanilla/world/level/levelgen/NoiseChunkGenerator.js';
 import { ChunkProvider } from './world/ChunkProvider.js';
 import {
-  findSpawnSpot as selectSpawnSpot, refineSpawnColumn, nearestWaterDistance, isTreeBlock,
+  findSpawnSpot as selectSpawnSpot, refineSpawnColumn, isTreeBlock,
 } from './world/SpawnSelector.js';
 import { EntityManager } from '../vanilla/world/entity/EntityManager.js';
 import { setSpawnBlockTags } from '../vanilla/world/entity/SpawnPlacements.js';
@@ -280,6 +280,18 @@ export class Game {
     const pt = this.entityManager.getPlayerTarget();
     if (pt) pt.onHurt = (amount, attacker) => {
       this.survival.damage(amount, attacker ? attacker.getTypeName() : 'mob');
+      // LivingEntity.hurt knockback: push the player away from the attacker,
+      // strength 0.4 horizontal / 0.36 vertical (Player has its own physics).
+      if (attacker) {
+        const dx = this.player.pos.x - attacker.getX();
+        const dz = this.player.pos.z - attacker.getZ();
+        const len = Math.hypot(dx, dz) || 1;
+        this.player.vel = new Vec3(
+          this.player.vel.x + (dx / len) * 0.4,
+          Math.max(this.player.vel.y, 0.36),
+          this.player.vel.z + (dz / len) * 0.4,
+        );
+      }
     };
     this.entityManager.explosionHandler = (x, y, z, power) => this.explode(x, y, z, power);
     void this.entityManager.loadSpawnConfig('/mc');
@@ -432,22 +444,28 @@ export class Game {
     // The spawn chunk is loaded by now, so the column can be validated with real block states.
     let x = spot.x;
     let z = spot.z;
-    // Trees are placed by the feature pass, which the noise-only search cannot see. Vanilla lands
-    // the player on the block floor, never on a canopy, so shift up to 4 blocks off a leaf/log top.
-    const refined = refineSpawnColumn(x, z, (cx, cz) => {
-      const top = this.level.getHeight(cx, cz);
-      return !isTreeBlock(this.mc.blockOf(this.level.getBlockState(cx, top, cz)).name);
-    }, 4);
-    if (refined.x !== x || refined.z !== z) console.log(`[spawn] moved off a canopy: ${x},${z} -> ${refined.x},${refined.z}`);
+    // Trees are placed by the feature pass, which the noise-only search cannot see. Move to an
+    // *open* column (no leaf/log top within 3 blocks) so the player does not start under a canopy.
+    const clearOfTrees = (cx: number, cz: number): boolean => {
+      for (let dz = -3; dz <= 3; dz++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          const top = this.level.getHeight(cx + dx, cz + dz);
+          if (isTreeBlock(this.mc.blockOf(this.level.getBlockState(cx + dx, top, cz + dz)).name)) return false;
+        }
+      }
+      return true;
+    };
+    const refined = refineSpawnColumn(x, z, clearOfTrees, 10);
+    if (refined.x !== x || refined.z !== z) console.log(`[spawn] moved to a clearing: ${x},${z} -> ${refined.x},${refined.z}`);
     x = refined.x;
     z = refined.z;
     let standing = this.findStandingY(x, z);
     if (standing === null) {
       // Spiral again over the already generated area and take the first column that qualifies.
       outer:
-      for (let r = 0; r <= 48; r += 4) {
-        for (let dz = -r; dz <= r; dz += 4) {
-          for (let dx = -r; dx <= r; dx += 4) {
+      for (let r = 0; r <= 48; r += 2) {
+        for (let dz = -r; dz <= r; dz += 2) {
+          for (let dx = -r; dx <= r; dx += 2) {
             if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
             const cx = (spot.x + dx) >> 4;
             const cz = (spot.z + dz) >> 4;
@@ -461,20 +479,35 @@ export class Game {
     // Last resort: stand on the highest terrain sampled by the spawn search, above the sea.
     const fallbackY = Math.max(spot.y + 1, this.level.seaLevel + 1);
     this.player = new Player(x + 0.5, (standing ?? fallbackY) + 1 + 0.01, z + 0.5);
-    this.player.yaw = 0;
+    // Face the nearest water: the first frame shows the landscape instead of the inside of a trunk,
+    // and the measurement proves the "water within 24 blocks" spawn rule on the real terrain.
+    const water = this.findNearestWater(x, z, 24);
+    this.player.yaw = water ? (Math.atan2(water.x - x, water.z - z) * 180) / Math.PI : 0;
     this.player.pitch = 0;
-    // Re-measure the water distance with real blocks: the selector's noise estimate is an upper
-    // bound (preliminary surface is lower than the generated terrain, so ponds were invisible).
-    const realWater = nearestWaterDistance(
-      x, z,
-      (wx, wz) => this.mc.isLiquid(this.level.getBlockState(wx, this.level.seaLevel, wz)),
-      24,
-    );
     console.log(
       `[spawn] ${x + 0.5}, ${(standing ?? fallbackY) + 1}, ${z + 0.5}` +
       ` (sea ${this.level.seaLevel}, standing ${standing ?? 'fallback'},` +
-      ` water<=${realWater === Infinity ? '>24' : realWater})`,
+      ` water=${water ? `${water.dist}b @ ${water.x},${water.z}` : '>24'})`,
     );
+  }
+
+  /**
+   * Nearest water column at sea level, searched ring by ring from the spawn column (the first hit
+   * is the Chebyshev-nearest one). Reads real block states, so the spawn chunks must be loaded.
+   * Drives the "water within 24 blocks" spawn requirement and the initial camera yaw.
+   */
+  private findNearestWater(x: number, z: number, radius: number): { x: number; z: number; dist: number } | null {
+    for (let r = 0; r <= radius; r++) {
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+          if (this.mc.isLiquid(this.level.getBlockState(x + dx, this.level.seaLevel, z + dz))) {
+            return { x: x + dx, z: z + dz, dist: r };
+          }
+        }
+      }
+    }
+    return null;
   }
 
   private initHotbar(): void {
@@ -1179,7 +1212,7 @@ export class Game {
 
   private tick(): void {
     this.tickCount++;
-    this.level.tick(1 / 20);
+    this.level.tick(1); // one game tick (was 1/20, which made a day last 20x too long)
 
     // Autosave resumes as soon as the last menu closes (E / Esc / a GUI button all go through
     // ScreenManager, so watching the transition is more reliable than hooking every path).
@@ -1592,6 +1625,8 @@ export class Game {
     const block = this.level.getBlockLight(feetX, feetY, feetZ);
     const rawBrightness = this.level.getBrightness(feetX, feetY, feetZ);
     const biome = this.generator.biomeName(this.level.getBiome(feetX, feetY, feetZ));
+    // DebugEntryBiome prints `biome.unwrapKey().identifier()` — already namespaced.
+    const biomeId = biome.includes(':') ? biome : `minecraft:${biome}`;
     const entities = this.entityManager.getEntities();
     const stats = this.renderer.meshStats;
     const vendor = String(this.gl.getParameter(this.gl.VENDOR) ?? '');
@@ -1606,7 +1641,7 @@ export class Game {
 
     const entries: DebugEntryOutput[] = [
       // biome
-      { lines: [`Biome: minecraft:${biome}`] },
+      { lines: [`Biome: ${biomeId}`] },
       // chunk_generation_stats
       { lines: [`Gen: ${this.chunkProvider.usingWorkers ? `${this.chunkProvider.workerCount}w` : 'sync'} queue ${this.chunkProvider.queueLength} inflight ${this.chunkProvider.inflight}`] },
       // chunk_render_stats (LevelExtractor.sectionStatistics: "C: rendered/total ... D: distance, stats")

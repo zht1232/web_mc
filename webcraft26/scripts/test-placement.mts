@@ -13,6 +13,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { MinecraftData } from '../src/vanilla/world/level/block/state/BlockState.ts';
+import { ClientLevel } from '../src/vanilla/world/level/ClientLevel.ts';
+import { LevelChunk } from '../src/vanilla/world/level/chunk/LevelChunk.ts';
 import {
   getPlacement,
   getPlacementState,
@@ -709,6 +711,33 @@ let plan: ReturnType<typeof getPlacement> = null;
   check('orderedByNearest yaw=90 -> east', orderedByNearest(90, 0)[0] === EAST, String(orderedByNearest(90, 0)[0]));
   check('orderedByNearest yaw=270 -> west', orderedByNearest(270, 0)[0] === WEST, String(orderedByNearest(270, 0)[0]));
   check('orderedByNearest look down -> down', orderedByNearest(0, 90)[0] === DOWN, String(orderedByNearest(0, 90)[0]));
+}
+
+// ---------------------------------------------------------------------------
+// 16. integration with the real ClientLevel (the class Game passes as placement level)
+// ---------------------------------------------------------------------------
+
+{
+  // The fake level above proves the rules; this proves the structural contract with ClientLevel
+  // (getBlockState/setBlockState/minY/height) that Game.useItem now passes in.
+  const level = new ClientLevel(mc, null, 1n);
+  level.addChunk(new LevelChunk(0, 0, level.minY, level.height, mc));
+  const floorY = 63;
+  level.setBlockState(0, floorY, 0, mc.stateOf('stone'));
+  const ctx: PlacementContext = {
+    x: 0, y: floorY, z: 0, face: UP, hitX: 0.5, hitY: floorY + 1, hitZ: 0.5,
+    yaw: 0, pitch: 0, heldBlockName: 'oak_door',
+  };
+  const plan = placeBlock(mc, level, 'oak_door', ctx);
+  check('ClientLevel: door plan', plan !== null);
+  if (plan) {
+    check('ClientLevel: lower half written', level.getBlockState(0, floorY + 1, 0) === plan.state,
+      `${level.getBlockState(0, floorY + 1, 0)} != ${plan.state}`);
+    check('ClientLevel: upper half written',
+      mc.blockOf(level.getBlockState(0, floorY + 2, 0)).name === 'oak_door',
+      mc.blockOf(level.getBlockState(0, floorY + 2, 0)).name);
+    check('ClientLevel: chunk dirtied', level.hasUnsavedChanges(0, 0));
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -84,6 +84,13 @@ export class ItemIconAtlas {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
     this.program.set1i('uLightmap', 1);
+    // TERRAIN_FRAG also declares the Phase B shadow-map sampler (render package). The icon
+    // pass never uses shadows, but WebGL validates every active sampler per draw, so the
+    // sampler still needs a legal unit that does not collide with uAtlas (sampler2DArray, 0).
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
+    this.program.set1i('uShadowMap', 3);
+    this.program.set1i('uUseShadows', 0);
     this.program.set1f('uFogStart', 1e9);
     this.program.set1f('uFogEnd', 1e9 + 1);
     this.program.set3f('uFogColor', 0, 0, 0);

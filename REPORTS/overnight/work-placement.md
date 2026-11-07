@@ -9,7 +9,7 @@
 3. **未改 `Game.ts`**、未改 public/mc/**、无 git 写操作。
 
 ## 证据
-- `npx tsx scripts/test-placement.mts` → **Total: 127 PASS, 0 FAIL**（stairs 6 组：yaw=0/90、侧面上半、waterlogged、outer_left/inner_left；slab bottom/top/double/waterlogged；log y/x/z；fence 连接 木/非木/实心；wall none/low/tall/UP/bars 连接；iron_bars 四向；door facing+hinge left/right+上半+失败；torch floor/wall/红石墙变体/fence 柱 CENTER 支撑/无支撑失败；bed foot+head+失败；button/lever floor/ceiling/wall/无支撑失败；trapdoor 2 组；carpet+失败；snow 1/layers+1/底台阶失败；short_grass/flower/tall_grass 成功与失败；非替换方块点击位置；实体阻挡）。
+- `npx tsx scripts/test-placement.mts` → **Total: 131 PASS, 0 FAIL**（stairs 6 组：yaw=0/90、侧面上半、waterlogged、outer_left/inner_left；slab bottom/top/double/waterlogged；log y/x/z；fence 连接 木/非木/实心；wall none/low/tall/UP/bars 连接；iron_bars 四向；door facing+hinge left/right+上半+失败；torch floor/wall/红石墙变体/fence 柱 CENTER 支撑/无支撑失败；bed foot+head+失败；button/lever floor/ceiling/wall/无支撑失败；trapdoor 2 组；carpet+失败；snow 1/layers+1/底台阶失败；short_grass/flower/tall_grass 成功与失败；非替换方块点击位置；实体阻挡；另含真实 `ClientLevel`+`LevelChunk` 集成段：门上下两格写入 + chunk 标脏）。
 - `npx tsc --noEmit` → **0 错误**（现在整仓 0；我交付时他人文件曾有 1 个 HandRenderer 错误，已由本人修复）。
 
 ## 现有实现为什么冒烟 3/10（静态分析，Game.ts 旧 stateForPlacement 约 1044-1080 行）

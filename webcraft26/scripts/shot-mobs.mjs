@@ -2,12 +2,12 @@
 //
 // One browser session, several scenes, so the shared machine only pays for a
 // single launch:
-//   shots/mobs/day.png        t=6000, 13 mobs on a flat platform
-//   shots/mobs/night.png      t=18000, same mobs -> dark blue lightmap
-//   shots/mobs/night-torch.png t=18000 + torch next to the zombie
-//   shots/mobs/walk-a.png / walk-b.png  two frames 0.3 s apart, walking zombies
-//   shots/mobs/hurt.png       zombie hurt flash (0.7 red overlay)
-//   shots/mobs/death.png      zombie 90-degree death fall
+//   shots/mobs/day.png         t=6000, 13 mobs in a natural clearing
+//   shots/mobs/night.png       t=18000, same mobs -> dark blue lightmap
+//   shots/mobs/night-torch.png t=18000 + torch next to the zombie -> brighter
+//   shots/mobs/walk-a.png / walk-b.png  two frames 0.3 s apart, walking mobs
+//   shots/mobs/hurt.png        zombie hurt flash (0.7 red overlay)
+//   shots/mobs/death.png       zombie 90-degree death fall
 //
 // Usage: node scripts/shot-mobs.mjs [url]
 
@@ -25,11 +25,14 @@ const logs = [];
 page.on('console', (msg) => logs.push(`[${msg.type()}] ${msg.text()}`));
 page.on('pageerror', (err) => logs.push(`[pageerror] ${err.message}\n${err.stack ?? ''}`));
 
-await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-const deadline = Date.now() + 90000;
+await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+const deadline = Date.now() + 120000;
 let state = 'loading';
 while (Date.now() < deadline) {
-  state = await page.evaluate(() => (window.__mc ? 'ready' : 'loading'));
+  state = await page.evaluate(() => {
+    const m = window.__mc;
+    return m && m.level && m.chunkProvider && m.entityRenderer ? 'ready' : 'loading';
+  });
   if (state === 'ready') break;
   await page.waitForTimeout(500);
 }
@@ -39,8 +42,17 @@ if (state !== 'ready') {
   await browser.close();
   process.exit(1);
 }
-// let the spawn chunks stream in
-await page.waitForTimeout(6000);
+// wait until chunk streaming has gone quiet, then a bit more for the mesher
+for (let i = 0; i < 60; i++) {
+  const q = await page.evaluate(() => {
+    const m = window.__mc;
+    if (!m || !m.chunkProvider) return { queue: 1, inflight: 1 };
+    return { queue: m.chunkProvider.queueLength, inflight: m.chunkProvider.inflight };
+  });
+  if (q.queue === 0 && q.inflight === 0) break;
+  await page.waitForTimeout(500);
+}
+await page.waitForTimeout(2000);
 
 async function evaluate(fn, arg) {
   try {
@@ -55,47 +67,66 @@ async function shot(name) {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers installed in the page
+// Scene helpers installed in the page
 // ---------------------------------------------------------------------------
 await evaluate(() => {
   const m = window.__mc;
   const P = {
     mobs: [],
-    baseY: 0,
-    px: 0,
-    pz: 0,
-    surfaceY: 0,
-    freeze() { m.entityManager.tick = () => {}; },
-    unfreeze() { delete m.entityManager.tick; },
+    clearing: null,
+    freeze() {
+      if (!m.__mobOrigPlayerTick) m.__mobOrigPlayerTick = m.player.tick;
+      m.player.tick = () => {};
+      m.entityManager.spawnInterval = 1e9;
+      m.entityManager.tick = () => {};
+    },
+    unfreeze() {
+      if (m.__mobOrigPlayerTick) m.player.tick = m.__mobOrigPlayerTick;
+      delete m.entityManager.tick;
+    },
     clearMobs() {
       for (const e of m.entityManager.getEntities()) e.remove();
+      P.mobs.length = 0;
     },
-    buildFlat() {
+    /** Flat, treeless clearing in front of the player; also places the camera there. */
+    findClearing() {
+      const air = (x, y, z) => m.level.getBlockState(x, y, z) === 0;
       const px = Math.floor(m.player.pos.x), pz = Math.floor(m.player.pos.z);
-      const baseY = Math.floor(m.player.pos.y) - 1;
-      const stone = m.mc.stateOf('stone');
-      for (let dx = -4; dx <= 14; dx++) {
-        for (let dz = -8; dz <= 8; dz++) {
-          m.level.setBlockState(px + dx, baseY, pz + dz, stone);
-          for (let dy = 1; dy <= 5; dy++) m.level.setBlockState(px + dx, baseY + dy, pz + dz, 0);
+      let best = null;
+      for (let dx = 4; dx <= 12 && !best; dx++) {
+        for (let dz = -7; dz <= 7 && !best; dz++) {
+          const x = px + dx, z = pz + dz;
+          const h = m.level.getHeight(x, z);
+          let ok = true;
+          for (let ax = -1; ax <= 8; ax++) {
+            for (let az = -6; az <= 6; az++) {
+              if (m.level.getHeight(x + ax, z + az) !== h) { ok = false; break; }
+              if (!air(x + ax, h + 1, z + az) || !air(x + ax, h + 2, z + az) || !air(x + ax, h + 3, z + az)) { ok = false; break; }
+            }
+            if (!ok) break;
+          }
+          if (ok) best = { x, z, h };
         }
       }
-      P.px = px; P.pz = pz; P.baseY = baseY; P.surfaceY = baseY + 1;
-      // stand on the platform, look along +X (Vec3 is mutable in place)
-      m.player.pos.x = px + 0.5;
-      m.player.pos.y = P.surfaceY;
-      m.player.pos.z = pz + 0.5;
-      m.player.prevPos.x = m.player.pos.x;
-      m.player.prevPos.y = m.player.pos.y;
-      m.player.prevPos.z = m.player.pos.z;
-      m.player.yaw = -90;
-      m.player.pitch = -6;
+      if (!best) {
+        const h = m.level.getHeight(px + 5, pz);
+        best = { x: px + 5, z: pz, h };
+      }
+      P.clearing = best;
+      m.player.pos.x = best.x + 0.5; m.player.pos.y = best.h + 1; m.player.pos.z = best.z + 0.5;
+      m.player.prevPos.x = m.player.pos.x; m.player.prevPos.y = m.player.pos.y; m.player.prevPos.z = m.player.pos.z;
+      m.player.yaw = 90;   // camera forward = (sin yaw, 0, cos yaw) => +X
+      m.player.pitch = 7;  // vanilla: positive pitch looks down
+      return best;
     },
-    spawn(name, x, z) {
-      const e = m.entityManager.spawn(name, x, P.surfaceY, z);
+    surface() { return P.clearing ? P.clearing.h + 1 : m.player.pos.y; },
+    spawn(name, dx, dz) {
+      const c = P.clearing;
+      const x = c.x + dx, z = c.z + dz, y = c.h + 1;
+      const e = m.entityManager.spawn(name, x, y, z);
       if (!e) return null;
-      e.x = x; e.y = P.surfaceY; e.z = z;
-      e.xo = x; e.yo = P.surfaceY; e.zo = z;
+      e.x = x; e.y = y; e.z = z;
+      e.xo = x; e.yo = y; e.zo = z;
       e.yaw = 90; e.yRotO = 90;
       e.yBodyRot = 90; e.yBodyRotO = 90;
       e.yHeadRot = 90; e.yHeadRotO = 90;
@@ -105,23 +136,21 @@ await evaluate(() => {
     },
     spawnAll() {
       P.clearMobs();
-      P.mobs.length = 0;
       const row1 = ['zombie', 'skeleton', 'creeper', 'spider', 'pig', 'cow', 'sheep'];
       const row2 = ['enderman', 'silverfish', 'chicken', 'wolf', 'rabbit', 'bat'];
-      row1.forEach((name, i) => P.spawn(name, P.px + 5.5, P.pz - 3.6 + i * 1.2));
-      row2.forEach((name, i) => P.spawn(name, P.px + 8.5, P.pz - 3.0 + i * 1.2));
+      row1.forEach((name, i) => P.spawn(name, 4.5, -3.6 + i * 1.2));
+      row2.forEach((name, i) => P.spawn(name, 7.5, -3.0 + i * 1.2));
       m.showDebug = false;
+      return P.mobs.length;
     },
-    /** lightmap levels sampled exactly like EntityRenderer.getPackedLightCoords */
     lightReport() {
       return P.mobs.map((e) => {
         const bx = Math.floor(e.x), by = Math.floor(e.getEyeY()), bz = Math.floor(e.z);
         return {
           type: e.getTypeName(),
-          sky: m.level.getSkyLight(bx, by, bz),
-          block: m.level.getBlockLight(bx, by, bz),
-          walkPos: +(e.walkAnimPos ?? 0).toFixed(3),
-          walkSpeed: +(e.walkAnimSpeed ?? 0).toFixed(3),
+          light: [m.level.getSkyLight(bx, by, bz), m.level.getBlockLight(bx, by, bz)],
+          walk: [+(e.walkAnimPos ?? 0).toFixed(2), +(e.walkAnimSpeed ?? 0).toFixed(2)],
+          pos: [+e.x.toFixed(2), +e.y.toFixed(2), +e.z.toFixed(2)],
         };
       });
     },
@@ -131,52 +160,55 @@ await evaluate(() => {
 console.log('helpers installed');
 
 // ---------------------------------------------------------------------------
-// Scene 1: day (t=6000)
+// Scene 1: day (t=6000) — 13 mobs
 // ---------------------------------------------------------------------------
 let r = await evaluate(() => {
   const m = window.__mc, P = window.__mobP;
-  P.buildFlat();
-  P.spawnAll();
   P.freeze();
+  P.clearMobs();
+  const clearing = P.findClearing();
+  const spawned = P.spawnAll();
   m.level.time = 6000;
-  return { mobs: P.mobs.length, surfaceY: P.surfaceY, px: P.px, pz: P.pz };
+  return { clearing, spawned, sky: { skyFactor: m.sky && m.sky.skyFactor, fog: m.sky && m.sky.fogColor } };
 });
 console.log('day setup:', JSON.stringify(r));
 await page.waitForTimeout(2500);
+r = await evaluate(() => ({ light: window.__mobP.lightReport(), sky: { f: window.__mc.sky.skyFactor, lvl: window.__mc.sky.skyLightLevel, fog: window.__mc.sky.fogColor } }));
+console.log('day:', JSON.stringify(r));
 await shot('day');
-r = await evaluate(() => window.__mobP.lightReport());
-console.log('day light:', JSON.stringify(r));
 
 // ---------------------------------------------------------------------------
-// Scene 2: night (t=18000)
+// Scene 2: night (t=18000) — same mobs
 // ---------------------------------------------------------------------------
 r = await evaluate(() => {
   const m = window.__mc;
   m.level.time = 18000;
-  return { time: m.level.time, sky: m.sky && { fog: m.sky.fogColor, skyLightLevel: m.sky.skyLightLevel } };
+  return { time: m.level.time };
 });
 console.log('night setup:', JSON.stringify(r));
-await page.waitForTimeout(1800);
+await page.waitForTimeout(2000);
+r = await evaluate(() => ({ light: window.__mobP.lightReport(), sky: { f: window.__mc.sky.skyFactor, lvl: window.__mc.sky.skyLightLevel, fog: window.__mc.sky.fogColor }, time: window.__mc.level.time }));
+console.log('night:', JSON.stringify(r));
 await shot('night');
-r = await evaluate(() => window.__mobP.lightReport());
-console.log('night light:', JSON.stringify(r));
 
 // ---------------------------------------------------------------------------
-// Scene 3: night + torch beside the zombie
+// Scene 3: night + torch beside the zombie (one lit, one in the dark)
 // ---------------------------------------------------------------------------
 r = await evaluate(() => {
   const m = window.__mc, P = window.__mobP;
-  const zombie = P.mobs[0];
-  const tx = Math.floor(zombie.x), ty = P.surfaceY, tz = Math.floor(zombie.z);
+  P.clearMobs();
+  const c = P.clearing;
+  const near = P.spawn('zombie', 4.5, 0);
+  const far = P.spawn('zombie', 10.5, 0);
+  const tx = Math.floor(near.x), ty = c.h + 1, tz = Math.floor(near.z) + 1;
   const torch = m.mc.stateOf('torch');
-  const ok = m.level.setBlockState(tx, ty, tz + 2, torch);
-  const bx = Math.floor(zombie.x), by = Math.floor(zombie.getEyeY()), bz = Math.floor(zombie.z);
-  return {
-    torchState: torch, placed: ok, at: [tx, ty, tz + 2],
-    zombieBlockLight: m.level.getBlockLight(bx, by, bz),
-    zombieSkyLight: m.level.getSkyLight(bx, by, bz),
-    torchLight: m.level.getBlockLight(tx, ty, tz + 2),
+  const placed = m.level.setBlockState(tx, ty, tz, torch);
+  P.torchPos = [tx, ty, tz];
+  const at = (e) => {
+    const bx = Math.floor(e.x), by = Math.floor(e.getEyeY()), bz = Math.floor(e.z);
+    return { block: m.level.getBlockLight(bx, by, bz), sky: m.level.getSkyLight(bx, by, bz) };
   };
+  return { placed, torchAt: [tx, ty, tz], near: at(near), far: at(far) };
 });
 console.log('torch setup:', JSON.stringify(r));
 await page.waitForTimeout(2500);
@@ -185,64 +217,61 @@ r = await evaluate(() => window.__mobP.lightReport());
 console.log('torch light:', JSON.stringify(r));
 
 // ---------------------------------------------------------------------------
-// Scene 4: walking animation, two frames 0.3 s apart
+// Scene 4: walking animation, two frames 0.3 s apart (one zombie close up)
 // ---------------------------------------------------------------------------
 r = await evaluate(() => {
   const m = window.__mc, P = window.__mobP;
   P.clearMobs();
-  P.mobs.length = 0;
-  // remove the torch again so the light is neutral
-  m.level.setBlockState(Math.floor(m.player.pos.x) + 5, P.surfaceY, Math.floor(m.player.pos.z) + 2, 0);
+  // put the torch back to air
+  if (P.torchPos) m.level.setBlockState(P.torchPos[0], P.torchPos[1], P.torchPos[2], 0);
+  m.level.time = 6000;
   P.unfreeze();
-  const z1 = P.spawn('zombie', P.px + 10.5, P.pz - 1.3);
-  const z2 = P.spawn('zombie', P.px + 10.5, P.pz + 1.3);
-  const sk = P.spawn('skeleton', P.px + 8.5, P.pz);
-  return { spawned: [z1 && z1.getTypeName(), z2 && z2.getTypeName(), sk && sk.getTypeName()] };
+  m.player.tick = () => {};
+  m.entityManager.spawnInterval = 1e9;
+  P.spawn('zombie', 10.0, 0);
+  return { spawned: P.mobs.length, time: m.level.time };
 });
 console.log('walk setup:', JSON.stringify(r));
-await page.waitForTimeout(1200);
+await page.waitForTimeout(800);
 const walkA = await evaluate(() => window.__mobP.lightReport());
 await shot('walk-a');
 await page.waitForTimeout(300);
 const walkB = await evaluate(() => window.__mobP.lightReport());
 await shot('walk-b');
-console.log('walk anim A:', JSON.stringify(walkA));
-console.log('walk anim B:', JSON.stringify(walkB));
+console.log('walk A:', JSON.stringify(walkA));
+console.log('walk B:', JSON.stringify(walkB));
 
 // ---------------------------------------------------------------------------
 // Scene 5: hurt flash (red overlay) + skeleton bow pose
 // ---------------------------------------------------------------------------
 r = await evaluate(() => {
   const m = window.__mc, P = window.__mobP;
-  P.clearMobs();
-  P.mobs.length = 0;
   P.freeze();
+  P.clearMobs();
   m.level.time = 6000;
-  const zombie = P.spawn('zombie', P.px + 5.5, P.pz - 1.2);
-  const sk = P.spawn('skeleton', P.px + 5.5, P.pz + 1.2);
-  zombie.hurtTime = 10;          // vanilla 10-tick red overlay
-  sk.isHoldingBow = true;
-  return { hurtTime: zombie.hurtTime, skeleton: sk.getTypeName() };
+  const zombie = P.spawn('zombie', 4.5, -1.2);
+  P.spawn('skeleton', 4.5, 1.2);
+  zombie.hurtTime = 10; // vanilla red overlay: hasRedOverlay = hurtTime > 0
+  return { hurtTime: zombie.hurtTime };
 });
 console.log('hurt setup:', JSON.stringify(r));
-await page.waitForTimeout(1800);
+await page.waitForTimeout(2000);
 await shot('hurt');
 
 // ---------------------------------------------------------------------------
-// Scene 6: death fall (deathTime = 19 -> sqrt((19-1)/20*1.6) clamped = 90 deg)
+// Scene 6: death fall (deathTime 19 => sqrt((19-1)/20*1.6) clamped => 90 deg)
 // ---------------------------------------------------------------------------
 r = await evaluate(() => {
   const m = window.__mc, P = window.__mobP;
   P.clearMobs();
-  P.mobs.length = 0;
-  const zombie = P.spawn('zombie', P.px + 5.5, P.pz);
+  const zombie = P.spawn('zombie', 4.5, 0);
   zombie.hurtTime = 0;
   zombie.dead = true;
   zombie.deathTime = 19;
   return { dead: zombie.dead, deathTime: zombie.deathTime };
 });
 console.log('death setup:', JSON.stringify(r));
-await page.waitForTimeout(1800);
+await page.waitForTimeout(2000);
 await shot('death');
 
 // ---------------------------------------------------------------------------
@@ -253,15 +282,17 @@ const diag = await evaluate(() => {
   return {
     glError: m.gl.getError(),
     drawCalls: m.entityRenderer.lastDrawCallCount,
+    lastBatchTotal: Array.from(m.entityRenderer.batch.lengths).reduce((a, b) => a + b, 0),
+    lightmapBound: !!m.entityRenderer.lightmap,
+    fog: m.entityRenderer.fogColor,
     entities: m.entityManager.getEntities().length,
-    fog: m.sky && m.sky.fogColor,
     fps: m.fps,
+    time: m.level.time,
   };
 });
 console.log('diagnostics:', JSON.stringify(diag));
 
-console.log('--- console (last 40) ---');
-for (const line of logs.slice(-40)) console.log(line);
-
+console.log('--- console (last 30) ---');
+for (const line of logs.slice(-30)) console.log(line);
 await browser.close();
 console.log('done');

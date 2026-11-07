@@ -5,7 +5,7 @@
 // instead of a single 4x2 atlas. SkyRenderer.renderMoon picks a phase by index;
 // here we load all eight and expose moonTexture(phase) following the same order.
 
-import { loadEnvTexture, moonPhaseOf, type LevelLike } from './EnvCommon.js';
+import { loadEnvTextureRGBA, moonPhaseOf, type LevelLike } from './EnvCommon.js';
 
 /** Vanilla MoonPhase index order (0 = full moon). */
 export const MOON_PHASES = [
@@ -42,8 +42,8 @@ export class CelestialBodies {
   async load(gl: WebGL2RenderingContext): Promise<void> {
     if (this.sun) return;
     const loaded = await Promise.all([
-      loadEnvTexture(gl, 'environment/celestial/sun'),
-      ...MOON_PHASES.map((p) => loadEnvTexture(gl, `environment/celestial/moon/${p}`)),
+      loadEnvTextureRGBA(gl, 'environment/celestial/sun'),
+      ...MOON_PHASES.map((p) => loadEnvTextureRGBA(gl, `environment/celestial/moon/${p}`)),
     ]);
     this.sun = loaded[0];
     this.moons.length = 0;

@@ -858,6 +858,27 @@ const SCENES = [
         const p = window.__mc.player.pos;
         return [p.x, p.y, p.z];
       });
+      // pick a loaded, unmodified chunk ~6-10 chunks away from spawn: after the teleport it must
+      // be gone from level.chunks (direct evidence the unload pass ran, independent of how fast
+      // the new ring happens to load on a loaded machine)
+      const oldChunk = await ctx.ev(() => {
+        const mc = window.__mc;
+        const pcx = Math.floor(mc.player.pos.x) >> 4;
+        const pcz = Math.floor(mc.player.pos.z) >> 4;
+        for (let r = 6; r <= 10; r++) {
+          for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+              if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+              const cx = pcx + dx;
+              const cz = pcz + dz;
+              if (!mc.level.hasChunk(cx, cz)) continue;
+              if (mc.level.isChunkModified && mc.level.isChunkModified(cx, cz)) continue;
+              return { cx, cz, dist: r };
+            }
+          }
+        }
+        return null;
+      });
       await ctx.ev(() => {
         const mc = window.__mc;
         mc.player.flying = true;
@@ -889,6 +910,9 @@ const SCENES = [
           dirtySections: chunk ? chunk.dirtySections.size : null,
         };
       }, a.chunk);
+      const oldChunkAfter = oldChunk
+        ? await ctx.ev((c) => window.__mc.level.hasChunk(c.cx, c.cz), oldChunk)
+        : null;
 
       // teleport back to the recorded position, wait for the ring to come back
       await ctx.ev((o) => {
@@ -917,20 +941,24 @@ const SCENES = [
       const settled = (b.chunks ?? 0) <= expected * 1.4 && last3.every((c) => c <= expected * 1.4);
       const recovered = (back.chunks ?? 0) >= expected * 0.5 && (back.chunks ?? 0) <= expected * 1.4;
       const markerOk = markerAfter.state === marker.gold;
+      const oldUnloaded = oldChunkAfter === null ? null : oldChunkAfter === false;
+      const unloadOk = oldUnloaded !== false; // null = nothing loadable nearby, cannot verify
       return {
         notes: [
           `marker ${marker.x},${marker.y},${marker.z} ${marker.beforeName} -> gold_block changed=${marker.changed} now=${marker.now}`,
           `chunk ${a.chunk?.join(',')} -> ${b.chunk?.join(',')}`,
           `chunks ${a.chunks} -> 峰值 ${peak} -> ${b.chunks} (满视野≈${expected}, 最后3样本 ${last3.join('/')})`,
+          `旧区块 ${oldChunk ? `${oldChunk.cx},${oldChunk.cz} (dist ${oldChunk.dist})` : '无可观测样本'} 传送后仍加载=${oldChunkAfter}`,
           `原位置区块 ${a.chunk?.join(',')} 仍加载=${originInfo?.loaded} modified=${originInfo?.modified} dirtySections=${originInfo?.dirtySections}`,
           `传送回来 chunks=${back?.chunks} (满视野≈${expected}), marker=${markerAfter.name}`,
           `queue=${b.queue} inflight=${b.inflight} mesh=${b.mesh?.sections} sections`,
         ],
         samples,
-        fail: !(settled && recovered && markerOk),
+        fail: !(settled && recovered && markerOk && unloadOk),
         warn: [
           ...(!settled ? [`区块未卸载：chunks ${b.chunks} / 最后3样本 ${last3.join('/')} > 满视野 ${expected} 的 1.4 倍`] : []),
           ...(peak === 0 ? ['采样期间 chunks 一直为 0（页面可能无响应）'] : []),
+          ...(oldUnloaded === false ? [`旧区块 ${oldChunk?.cx},${oldChunk?.cz} 传送后仍在 level.chunks 里（卸载未生效）`] : []),
           ...(!recovered ? [`传送回来后区块数异常：${back?.chunks}（满视野≈${expected}）`] : []),
           ...(!markerOk ? [`会话内丢档：标记方块 ${markerAfter.name} != gold_block`] : []),
         ],

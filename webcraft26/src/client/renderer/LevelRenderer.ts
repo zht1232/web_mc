@@ -53,6 +53,8 @@ export class LevelRenderer {
   private readonly lightDir: [number, number, number] = [0, 1, 0];
   private readonly sunColor: [number, number, number] = [1, 1, 1];
   private shadowsActive = false;
+  /** Diagnostics for the Phase B acceptance test (sections/draws submitted to the shadow map). */
+  readonly shadowStats = { sections: 0, draws: 0, size: 0 };
 
   private readonly sections = new Map<number, SectionGpu>();
   private readonly rebuildQueue: { chunkX: number; chunkZ: number; sectionY: number }[] = [];
@@ -123,6 +125,15 @@ export class LevelRenderer {
   /** Allocates/resizes the HDR + bloom targets; safe to call on every window resize. */
   resize(width: number, height: number): void {
     this.post.resize(width, height);
+  }
+
+  /** Direct-light diagnostics for the Phase B acceptance test. */
+  get directLightState(): { sunColor: number[]; lightDir: number[]; shadowsActive: boolean } {
+    return {
+      sunColor: [...this.sunColor],
+      lightDir: [...this.lightDir],
+      shadowsActive: this.shadowsActive,
+    };
   }
 
   async init(): Promise<void> {
@@ -610,11 +621,14 @@ export class LevelRenderer {
     program.set1i('uAtlas', 3);
     program.set1f('uAlphaTest', 0.1);
 
+    let shadowSections = 0;
+    let shadowDraws = 0;
     for (const section of this.sections.values()) {
       if (section.empty) continue;
       if (Math.abs(section.cx - camCX) > r + 1 || Math.abs(section.cz - camCZ) > r + 1) continue;
       const minX = section.cx << 4, minZ = section.cz << 4, minY = section.sy << 4;
       if (!boxInFrustum(this.shadow.frustum, minX, minY, minZ, minX + 16, minY + 16, minZ + 16)) continue;
+      shadowSections++;
       program.set3f('uChunkOrigin', minX, minY, minZ);
       for (const layer of [RenderLayer.SOLID, RenderLayer.CUTOUT]) {
         const count = section.counts[layer];
@@ -622,8 +636,12 @@ export class LevelRenderer {
         if (!count || !vao) continue;
         gl.bindVertexArray(vao);
         gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, 0);
+        shadowDraws++;
       }
     }
+    this.shadowStats.sections = shadowSections;
+    this.shadowStats.draws = shadowDraws;
+    this.shadowStats.size = this.shadow.size;
 
     this.shadow.end();
     // The pass above bound its own framebuffer: put the HDR scene target back.

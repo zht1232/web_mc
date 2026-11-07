@@ -12,6 +12,7 @@ param(
   [switch]$NoResize,
   [int]$ScreenW = 1280,
   [int]$ScreenH = 720,
+  [string]$Seq = '',
   [int]$SleepAfter = 300
 )
 
@@ -89,6 +90,18 @@ function Send-Key([int]$code) {
   [void][RefIn]::PostMessage($hwnd, 0x0101, [IntPtr]$code, $up)
 }
 
+function Key-Down([int]$code) {
+  $scan = [RefIn]::MapVirtualKey([uint32]$code, 0)
+  $down = [IntPtr](1 -bor ($scan -shl 16))
+  [void][RefIn]::PostMessage($hwnd, 0x0100, [IntPtr]$code, $down)
+}
+
+function Key-Up([int]$code) {
+  $scan = [RefIn]::MapVirtualKey([uint32]$code, 0)
+  $up = [IntPtr](0xC0000001 -bor ($scan -shl 16))
+  [void][RefIn]::PostMessage($hwnd, 0x0101, [IntPtr]$code, $up)
+}
+
 function Send-Text([string]$s) {
   foreach ($ch in $s.ToCharArray()) {
     [void][RefIn]::PostMessage($hwnd, 0x0102, [IntPtr][int]$ch, [IntPtr]1)
@@ -99,6 +112,52 @@ function Send-Text([string]$s) {
 if ($Close) {
   $r = [RefIn]::PostMessage($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
   Write-Output "CLOSE posted=$r"
+}
+
+if ($Seq -ne '') {
+  foreach ($step in $Seq.Split(';')) {
+    $s = $step.Trim()
+    if ($s -eq '') { continue }
+    if ($s -eq 'f2') { Send-Key 113; Start-Sleep -Milliseconds 1300; Write-Output 'SEQ f2' }
+    elseif ($s -eq 'enter') { Send-Key 13; Start-Sleep -Milliseconds 300; Write-Output 'SEQ enter' }
+    elseif ($s -eq 'esc') { Send-Key 27; Start-Sleep -Milliseconds 300; Write-Output 'SEQ esc' }
+    elseif ($s -eq 'bs') { Send-Key 8; Start-Sleep -Milliseconds 200; Write-Output 'SEQ bs' }
+    elseif ($s -eq 'selall') {
+      Key-Down 17; Start-Sleep -Milliseconds 60
+      Send-Key 65
+      Start-Sleep -Milliseconds 60; Key-Up 17
+      Start-Sleep -Milliseconds 200
+      Write-Output 'SEQ selall'
+    }
+    elseif ($s -match '^k(\d+)$') { Send-Key ([int]$Matches[1]); Start-Sleep -Milliseconds 250; Write-Output "SEQ key $($Matches[1])" }
+    elseif ($s -match '^w(\d+)$') { Start-Sleep -Milliseconds ([int]$Matches[1]) }
+    elseif ($s -match '^c(\d+),(\d+)$') {
+      $px = [int]$Matches[1]; $py = [int]$Matches[2]
+      $lp = [IntPtr](($py -shl 16) -bor ($px -band 0xFFFF))
+      [void][RefIn]::PostMessage($hwnd, 0x0200, [IntPtr]::Zero, $lp)
+      Start-Sleep -Milliseconds 120
+      [void][RefIn]::PostMessage($hwnd, 0x0201, [IntPtr]1, $lp)
+      Start-Sleep -Milliseconds 80
+      [void][RefIn]::PostMessage($hwnd, 0x0202, [IntPtr]::Zero, $lp)
+      Start-Sleep -Milliseconds 400
+      Write-Output "SEQ click $px,$py"
+    }
+    elseif ($s -match '^m(\d+),(\d+)$') {
+      $px = [int]$Matches[1]; $py = [int]$Matches[2]
+      $lp = [IntPtr](($py -shl 16) -bor ($px -band 0xFFFF))
+      [void][RefIn]::PostMessage($hwnd, 0x0200, [IntPtr]::Zero, $lp)
+      Start-Sleep -Milliseconds 120
+      Write-Output "SEQ move $px,$py"
+    }
+    elseif ($s -match '^t:(.*)$') {
+      $txt = $Matches[1]
+      Send-Text $txt
+      Start-Sleep -Milliseconds 250
+      Write-Output "SEQ text [$txt]"
+    }
+  }
+  Start-Sleep -Milliseconds $SleepAfter
+  exit 0
 }
 
 if ($MoveX -ge 0 -and $MoveY -ge 0) {

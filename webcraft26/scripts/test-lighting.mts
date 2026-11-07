@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict';
 import {
   buildLightmap, computeSkyState, colorFromFloat, multiply, srgbLerp,
-  DAY_PERIOD, DEFAULT_SKY,
+  DAY_PERIOD, DEFAULT_SKY, effectiveSkyBrightness, isBrightOutside,
 } from '../src/client/EnvironmentLighting.ts';
 
 let passed = 0;
@@ -249,6 +249,26 @@ test('ARGB.multiply / srgbLerp integer semantics', () => {
   assert.equal(multiply(-1, 0xff0c0c16 | 0) >>> 0, 0xff0c0c16);
   assert.equal(multiply(0xffc0d8ff | 0, 0xff7f7f99 | 0) >>> 0, 0xff5f6b99);
   assert.equal(srgbLerp(0.5, 0xff000000 | 0, 0xffffffff | 0) >>> 0, 0xff7f7f7f);
+});
+
+test('SKY_LIGHT_LEVEL is gameplay-only: skyDarken / isBrightOutside semantics', () => {
+  // Level.java:738-740 updateSkyBrightness, Level.java:384 isBrightOutside,
+  // LevelReader.java:164-175 getRawBrightness = raw sky light - skyDarken.
+  const noon = computeSkyState(NOON);
+  assert.equal(noon.skyDarken, 0);
+  assert.equal(isBrightOutside(noon), true);
+  assert.equal(effectiveSkyBrightness(15, noon), 15);
+
+  const midnight = computeSkyState(MIDNIGHT);
+  assert.equal(midnight.skyDarken, 10);
+  assert.equal(isBrightOutside(midnight), false);
+  assert.equal(effectiveSkyBrightness(15, midnight), 5);
+
+  // 12500 is the dusk ramp: skyLightLevel 11.14 -> skyDarken 3 -> still "bright outside"
+  const dusk = computeSkyState(12500);
+  assert.equal(dusk.skyDarken, 3);
+  assert.equal(isBrightOutside(dusk), true);
+  assert.equal(isBrightOutside(computeSkyState(13000)), false); // 8.09 -> darken 6
 });
 
 test('DEFAULT_SKY is internally consistent', () => {

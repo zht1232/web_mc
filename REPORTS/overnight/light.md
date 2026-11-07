@@ -28,8 +28,9 @@
 - `npx tsx scripts/verify-timelines.mts` → **42 PASS / 0 FAIL / 7 skipped**（跳过=布尔/音频轨道）。
   Java 源码↔datapack day.json 13 条数值轨道逐帧一致；TS 轨道表 vs Java 帧/修饰符/缓动全等；
   3429 个采样点（步长 7）与脚本内独立重写的采样器 maxDelta=0；computeSkyState 全字段比对 delta=0/颜色 0 字节差。
-- `npx tsx scripts/test-lighting.mts` → **21 PASS / 0 FAIL**：手算 lightmap 字节（t=6000/18000 的 (15,0)/(7,0)/(7,7)/(0,7)/(0,0)）、
-  notGamma max 通道 (103,103,186)、darkness/nightvision、雨/雷 8 条属性调制、colorFromFloat 参数序回归、月相周期。
+- `npx tsx scripts/test-lighting.mts` → **22 PASS / 0 FAIL**：手算 lightmap 字节（t=6000/18000 的 (15,0)/(7,0)/(7,7)/(0,7)/(0,0)）、
+  notGamma max 通道 (103,103,186)、darkness/nightvision、雨/雷 8 条属性调制、colorFromFloat 参数序回归、月相周期、
+  `skyDarken/isBrightOutside/effectiveSkyBrightness` 玩法语义（午夜 darken=10、t=12500 darken=3 仍算白天）。
 - `npx tsx scripts/test-fog.mts` → **57 PASS / 0 FAIL**（子代理，含水下/岩浆/粉雪/失明/黑暗/雨雾缓动/boss/虚空）。
 - 夜间验收（一次无头浏览器会话，`shots/light/accept.mjs`，glError=0）：
   - eval `__mc.sky` + lightmap 像素（完整 JSON 见 `shots/light/accept.log` / `eval-light.json`）：
@@ -50,10 +51,11 @@
   渲染进 lightmap 的天空光坐标仍是世界里的 0..15 天空光等级（顶点 aLight），由 `lightmap.fsh` 的 SkyFactor 压暗。
   所以夜晚"变暗"的是 factor 0.24，不是等级 4。TS 侧 `SkyState.skyLightLevel`(=15→4，float 精度 4.0000002) 与
   `skyDarken=(int)(15-值)=10` 只供玩法包读；**没有改 Shaders.ts**。
+  已导出 `isBrightOutside(state)` / `effectiveSkyBrightness(rawSkyLight, state)` 给玩法包直接用（Level.java:384 / LevelReader.java:173）。
 - 附带：`Level.java` 的 float 精度让午夜 skyDarken 真值是 **10**（不是 11），单测已锁。
 
 ## 4. 没做 / 已知问题（诚实）
-1. `npx tsc --noEmit` 当前仅剩 1 条错误：`renderer/environment/CloudRenderer.ts(392) 'skyStateOf'`（sky 包半成品，非本包文件）。
+1. `npx tsc --noEmit`：02:10 复查 **0 错误**（01:55 前曾有 1 条 sky 包 `CloudRenderer.ts:392 skyStateOf` 半成品错误，已由对方修好）。
 2. **`Game.tick()` 调 `level.tick(1/20)`**（`Game.ts:1021`）：`ClientLevel.tick` 里 `time += dt`，20 tick/s × 0.05 → 一天 480000 秒。
    即浏览器里昼夜 20 倍慢（vanilla 20 分钟）。不属本包文件，未改，**请主管/主循环包修**。
 3. 雨/雷：属性调制已实现并单测，但 `ClientLevel.rainLevel/thunderLevel` 目前没有写入路径（survival 包负责），实机未出现天气。

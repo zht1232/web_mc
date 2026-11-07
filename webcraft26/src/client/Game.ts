@@ -1602,6 +1602,8 @@ export class Game {
    * split in half. 26.2's DEFAULT profile only enables 9 entries (all IN_OVERLAY); biome/light/entity
    * stats are enabled here because TASK-hud requires them (vanilla toggles them in the debug options).
    */
+  private glInfoCache?: { vendor: string; gpu: string; glVersion: string };
+
   private buildDebugColumns(): Pick<HudState, 'debugLeft' | 'debugRight'> {
     const pos = this.player.pos;
     const feetX = Math.floor(pos.x);
@@ -1634,9 +1636,13 @@ export class Game {
     const biomeId = biome.includes(':') ? biome : `minecraft:${biome}`;
     const entities = this.entityManager.getEntities();
     const stats = this.renderer.meshStats;
-    const vendor = String(this.gl.getParameter(this.gl.VENDOR) ?? '');
-    const gpu = String(this.gl.getParameter(this.gl.RENDERER) ?? '');
-    const glVersion = String(this.gl.getParameter(this.gl.VERSION) ?? '');
+    // gl.getParameter is a synchronous driver call and these strings never change: query once.
+    this.glInfoCache ??= {
+      vendor: String(this.gl.getParameter(this.gl.VENDOR) ?? ''),
+      gpu: String(this.gl.getParameter(this.gl.RENDERER) ?? ''),
+      glVersion: String(this.gl.getParameter(this.gl.VERSION) ?? ''),
+    };
+    const { vendor, gpu, glVersion } = this.glInfoCache;
     const target = this.raycast(20);
     const targetLines: string[] = [];
     if (target) {

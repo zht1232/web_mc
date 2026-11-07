@@ -153,7 +153,7 @@ export class PostProcessor {
       hdrFormat: this.hdrFormat,
       bloomMips: this.mips.length,
       frames: this.frameCount,
-      lastGlError: this.lastGlError,
+      lastGlError: this.gl.getError(),
       sceneBound: this.sceneBound,
     };
   }
@@ -373,7 +373,8 @@ export class PostProcessor {
     gl.viewport(0, 0, this.width, this.height);
 
     this.frameCount++;
-    this.lastGlError = gl.getError();
+    // gl.getError() forces a CPU/GPU sync (~25% of the frame on the main thread), so it is only queried
+    // on demand from the stats getter instead of once per frame.
   }
 
   /** Prefilter -> downsample chain -> separable gaussian per mip -> additive upsample. */

@@ -96,8 +96,22 @@ export class LightEngine {
     return section.blockLight!.get(x & 15, y & 15, z & 15);
   }
 
+  /** One-entry chunk cache: propagation touches the same chunk for long runs of cells. It is
+   *  reset at the start of every public entry point, so chunk loads/unloads can never leave it stale. */
+  private cacheCx = NaN;
+  private cacheCz = NaN;
+  private cacheChunk: LevelChunk | undefined;
+
+  /** Escape hatch for the equivalence test: seed every sky cell like the original implementation. */
+  static legacySeeding = false;
+  private readonly firstDark = new Int32Array(256);
+  private levelScratch = new Uint8Array(0);
+
   private chunkAt(x: number, z: number): LevelChunk | undefined {
-    return this.source.getChunk(x >> 4, z >> 4);
+    const cx = x >> 4, cz = z >> 4;
+    if (cx === this.cacheCx && cz === this.cacheCz) return this.cacheChunk;
+    this.cacheCx = cx; this.cacheCz = cz;
+    return (this.cacheChunk = this.source.getChunk(cx, cz));
   }
 
   private setSkyLight(x: number, y: number, z: number, level: number): void {
@@ -123,12 +137,21 @@ export class LightEngine {
    * column, then seed block light from emissive blocks, then run both queues.
    */
   lightChunk(chunk: LevelChunk): void {
+    this.cacheCx = NaN;
     const mc = this.source.mc;
     const baseY = chunk.minY + chunk.height - 1;
+    const h = chunk.height;
 
+    // Pass 1: seed every column from the top. `firstDark[col]` is the highest y whose level is
+    // below 15 (minY - 1 when the whole column is open sky); everything above it is exactly 15.
+    const firstDark = this.firstDark;
+    const levels = this.levelScratch.length >= 256 * h ? this.levelScratch : (this.levelScratch = new Uint8Array(256 * h));
     for (let z = 0; z < 16; z++) {
       for (let x = 0; x < 16; x++) {
         let level = MAX_LEVEL;
+        let dark = chunk.minY - 1;
+        const col = z * 16 + x;
+        const base = col * h - chunk.minY;
         for (let y = baseY; y >= chunk.minY; y--) {
           const state = chunk.getBlockState(x, y, z);
           if (level > 0) {
@@ -137,13 +160,30 @@ export class LightEngine {
               level = Math.max(0, level - Math.max(1, damp));
             }
           }
-          if (level > 0) {
-            chunk.getOrCreateSection(y >> 4).getSkyLight().set(x, y & 15, z, level);
-            // only cells that can actually spread need to be in the queue
-            this.enqueueIfSpreads(this.skyIncrease, x, y, z, level, chunk, true);
-          } else {
-            chunk.getOrCreateSection(y >> 4).getSkyLight().set(x, y & 15, z, 0);
-          }
+          if (level < MAX_LEVEL && dark < chunk.minY) dark = y;
+          levels[base + y] = level;
+          chunk.getOrCreateSection(y >> 4).getSkyLight().set(x, y & 15, z, level);
+        }
+        firstDark[col] = dark;
+      }
+    }
+
+    // Pass 2: only cells that can actually spread need to be in the queue. For an interior column
+    // every in-chunk neighbour of a cell above max(own, neighbours' firstDark) + 1 is open sky too,
+    // so it is already 15 and propagation is a no-op there (exactly equivalent to enqueueing it).
+    // Border columns keep the legacy full enqueue because the neighbouring chunk is unknown here.
+    for (let z = 0; z < 16; z++) {
+      for (let x = 0; x < 16; x++) {
+        const col = z * 16 + x;
+        const base = col * h - chunk.minY;
+        let top = baseY;
+        if (!LightEngine.legacySeeding && x > 0 && x < 15 && z > 0 && z < 15) {
+          top = Math.max(firstDark[col], firstDark[col - 1], firstDark[col + 1], firstDark[col - 16], firstDark[col + 16]) + 1;
+          if (top > baseY) top = baseY;
+        }
+        for (let y = top; y >= chunk.minY; y--) {
+          const level = levels[base + y];
+          if (level > 1) this.enqueueIfSpreads(this.skyIncrease, x, y, z, level, chunk, true);
         }
       }
     }
@@ -182,6 +222,7 @@ export class LightEngine {
 
   /** Called after a block changes; `oldState` and `newState` drive both layers. */
   blockChanged(x: number, y: number, z: number, oldState: number, newState: number): void {
+    this.cacheCx = NaN;
     const mc = this.source.mc;
     const oldDamp = mc.dampOf(oldState);
     const newDamp = mc.dampOf(newState);

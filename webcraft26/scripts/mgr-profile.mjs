@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import { launchOptions } from './lib/browser.mjs';
 
 const seconds = Number(process.argv[2] ?? 6);
-const url = process.argv[3] ?? 'http://127.0.0.1:5174/?workers=4';
+const url = process.argv[3] ?? 'http://127.0.0.1:5174/?play&workers=4';
 const browser = await chromium.launch(launchOptions());
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });

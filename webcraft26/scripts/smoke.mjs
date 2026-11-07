@@ -3,7 +3,7 @@
 //   node scripts/smoke.mjs                                  full matrix, keeps going after failures
 //   node scripts/smoke.mjs --only fly                       one scene only
 //   node scripts/smoke.mjs --bisect                         stop at the first failing scene, dump context
-//   node scripts/smoke.mjs --url http://127.0.0.1:5174/ --out shots/smoke
+//   node scripts/smoke.mjs --url http://127.0.0.1:5174/?play --out shots/smoke
 //
 // Does not touch src/ or public/. Only playwright + pngjs.
 
@@ -19,7 +19,8 @@ const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 // ---------------------------------------------------------------------- args
 
 function parseArgs(argv) {
-  const out = { url: 'http://127.0.0.1:5174/', out: 'shots/smoke', only: null, bisect: false };
+  // ?play: the client now boots into the title screen; the smoke scenes need the world directly.
+  const out = { url: 'http://127.0.0.1:5174/?play', out: 'shots/smoke', only: null, bisect: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--url') out.url = argv[++i];

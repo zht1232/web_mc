@@ -15,7 +15,7 @@ import { chromium } from 'playwright';
 import { launchOptions } from './lib/browser.mjs';
 import { mkdirSync } from 'node:fs';
 
-const url = process.argv[2] ?? 'http://127.0.0.1:5174/';
+const url = process.argv[2] ?? 'http://127.0.0.1:5174/?play';
 const outDir = 'shots/mobs';
 mkdirSync(outDir, { recursive: true });
 

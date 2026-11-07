@@ -4,7 +4,7 @@
 import { chromium } from 'playwright';
 import { launchOptions } from './lib/browser.mjs';
 
-const url = process.argv[2] ?? 'http://127.0.0.1:5174/';
+const url = process.argv[2] ?? 'http://127.0.0.1:5174/?play';
 const out = process.argv[3] ?? 'shots/shot.png';
 const waitMs = Number(process.argv[4] ?? 25000);
 

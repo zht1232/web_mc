@@ -16,7 +16,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { launchOptions } from './lib/browser.mjs';
 
-const url = process.argv[2] ?? 'http://127.0.0.1:5174/';
+const url = process.argv[2] ?? 'http://127.0.0.1:5174/?play';
 const shotOut = process.argv[3] ?? 'shots/bugs/icons.png';
 const shotSheet = shotOut.replace(/\.png$/, '-sheet.png');
 const waitMs = Number(process.argv[4] ?? 120000);

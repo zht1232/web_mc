@@ -1,6 +1,7 @@
 // Entry point: boots the client, shows the loading screen, then hands over to the game.
 
 import './client/style.css';
+import './client/touch/touch.css';
 import { Game } from './client/Game.js';
 
 const app = document.getElementById('app')!;
@@ -21,7 +22,9 @@ const status = loading.querySelector('#loading-status') as HTMLDivElement;
 async function boot() {
   const params = new URLSearchParams(location.search);
   const workers = params.has('workers') ? Number(params.get('workers')) : undefined;
-  const game = new Game(app, params.has('seed') ? Number(params.get('seed')) : undefined, workers);
+  // Seed stays a string: vanilla seeds are 64-bit / arbitrary text, Game parses it as a bigint.
+  const seed = params.get('seed') ?? undefined;
+  const game = new Game(app, seed, workers);
   game.onStatus = (text, progress) => {
     fill.style.width = `${Math.round(progress * 100)}%`;
     status.textContent = text;

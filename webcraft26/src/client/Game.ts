@@ -31,7 +31,10 @@ import { LivingEntity } from '../vanilla/world/entity/LivingEntity.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
 import { ENTITY_TYPES } from '../vanilla/world/entity/EntityType.js';
 import { ScreenManager } from './gui/ScreenManager.js';
-import type { ContainerMenuLike, GuiOptions, ScreenRef } from './gui/Types.js';
+import { TitleScreen } from './gui/screens/TitleScreen.js';
+import type {
+  ContainerMenuLike, CreateWorldOptions, GuiOptions, ScreenRef, WorldListProvider,
+} from './gui/Types.js';
 import { SurvivalState, loadWorldData, type PlayerMoved } from '../vanilla/gameplay/SurvivalState.js';
 import { SLOT_OFFHAND } from '../vanilla/world/entity/player/Inventory.js';
 import { ItemStack } from '../vanilla/world/item/ItemStack.js';
@@ -55,6 +58,7 @@ import {
 import { PlayerData, type ItemStackData } from '../vanilla/world/level/storage/PlayerData.js';
 import { HandRenderer } from './renderer/hand/HandRenderer.js';
 import { BreakingOverlay } from './renderer/BreakingOverlay.js';
+import { TouchControls } from './touch/TouchControls.js';
 
 export interface GameOptions {
   renderDistance: number;
@@ -181,6 +185,29 @@ export class Game {
   /** walkDist of the last footstep sound */
   private stepDistance = 0;
   private screenWasOpen = false;
+  /** true while a background `flushDirty` for far chunks is in flight (throttles the save storm). */
+  private chunkFlushPending = false;
+
+  // ---- boot / world-selection state (title screen) -------------------------
+  /** Seed as a full 64-bit value: `?seed=` accepts arbitrary strings like vanilla (hashed). */
+  private readonly seedBig: bigint;
+  /** ?play / ?preview / ?world=... : boot straight into the world instead of the title screen. */
+  private readonly bootPlay: boolean;
+  /** `?world=<id>`: world to open at boot (used after Create World / Select World). */
+  private readonly bootWorldId: string | null;
+  /** IndexedDB id of the world the level/player/autosave are currently bound to. */
+  private currentWorldId: string | null = null;
+  /** False while the title screen is up: the level must not tick underneath the menu. */
+  private worldActive = true;
+  /** True while the title screen owns the game (pauses the world + autosave). */
+  private titleMode = false;
+  /** Set by the touch layer: pointer lock must be skipped on touch devices. */
+  private touchEnabled = false;
+  /** Bedrock-style touch overlay (ported from M2); created on touch hardware or with ?touch=1. */
+  private touch?: TouchControls;
+  private touchVisible = false;
+  /** performance.now() of the previous touch jump tap (double-tap toggles creative flight). */
+  private lastTouchJump = -Infinity;
 
   private sky: SkyState = computeSkyState(1000);
   private lightmapData = new Uint8Array(16 * 16 * 4);
@@ -193,7 +220,7 @@ export class Game {
   onReady?: () => void;
   onStatus?: (text: string, progress: number) => void;
 
-  constructor(container: HTMLElement, private readonly seedOverride?: number, workers?: number) {
+  constructor(container: HTMLElement, seedOverride?: number | string, workers?: number) {
     this.glCanvas = document.createElement('canvas');
     this.glCanvas.className = 'game-canvas';
     this.guiCanvas = document.createElement('canvas');
@@ -205,7 +232,15 @@ export class Game {
     if (!gl) throw new Error('WebGL2 is required');
     this.gl = gl;
     this.guiCtx = this.guiCanvas.getContext('2d')!;
-    if (seedOverride !== undefined) this.options.seed = seedOverride;
+
+    // Boot URL: ?seed=<any vanilla seed string>, ?world=<save id>, ?play/?preview (skip the title).
+    // The seed stays a bigint (vanilla seeds are 64-bit); options.seed is only the human-readable copy.
+    const params = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
+    const seedParam = seedOverride ?? params.get('seed') ?? undefined;
+    this.seedBig = seedParam === undefined ? 0x2602c0den : parseSeedBig(seedParam);
+    this.bootWorldId = params.get('world');
+    this.bootPlay = params.has('play') || params.has('preview') || this.bootWorldId !== null;
+    this.options.seed = Number(this.seedBig);
     if (workers !== undefined) this.options.workers = workers;
   }
 
@@ -230,12 +265,12 @@ export class Game {
 
     this.onStatus?.('Preparing world generator', 0.45);
     const worldgen = await loadWorldgenData('/mc');
-    this.generator = new NoiseChunkGenerator(this.mc, worldgen, BigInt(this.options.seed ?? 0x2602c0de));
+    this.generator = new NoiseChunkGenerator(this.mc, worldgen, this.seedBig);
 
     // Workers fetch blocks.bin/worldgen.json themselves and do it while the rest of the loading
     // screen runs, so `init` is kicked off here and awaited only right before the first request.
     this.onStatus?.('Starting chunk workers', 0.5);
-    this.chunkProvider = new ChunkProvider(this.mc, BigInt(this.options.seed ?? 0x2602c0de), this.options.workers);
+    this.chunkProvider = new ChunkProvider(this.mc, this.seedBig, this.options.workers);
     void this.chunkProvider.init('/mc');
 
     const biomes = Object.values((worldgen as unknown as { biomes: Record<string, { id: number; name: string; temperature: number; downfall: number; effects?: Record<string, number> }> }).biomes);
@@ -243,7 +278,7 @@ export class Game {
     await this.biomeColors.load('/mc');
 
     this.onStatus?.('Creating world', 0.55);
-    this.level = new ClientLevel(this.mc, this.generator, BigInt(this.options.seed ?? 0x2602c0de));
+    this.level = new ClientLevel(this.mc, this.generator, this.seedBig);
     // BiomeColors samples the multi-noise biome source for the 5x5 `biomeBlendRadius` average
     // (vanilla ClientLevel.calculateBlockTint); without it the tint falls back to the single biome.
     this.biomeColors.setBiomeSource((x, y, z) => this.generator!.getBiome(x, y, z));
@@ -275,7 +310,7 @@ export class Game {
     const worldData = await loadWorldData('/mc');
     // Exact 26.2 block tags for the spawn rules (animals_spawnable_on, bats_spawnable_on, ...).
     setSpawnBlockTags(worldData.tags);
-    this.survival = new SurvivalState(this.mc, BigInt(this.options.seed ?? 0x2602c0de), worldData);
+    this.survival = new SurvivalState(this.mc, this.seedBig, worldData);
     this.survival.gamemode = this.options.gamemode;
     this.survival.onDrop = (stack) => this.dropItem(stack);
     this.survival.onDeath = () => this.onPlayerDeath();
@@ -286,7 +321,7 @@ export class Game {
     // Entities: the manager owns the 20 Hz entity tick + natural spawning, the dispatcher draws
     // them into one batched pass. Both must exist before the first frame.
     this.onStatus?.('Starting entity system', 0.94);
-    this.entityManager = new EntityManager(this.level, this.player, BigInt(this.options.seed ?? 0x2602c0de), {
+    this.entityManager = new EntityManager(this.level, this.player, this.seedBig, {
       despawnDistance: 128,
     });
     // PlayerTarget forwards mob/arrow damage here; the survival facade owns armor, i-frames and death.
@@ -370,9 +405,11 @@ export class Game {
       // GameOptions has every field GuiOptions requires; the index signature is the only gap.
       options: this.options as unknown as GuiOptions,
       container: this.containerAdapter(),
-      worlds: this.saveManager,
+      worlds: this.worldProvider(),
       callbacks: {
         onPlay: () => this.closeScreen(),
+        onLoadWorld: (id) => { void this.enterWorld(String(id)); },
+        onCreateWorld: (options) => { void this.createAndEnterWorld(options as CreateWorldOptions); },
         onOptionChange: (key, value) => { (this.options as unknown as Record<string, unknown>)[key] = value; },
         onRespawn: () => this.respawnPlayer(),
         onChatMessage: (text) => {
@@ -380,14 +417,205 @@ export class Game {
           const reply = runChatCommand(text, this.commandHost());
           if (reply) this.screens.toastManager.addText(reply, '');
         },
-        onQuit: () => { this.screens.open('title'); },
+        onQuit: () => {
+          // TitleScreen's Quit button: a browser tab cannot quit; PauseScreen's "Save and Quit to
+          // Title" lands here as well and must actually go back to the title screen.
+          if (this.screens.current instanceof TitleScreen) {
+            this.screens.toastManager.addText('Close the browser tab to quit', '');
+            return;
+          }
+          this.openTitle();
+        },
       },
     });
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.bindInput();
+    this.initTouch();
+    if (!this.bootPlay) this.openTitle();
     this.onStatus?.('Ready', 1);
+  }
+
+  // ------------------------------------------------ title screen / world lifecycle
+
+  /** World-list adapter for the GUI: creating/selecting a world must NOT rebind the autosave
+   *  until the new world is actually loaded (otherwise the old level would be flushed into the
+   *  new save). `load()` only binds when the id is the world that is already in memory. */
+  private worldProvider(): WorldListProvider {
+    const save = this.saveManager;
+    return {
+      list: () => (save ? save.list() : Promise.resolve([])),
+      create: (options) => (save ? save.create(options) : Promise.reject(new Error('no persistence'))),
+      delete: (id) => (save ? save.delete(id) : Promise.resolve()),
+      load: async (id) => {
+        if (save && id === this.currentWorldId) await save.load(id);
+      },
+    };
+  }
+
+  /** Shows the title screen: stops the world tick and pauses (flushes) the autosave. */
+  private openTitle(): void {
+    this.screens.close(); // reset the screen stack (pause -> title must not keep pause beneath)
+    this.screens.open('title');
+    this.enterMenuMode();
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  /** World tick + autosave stop while a title screen owns the client (vanilla: no level on title). */
+  private enterMenuMode(): void {
+    if (!this.worldActive && this.titleMode) return;
+    this.worldActive = false;
+    this.titleMode = true;
+    this.keys.clear();
+    this.mining = false;
+    void this.autosave?.pause();
+  }
+
+  /** Leaves the title screen and hands control back to the player. */
+  private startPlaying(): void {
+    this.titleMode = false;
+    this.worldActive = true;
+    this.screens.close();
+    this.keys.clear();
+    this.autosave?.resume();
+    if (!this.touchEnabled) void this.guiCanvas.requestPointerLock();
+  }
+
+  /** "Play Selected World": resume this one when it is already loaded, otherwise reload onto it. */
+  private async enterWorld(id: string): Promise<void> {
+    if (id === this.currentWorldId) { this.startPlaying(); return; }
+    const worlds = (await this.saveManager?.list()) ?? [];
+    const record = worlds.find((w) => w.id === id);
+    await this.quitToTitleForReload();
+    this.reloadInto(id, record?.seed);
+  }
+
+  /** CreateWorldScreen has already created the record; find the newest one and open it. */
+  private async createAndEnterWorld(options: CreateWorldOptions): Promise<void> {
+    void options; // the record (name/seed/gamemode/difficulty) is authoritative
+    // create() rebound the save manager to the new world; point it back at the live level before the
+    // quit flush, or the old chunks would be written into the brand-new save.
+    if (this.currentWorldId) await this.saveManager?.load(this.currentWorldId);
+    const worlds = (await this.saveManager?.list()) ?? [];
+    if (!worlds.length) {
+      this.screens.toastManager.addText('Could not create the world (persistence unavailable)', '');
+      return;
+    }
+    const newest = worlds[0];
+    await this.quitToTitleForReload();
+    this.reloadInto(newest.id, newest.seed);
+  }
+
+  /** Flush the current world (awaitable) before a reload; a page reload would otherwise abort it. */
+  private async quitToTitleForReload(): Promise<void> {
+    this.keys.clear();
+    this.mining = false;
+    try { await this.autosave?.quit(); } catch { /* best effort */ }
+  }
+
+  private reloadInto(worldId: string, seed?: string | number): void {
+    const params = new URLSearchParams(location.search);
+    params.set('world', worldId);
+    params.set('play', '1');
+    if (seed !== undefined) params.set('seed', String(seed));
+    params.delete('preview');
+    location.href = `${location.pathname}?${params.toString()}`;
+  }
+
+  /** True while a TitleScreen instance owns the GUI (title / options / select world stack). */
+  private isTitleOpen(): boolean { return this.screens.current instanceof TitleScreen; }
+
+  // ---------------------------------------------------------------- touch controls
+
+  /**
+   * Mounts the Bedrock-style touch overlay (src/client/touch, ported from M2) on touch hardware or
+   * with ?touch=1. It feeds the same PlayerInput fields as the keyboard and the look pad writes
+   * yaw/pitch exactly like the mouse does; pointer lock is disabled while it is active.
+   */
+  private initTouch(): void {
+    const touch = new TouchControls(document.body, {
+      autoEnable: this.detectTouch(),
+      visible: false,
+      onInventory: () => {
+        if (!this.worldActive || this.screens.current) return;
+        this.openScreen(this.options.gamemode === 'creative' ? 'creative' : 'inventory');
+      },
+      onChat: () => { if (this.worldActive && !this.screens.current) this.openScreen('chat'); },
+      onPause: () => { if (this.worldActive && !this.screens.current) this.openScreen('pause'); },
+      onUse: () => { if (this.worldActive && !this.screens.current) this.useItem(); },
+      onAttackStart: () => {
+        if (!this.worldActive || this.screens.current) return;
+        this.mining = true;
+        this.attack();
+      },
+      onAttackEnd: () => { this.mining = false; },
+    });
+    this.touch = touch;
+    this.touchEnabled = touch.isEnabled();
+    if (!this.touchEnabled) return;
+
+    // Tap the hotbar to select a slot (vanilla touch HUD). The look pad ends above the hotbar, so
+    // these pointer events reach the canvas; touches that start on a control surface are ignored.
+    document.addEventListener('pointerdown', (e) => {
+      if (!this.touchEnabled || !this.worldActive || this.screens.current) return;
+      if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('.tc-root')) return;
+      const slot = this.touchHotbarSlot(e.clientX, e.clientY);
+      if (slot < 0) return;
+      this.selectedSlot = slot;
+      this.showItemName();
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
+  }
+
+  /**
+   * Touch mode: ?touch=1 / ?touch=0 force it, otherwise only coarse-pointer (mobile/tablet) devices
+   * get the overlay. navigator.maxTouchPoints alone is not enough: touchscreen Windows laptops
+   * report it while the player is using the mouse, and the overlay would cover half the screen.
+   */
+  private detectTouch(): boolean {
+    const forced = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('touch') : null;
+    if (forced === '1' || forced === 'on' || forced === 'true') return true;
+    if (forced === '0' || forced === 'off' || forced === 'false') return false;
+    try {
+      return typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Hit-test the vanilla 182x22 hotbar (Hud.renderHotbar) against a CSS-pixel pointer position. */
+  private touchHotbarSlot(clientX: number, clientY: number): number {
+    const scale = this.guiScale;
+    const guiX = clientX / scale;
+    const guiY = clientY / scale;
+    const w = window.innerWidth / scale;
+    const h = window.innerHeight / scale;
+    if (guiY < h - 22 || guiY > h) return -1;
+    const left = Math.floor(w / 2) - 91;
+    const i = Math.floor((guiX - (left + 1)) / 20);
+    if (i < 0 || i > 8) return -1;
+    if (guiX > left + 1 + i * 20 + 20) return -1;
+    return i;
+  }
+
+  /** Shows the overlay only while in the world and mirrors flying/underwater into its buttons. */
+  private syncTouchUi(): void {
+    const touch = this.touch;
+    if (!touch) return;
+    const inWorld = this.worldActive && this.screens.current === null
+      && !(this.survival?.isDead ?? false);
+    const visible = touch.isEnabled() && inWorld;
+    if (visible !== this.touchVisible) {
+      this.touchVisible = visible;
+      touch.setVisible(visible);
+    }
+    if (!touch.isEnabled() || !this.player) return;
+    touch.setFlying(this.player.flying);
+    touch.setUnderwater(this.playerEyeInWater());
   }
 
   private async generateSpawnArea(): Promise<void> {
@@ -600,18 +828,25 @@ export class Game {
       });
 
       const worlds = await this.saveManager.list();
-      if (worlds.length > 0) {
-        const loaded = await this.saveManager.loadWorld(worlds[0].id);
+      // ?world=<id> wins (world selection / after Create World); otherwise resume the newest world.
+      const wanted = this.bootWorldId ? worlds.find((w) => w.id === this.bootWorldId) : undefined;
+      if (this.bootWorldId && !wanted) {
+        console.warn(`[save] requested world ${this.bootWorldId} not found; falling back to the newest one`);
+      }
+      const target = wanted ?? worlds[0];
+      if (target) {
+        const loaded = await this.saveManager.loadWorld(target.id);
+        this.currentWorldId = target.id;
         this.restoreWorld(loaded);
-        console.log(`[save] restored "${worlds[0].name}": ${loaded.chunks.size} chunks, player ${loaded.player ? 'yes' : 'no'}`);
+        console.log(`[save] restored "${target.name}" (${target.id}): ${loaded.chunks.size} chunks, player ${loaded.player ? 'yes' : 'no'}`);
       } else {
-        await this.saveManager.createWorld({
+        this.currentWorldId = await this.saveManager.createWorld({
           name: 'World',
-          seed: BigInt(this.options.seed ?? 0x2602c0de),
+          seed: this.seedBig,
           gamemode: this.options.gamemode,
           difficulty: 'normal',
         });
-        console.log('[save] created new world');
+        console.log(`[save] created new world ${this.currentWorldId}`);
       }
 
       this.autosave = new Autosave(this.saveManager, {
@@ -670,6 +905,11 @@ export class Game {
       thunderTime: data.getIntOr('ThunderTime', 0),
     });
 
+    // GameType: 0 survival, 1 creative, 2 adventure, 3 spectator (LevelStorage.createLevelDat).
+    const gameType = data.getIntOr('GameType', -1);
+    if (gameType === 0) this.options.gamemode = 'survival';
+    else if (gameType === 1) this.options.gamemode = 'creative';
+
     // The restored position is usually outside the 5x5 spawn area: build its column synchronously
     // so the player does not fall through unloaded chunks on the first tick.
     const px = Math.floor(this.player.pos.x) >> 4;
@@ -709,6 +949,7 @@ export class Game {
 
     canvas.addEventListener('click', () => {
       if (this.screens.current) return;  // a menu is up: the click belongs to the GUI
+      if (this.touchEnabled) return;     // touch devices cannot lock the pointer; the touch layer looks
       if (!this.mouseLocked) canvas.requestPointerLock();
     });
     document.addEventListener('pointerlockchange', () => {
@@ -775,7 +1016,10 @@ export class Game {
         this.screens.onMouse(e.clientX, e.clientY, e.button, 'down');
         return;
       }
-      if (!this.mouseLocked) { canvas.requestPointerLock(); return; }
+      if (!this.mouseLocked) {
+        if (!this.touchEnabled) canvas.requestPointerLock();
+        return;
+      }
       if (e.button === 0) { this.mining = true; this.attack(); }
       if (e.button === 2) this.useItem();
       if (e.button === 1) this.pickBlock();
@@ -785,7 +1029,7 @@ export class Game {
       if (this.screens.current) {
         this.screens.onMouse(e.clientX, e.clientY, e.button, 'up');
         // A button may have closed the menu: take the pointer back while we still have activation.
-        if (!this.screens.current && !this.mouseLocked) canvas.requestPointerLock();
+        if (!this.screens.current && !this.mouseLocked && !this.touchEnabled) canvas.requestPointerLock();
       }
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -809,7 +1053,7 @@ export class Game {
     this.screens.close();
     this.keys.clear();
     this.autosave?.resume();
-    if (!this.mouseLocked) void this.guiCanvas.requestPointerLock();
+    if (!this.mouseLocked && !this.touchEnabled) void this.guiCanvas.requestPointerLock();
   }
 
   showDebug = false;
@@ -905,7 +1149,7 @@ export class Game {
 
   /** Advances the survival mining progress for the aimed block (vanilla Player.tick loop). */
   private updateMining(): void {
-    if (this.options.gamemode === 'creative' || !this.mouseLocked || !this.mining) {
+    if (this.options.gamemode === 'creative' || !(this.mouseLocked || this.touchEnabled) || !this.mining) {
       this.survival.breaking.reset();
       return;
     }
@@ -1272,6 +1516,7 @@ export class Game {
       ticks++;
     }
 
+    this.syncTouchUi();
     this.render(this.accum / TICK_MS);
     requestAnimationFrame(this.frame);
   };
@@ -1314,6 +1559,10 @@ export class Game {
 
   private tick(): void {
     this.tickCount++;
+    // A TitleScreen (however it was opened: boot, pause -> quit, death screen) owns the client;
+    // vanilla has no level ticking on the title screen, so stop the world tick and pause autosave.
+    if (this.isTitleOpen() && this.worldActive) this.enterMenuMode();
+    if (!this.worldActive) return;
     this.level.tick(1, this.daylightCycle); // one game tick (was 1/20, which made a day last 20x too long)
 
     // Autosave resumes as soon as the last menu closes (E / Esc / a GUI button all go through
@@ -1324,12 +1573,47 @@ export class Game {
       if (!screenOpen) this.autosave?.resume();
     }
 
+    // Touch overlay (Bedrock style): joystick + look pad + held buttons feed the same PlayerInput
+    // fields as the keyboard. The look pad writes yaw/pitch exactly like the mouse delta does.
+    const touch = this.touchEnabled ? this.touch : undefined;
+    let touchForward = 0;
+    let touchStrafe = 0;
+    let touchJump = false;
+    let touchSneak = false;
+    let touchSprint = false;
+    let touchFlyUp = false;
+    let touchFlyDown = false;
+    if (touch) {
+      const look = touch.consumeLook();
+      if (look.dx || look.dy) {
+        this.player.yaw += look.dx * 0.15;
+        this.player.pitch = Math.max(-90, Math.min(90, this.player.pitch + look.dy * 0.15));
+      }
+      if (touch.consumeJumpPressed()) {
+        const now = performance.now();
+        if (now - this.lastTouchJump < 320 && this.options.gamemode === 'creative') {
+          this.player.flying = !this.player.flying;
+          this.player.vel.y = 0;
+        }
+        this.lastTouchJump = now;
+      }
+      const move = touch.getMove();
+      touchForward = move.y;
+      touchStrafe = move.x;
+      touchJump = touch.isJumpHeld();
+      touchSneak = touch.isSneakHeld();
+      touchSprint = touch.isSprintHeld();
+      touchFlyUp = touch.isFlyUpHeld();
+      touchFlyDown = touch.isFlyDownHeld();
+    }
+    const clampAxis = (v: number): number => (v > 1 ? 1 : v < -1 ? -1 : v);
     const input: PlayerInput = {
-      forward: (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0),
-      strafe: (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0),
-      jump: this.keys.has('Space'),
-      sneak: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'),
-      sprint: this.keys.has('ControlLeft'),
+      forward: clampAxis((this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0) + touchForward),
+      strafe: clampAxis((this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0) + touchStrafe),
+      jump: this.keys.has('Space') || touchJump || (this.player.flying && touchFlyUp),
+      sneak: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || touchSneak
+        || (this.player.flying && touchFlyDown),
+      sprint: this.keys.has('ControlLeft') || touchSprint,
       jumpPressed: false,
     };
     const wasOnGround = this.player.onGround;
@@ -1470,7 +1754,15 @@ export class Game {
     const retain = this.options.renderDistance + CHUNK_RETAIN_MARGIN;
     if (this.level.countChunksOutside(pcx, pcz, retain) === 0) return; // fast path, no allocation
     if (this.saveManager && this.level.hasDirtyChunksOutside(pcx, pcz, retain)) {
-      void this.saveManager.flushDirty(this.level, this.player, 4).catch(() => {});
+      // One flush in flight at most: flushDirty serializes up to 16 chunks synchronously before its
+      // await, so calling it every tick while a teleport leaves hundreds of never-persisted chunks
+      // behind would stack that serialization on the main thread and stall the frame.
+      if (!this.chunkFlushPending) {
+        this.chunkFlushPending = true;
+        void this.saveManager.flushDirty(this.level, this.player, 4)
+          .catch(() => {})
+          .finally(() => { this.chunkFlushPending = false; });
+      }
     }
     const removed = this.level.unloadFarChunks(pcx, pcz, retain);
     if (removed.length === 0) return;
@@ -1597,7 +1889,7 @@ export class Game {
     if (hit) {
       const progress = this.breakingDemo > 0
         ? this.breakingDemo
-        : (this.mining && this.mouseLocked ? this.survival.breaking.progress : 0);
+        : (this.mining && (this.mouseLocked || this.touchEnabled) ? this.survival.breaking.progress : 0);
       if (progress > 0) {
         const state = this.level.getBlockState(hit.x, hit.y, hit.z);
         if (state !== 0) {
@@ -1614,7 +1906,7 @@ export class Game {
       color: skyState.fogColor,
     });
 
-    if (hit && this.mouseLocked) {
+    if (hit && (this.mouseLocked || this.touchEnabled)) {
       const state = this.level.getBlockState(hit.x, hit.y, hit.z);
       // LevelRenderer#submitHitOutline: ARGB.black(102) => rgba(0, 0, 0, 0.4), and the *whole*
       // outline VoxelShape is drawn (every box, not just the first one).
@@ -1810,4 +2102,19 @@ export class Game {
     const { left, right } = layoutDebugScreen(entries);
     return { debugLeft: left, debugRight: right };
   }
+}
+
+/**
+ * Vanilla seed parsing (WorldOptions): a decimal/hex number when the text is numeric, otherwise
+ * Java's String.hashCode. Kept in sync with WorldSaveManager.parseSeed, but as a bigint so a
+ * 64-bit seed survives the URL round-trip byte for byte.
+ */
+function parseSeedBig(value: string | number): bigint {
+  const text = typeof value === 'number' ? String(Math.trunc(value)) : value.trim();
+  if (/^[+-]?\d+$/.test(text)) {
+    try { return BigInt(text); } catch { /* fall through to the hash */ }
+  }
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (Math.imul(31, hash) + text.charCodeAt(i)) | 0;
+  return BigInt(hash);
 }

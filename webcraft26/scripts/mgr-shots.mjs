@@ -9,7 +9,7 @@ import { launchOptions } from './lib/browser.mjs';
 
 const outDir = path.resolve(process.argv[2] ?? 'shots/_mgr');
 const steps = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
-const url = process.argv[4] ?? 'http://127.0.0.1:5174/?workers=4';
+const url = process.argv[4] ?? 'http://127.0.0.1:5174/?play&workers=4';
 fs.mkdirSync(outDir, { recursive: true });
 
 const browser = await chromium.launch(launchOptions());

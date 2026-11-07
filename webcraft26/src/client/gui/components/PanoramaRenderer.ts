@@ -44,8 +44,15 @@ export class PanoramaRenderer {
   }
 
   private sample(): void {
-    if (this.sampled || this.faces.length === 0) return;
+    if (this.sampled) return;
+    // The six faces load asynchronously; before they are decoded the gradient must still be valid
+    // (an undefined colour makes createLinearGradient throw, which used to kill the frame loop).
+    if (this.faces.length === 0) {
+      this.colors = ['#4a6b8a', '#5a7c9a', '#6d8eaa', '#5a7c9a', '#3a5a7a', '#2a3a5a'];
+      return; // not sampled yet: try the real face colours again next frame
+    }
     this.sampled = true;
+    this.colors = [];
     const canvas = document.createElement('canvas');
     canvas.width = 1;
     canvas.height = 1;

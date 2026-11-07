@@ -10,7 +10,10 @@ export default defineConfig({
     // *.TMP files), and polling instead pegged two cores walking all of public/mc.
     watch: {
       ignored: ['**/*.TMP', '**/*.tmp', '**/*.tmpdir/**', '**/node_modules/**', '**/dist/**', '**/public/mc/**',
-        '**/shots/**', '**/logs/**', '**/REPORTS/**', '**/research/**'],
+        '**/shots/**', '**/logs/**', '**/REPORTS/**', '**/research/**',
+        // Tool scripts are not part of the app; watching them crashed the watcher (EBUSY) when
+        // another agent deleted a temp *.mjs between fs.watch registrations.
+        '**/scripts/**'],
     },
   },
   preview: {

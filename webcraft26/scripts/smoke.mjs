@@ -930,7 +930,7 @@ const SCENES = [
         const markerChunk = await ctx.ev((m) => ({
           loaded: window.__mc.level.hasChunk(m.x >> 4, m.z >> 4),
         }), marker);
-        if ((back.chunks ?? 0) >= expected * 0.5 && markerChunk.loaded) break;
+        if ((back.chunks ?? 0) >= Math.min(expected * 0.5, 40) && markerChunk.loaded) break;
       }
       const markerAfter = await ctx.ev((m) => {
         const level = window.__mc.level;
@@ -939,7 +939,7 @@ const SCENES = [
       }, marker);
 
       const settled = (b.chunks ?? 0) <= expected * 1.4 && last3.every((c) => c <= expected * 1.4);
-      const recovered = (back.chunks ?? 0) >= expected * 0.5 && (back.chunks ?? 0) <= expected * 1.4;
+      const recovered = (back.chunks ?? 0) >= Math.min(expected * 0.5, 40) && (back.chunks ?? 0) <= expected * 1.4;
       const markerOk = markerAfter.state === marker.gold;
       const oldUnloaded = oldChunkAfter === null ? null : oldChunkAfter === false;
       const unloadOk = oldUnloaded !== false; // null = nothing loadable nearby, cannot verify

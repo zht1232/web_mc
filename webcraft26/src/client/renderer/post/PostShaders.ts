@@ -46,8 +46,8 @@ uniform int uDebug;
 out vec4 fragColor;
 
 // ---------------------------------------------------------------- tone mapping
-// Lottes-style filmic curve, the shape Complementary uses. `hdrMax` is the white point,
-// `mid` the middle grey, `toe` lifts the shadows so caves do not crush to pure black.
+// Lottes-style filmic curve, the shape Complementary uses. hdrMax is the white point,
+// mid is the middle grey, toe lifts the shadows so caves do not crush to pure black.
 vec3 tonemapLottes(vec3 color) {
   const float hdrMax = 8.0;
   const float mid = 0.25;

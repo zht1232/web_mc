@@ -46,8 +46,14 @@ in vec3 vWorldPos;
 uniform sampler2DArray uAtlas;
 uniform sampler2D uLightmap;
 uniform vec3 uFogColor;
-uniform float uFogStart;
-uniform float uFogEnd;
+// Fog ranges come from renderer/environment/FogState.ts (FogRenderer.setupFog / FogData.java):
+// environmentalStart/End for the spherical distance, renderDistanceStart/End for the
+// cylindrical one - exactly fog.glsl total_fog_value.
+uniform float uFogEnvStart;
+uniform float uFogEnvEnd;
+uniform float uFogRdStart;
+uniform float uFogRdEnd;
+uniform float uFogEnabled;
 uniform vec3 uCameraPos;
 uniform float uAlphaTest;
 uniform float uTranslucent;
@@ -112,17 +118,23 @@ void main() {
         lit = sum / 9.0;
       }
       if (uDebug == 11) { fragColor = vec4(vec3(lit), 1.0); return; }
-      // deep shade / caves keep the lightmap value only, like the vanilla direct term
-      float skyMask = smoothstep(0.0, 0.55, vLight.y / 15.0);
+      // deep shade / caves keep the lightmap value only, like the vanilla direct term.
+      // vLight.x is the SKY light (vLight = (sky, block)); the lightmap sample uses vLight.yx.
+      float skyMask = smoothstep(0.0, 0.55, vLight.x / 15.0);
       color += tex.rgb * vColor.rgb * uSunColor * ndl * lit * skyMask;
     }
   }
 
-  // cylindrical fog like vanilla (max of horizontal distance and vertical distance)
-  vec3 d = vWorldPos - uCameraPos;
-  float dist = max(length(d.xz), abs(d.y));
-  float fog = clamp((dist - uFogStart) / (uFogEnd - uFogStart), 0.0, 1.0);
-  color = mix(color, uFogColor, fog * fog);
+  // fog.glsl total_fog_value + apply_fog: spherical distance against the environmental range,
+  // cylindrical distance against the render-distance range, no extra squaring.
+  if (uFogEnabled > 0.5) {
+    vec3 d = vWorldPos - uCameraPos;
+    float spherical = length(d);
+    float cylindrical = max(length(d.xz), abs(d.y));
+    float envFog = clamp((spherical - uFogEnvStart) / max(uFogEnvEnd - uFogEnvStart, 1e-4), 0.0, 1.0);
+    float rdFog = clamp((cylindrical - uFogRdStart) / max(uFogRdEnd - uFogRdStart, 1e-4), 0.0, 1.0);
+    color = mix(color, uFogColor, max(envFog, rdFog));
+  }
 
   fragColor = vec4(color, alpha);
 }`;

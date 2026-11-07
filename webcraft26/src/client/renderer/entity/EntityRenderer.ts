@@ -202,7 +202,7 @@ function rotLerp(partial: number, from: number, to: number): number {
 const ANIM_CTX: AnimContext = {
   ageInTicks: 0, limbSwing: 0, limbSwingAmount: 0,
   headYaw: 0, headPitch: 0, attackTime: 0,
-  isAggressive: false, isHoldingBow: false, swell: 0, flapAngle: 0,
+  isAggressive: false, isHoldingBow: false, swell: 0, flapAngle: 0, isResting: false,
 };
 
 /** Vanilla hurt overlay colour: OverlayTexture row v=3 is 0xB2FF0000. */
@@ -221,6 +221,12 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
 
   /** White overlay progress 0..1 (CreeperRenderer.getWhiteOverlayProgress). 0 = none. */
   getWhiteOverlay(_e: T): number { return 0; }
+
+  /** Shadow radius in blocks (MobRenderer constructor shadowRadius); 0 = no shadow. */
+  getShadowRadius(_e: T): number { return 0; }
+
+  /** Shadow strength (EntityRenderer.shadowStrength, 1.0 by default). */
+  getShadowStrength(_e: T): number { return 1; }
 
   append(e: T, batch: EntityBatch, texId: number, partialTick: number): void {
     const model = this.getModel(e);
@@ -272,6 +278,8 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     ctx.flapAngle = e.getTypeName() === 'chicken'
       ? (1 + Math.sin(ctx.ageInTicks * 0.9)) * (e.onGround ? 0.05 : 0.6)
       : 0;
+    // Source: Bat.isResting()/BatRenderState.isResting (hanging upside down)
+    ctx.isResting = e.getTypeName() === 'bat' && e.onGround;
 
     const animator: ModelAnimator | null = model.animate;
     const poses = model.poses;

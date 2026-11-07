@@ -275,6 +275,21 @@ await page.waitForTimeout(2000);
 await shot('death');
 
 // ---------------------------------------------------------------------------
+// Scene 7: entity shadow (ShadowFeatureRenderer) close-up on flat grass
+// ---------------------------------------------------------------------------
+r = await evaluate(() => {
+  const m = window.__mc, P = window.__mobP;
+  P.clearMobs();
+  m.level.time = 6000;
+  P.spawn('zombie', 4.0, 0);
+  m.player.pitch = 22; // look down so the ground plane is visible
+  return { pitch: m.player.pitch };
+});
+console.log('shadow setup:', JSON.stringify(r));
+await page.waitForTimeout(2000);
+await shot('shadow-close');
+
+// ---------------------------------------------------------------------------
 // Diagnostics
 // ---------------------------------------------------------------------------
 const diag = await evaluate(() => {
@@ -283,6 +298,7 @@ const diag = await evaluate(() => {
     glError: m.gl.getError(),
     drawCalls: m.entityRenderer.lastDrawCallCount,
     lastBatchTotal: Array.from(m.entityRenderer.batch.lengths).reduce((a, b) => a + b, 0),
+    shadowVertices: m.entityRenderer.shadowVertices,
     lightmapBound: !!m.entityRenderer.lightmap,
     fog: m.entityRenderer.fogColor,
     entities: m.entityManager.getEntities().length,

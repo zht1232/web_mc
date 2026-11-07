@@ -104,18 +104,18 @@ function Send-Key([int]$code) {
 function Send-Text([string]$s) {
   foreach ($ch in $s.ToCharArray()) {
     [void][RefCap]::PostMessage($script:hwnd, 0x0102, [IntPtr][int]$ch, [IntPtr]1)
-    Start-Sleep -Milliseconds 12
+    Start-Sleep -Milliseconds 14
   }
 }
 function Send-Chat([string]$cmd) {
   $body = $cmd
   if ($body.StartsWith('/')) { $body = $body.Substring(1) }
-  Send-Key 191          # VK_OEM_2 '/' opens chat with '/' prefilled
-  Start-Sleep -Milliseconds 320
+  Send-Key 191          # slash key opens chat prefilled with '/'
+  Start-Sleep -Milliseconds 380
   Send-Text $body
-  Start-Sleep -Milliseconds 180
+  Start-Sleep -Milliseconds 200
   Send-Key 13           # Enter
-  Start-Sleep -Milliseconds 420
+  Start-Sleep -Milliseconds 500
 }
 
 function Grab([string]$name) {
@@ -158,34 +158,36 @@ $script:hwnd = $hwnd
 Log ("TARGET hwnd={0} pid={1}" -f $hwnd, $script:foundPid)
 Ensure-Size
 
-# ---- one-time world setup ------------------------------------------------
+# ---- one-time world setup (26.2 renamed gamerules to namespaced ids) ------
 $setup = @(
-  'gamerule doDaylightCycle false',
-  'gamerule doMobSpawning false',
-  'gamerule doWeatherCycle false',
-  'gamerule sendCommandFeedback false',
+  'difficulty peaceful',
+  'gamerule advance_time false',
+  'gamerule spawn_mobs false',
+  'gamerule spawn_monsters false',
+  'gamerule send_command_feedback false',
   'weather clear',
-  'difficulty normal',
-  'kill @e[type=!player]'
+  'kill @e[type=!player]',
+  'gamemode survival'
 )
 if ($Only -eq '') {
   Log 'SETUP'
-  foreach ($c in $setup) { Send-Chat $c }
+  foreach ($c in $setup) { Send-Chat $c; Start-Sleep -Milliseconds 250 }
+  Send-Chat 'tp @s 1000 -60 1000 0 0'
+  Start-Sleep -Milliseconds 6000
 }
 
 # ---- scene list ----------------------------------------------------------
-# cmds run before capture; keys are VK codes sent after cmds (before/after shot)
 $scenes = @(
-  @{ name = 'ref-day-6000-level';        cmds = @('time set 6000','tp @s 0 -60 0 0 0');                     keysBefore = @(); keysAfter = @(); wait = 1200 },
-  @{ name = 'ref-sunset-11800-sun';      cmds = @('time set 11800','tp @s 0 -60 0 90 6');                   keysBefore = @(); keysAfter = @(); wait = 1200 },
-  @{ name = 'ref-dusk-12500-level';      cmds = @('time set 12500','tp @s 0 -60 0 90 6');                   keysBefore = @(); keysAfter = @(); wait = 1200 },
-  @{ name = 'ref-night-18000-level';     cmds = @('time set 18000','tp @s 0 -60 0 0 0');                     keysBefore = @(); keysAfter = @(); wait = 1200 },
-  @{ name = 'ref-night-18000-sky';       cmds = @('tp @s 0 -60 0 0 -55');                                    keysBefore = @(); keysAfter = @(); wait = 900 },
-  @{ name = 'ref-night-18000-sky-nohud'; cmds = @();                                                          keysBefore = @(112); keysAfter = @(112); wait = 700 },
-  @{ name = 'ref-night-13000-moonrise';  cmds = @('time set 13000','tp @s 0 -60 0 -90 8');                   keysBefore = @(); keysAfter = @(); wait = 1200 },
-  @{ name = 'ref-night-18000-torch';     cmds = @('time set 18000','tp @s 0 -60 0 0 32','setblock 0 -60 2 minecraft:torch','item replace entity @s hotbar.0 with minecraft:torch'); keysBefore = @(49); keysAfter = @(); wait = 1600 },
-  @{ name = 'ref-day-6000-hand-stone';   cmds = @('time set 6000','tp @s 0 -60 0 30 22','item replace entity @s hotbar.0 with minecraft:stone'); keysBefore = @(49); keysAfter = @(); wait = 1200 },
-  @{ name = 'ref-day-6000-inventory';    cmds = @('time set 6000','tp @s 0 -60 0 0 0','item replace entity @s hotbar.1 with minecraft:stone','item replace entity @s hotbar.2 with minecraft:torch'); keysBefore = @(69); keysAfter = @(27); wait = 1400 }
+  @{ name = 'ref-day-6000-level';        cmds = @('time set 6000','tp @s 1000 -60 1000 0 0');                   keysBefore = @();    keysAfter = @();    wait = 2000 },
+  @{ name = 'ref-sunset-11800-sun';      cmds = @('time set 11800','tp @s 1000 -60 1000 90 6');                 keysBefore = @();    keysAfter = @();    wait = 2000 },
+  @{ name = 'ref-dusk-12500-level';      cmds = @('time set 12500','tp @s 1000 -60 1000 90 6');                 keysBefore = @();    keysAfter = @();    wait = 2000 },
+  @{ name = 'ref-night-18000-level';     cmds = @('time set 18000','tp @s 1000 -60 1000 0 0');                   keysBefore = @();    keysAfter = @();    wait = 2000 },
+  @{ name = 'ref-night-18000-sky';       cmds = @('tp @s 1000 -60 1000 0 -55');                                  keysBefore = @();    keysAfter = @();    wait = 1200 },
+  @{ name = 'ref-night-18000-sky-nohud'; cmds = @();                                                            keysBefore = @(112); keysAfter = @(112); wait = 900 },
+  @{ name = 'ref-night-13000-moonrise';  cmds = @('time set 13000','tp @s 1000 -60 1000 -90 8');                 keysBefore = @();    keysAfter = @();    wait = 2000 },
+  @{ name = 'ref-night-18000-torch';     cmds = @('time set 18000','tp @s 1000 -60 1000 0 32','setblock 1000 -60 1002 minecraft:torch','item replace entity @s hotbar.0 with minecraft:torch'); keysBefore = @(49); keysAfter = @(); wait = 2000 },
+  @{ name = 'ref-day-6000-hand-stone';   cmds = @('time set 6000','tp @s 1000 -60 1000 30 22','item replace entity @s hotbar.0 with minecraft:stone'); keysBefore = @(49); keysAfter = @(); wait = 6500 },
+  @{ name = 'ref-day-6000-inventory';    cmds = @('time set 6000','tp @s 1000 -60 1000 0 0','item replace entity @s hotbar.1 with minecraft:stone','item replace entity @s hotbar.2 with minecraft:torch'); keysBefore = @(69); keysAfter = @(27); wait = 2200 }
 )
 
 $scenes = $scenes | Where-Object { $Only -eq '' -or $_.name -eq $Only }
@@ -196,10 +198,10 @@ foreach ($s in $scenes) {
   Log ("SCENE {0}" -f $s.name)
   Ensure-Size
   foreach ($c in $s.cmds) { Send-Chat $c }
-  foreach ($k in $s.keysBefore) { Send-Key $k; Start-Sleep -Milliseconds 500 }
+  foreach ($k in $s.keysBefore) { Send-Key $k; Start-Sleep -Milliseconds 600 }
   Start-Sleep -Milliseconds $s.wait
   [void](Grab $s.name)
-  foreach ($k in $s.keysAfter) { Send-Key $k; Start-Sleep -Milliseconds 400 }
+  foreach ($k in $s.keysAfter) { Send-Key $k; Start-Sleep -Milliseconds 500 }
 }
 
 Set-Content -Path $LogFile -Value $script:log -Encoding UTF8

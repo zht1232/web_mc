@@ -46,6 +46,7 @@ import {
   type LevelLike,
 } from './EnvCommon.js';
 import { CelestialBodies } from './CelestialBodies.js';
+import { argbFromRgb, computeFogColor } from './FogState.js';
 
 const SKY_VS = `#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -417,10 +418,25 @@ export class SkyRenderer {
       return;
     }
 
+    // The sky pass uses the *sky fog* colour: FogRenderer.computeFogColor mixes the level fog
+    // colour with the sky colour and - when the camera looks toward the sun - the sunrise/sunset
+    // colour (AtmosphericFogEnvironment.getBaseColor). FogState is the light package's port.
+    const fogRgb = computeFogColor({
+      fogColorArgb: argbFromRgb(sky.fogColor),
+      skyColorArgb: argbFromRgb(sky.skyColor),
+      sunriseSunsetColorArgb: sky.sunriseColorArgb,
+      sunAngleDeg: sky.sunAngleDeg,
+      cameraForward: { x: forward[0], y: forward[1], z: forward[2] },
+      skyFogEndDistance: sky.skyFogEndDistance,
+      renderDistanceBlocks: skyFogEnd,
+      rainLevel: rain,
+      thunderLevel: 0,
+    });
+
     // ---- 1. top sky disc (flat colour, horizon = sky fog) -------------------
     this.skyProgram.use();
     this.skyProgram.set3f('uSkyColor', sky.skyColor[0], sky.skyColor[1], sky.skyColor[2]);
-    this.skyProgram.set3f('uFogColor', sky.fogColor[0], sky.fogColor[1], sky.fogColor[2]);
+    this.skyProgram.set3f('uFogColor', fogRgb[0], fogRgb[1], fogRgb[2]);
     this.skyProgram.set3f('uCamRight', right[0], right[1], right[2]);
     this.skyProgram.set3f('uCamUp', up[0], up[1], up[2]);
     this.skyProgram.set3f('uCamForward', forward[0], forward[1], forward[2]);
@@ -481,7 +497,7 @@ export class SkyRenderer {
     if (camera.y < horizonHeight) {
       this.skyProgram.use();
       this.skyProgram.set3f('uSkyColor', 0, 0, 0);
-      this.skyProgram.set3f('uFogColor', sky.fogColor[0], sky.fogColor[1], sky.fogColor[2]);
+      this.skyProgram.set3f('uFogColor', fogRgb[0], fogRgb[1], fogRgb[2]);
       this.skyProgram.set3f('uCamRight', right[0], right[1], right[2]);
       this.skyProgram.set3f('uCamUp', up[0], up[1], up[2]);
       this.skyProgram.set3f('uCamForward', forward[0], forward[1], forward[2]);

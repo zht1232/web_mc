@@ -18,6 +18,9 @@ export class ItemEntityRenderer extends EntityRenderer<Entity> {
   getModel(): BakedModel { return ItemCubeModel; }
   getTextureKey(): string { return WHITE_TEXTURE; }
 
+  /** Source: ItemEntityRenderer / ExperienceOrbRenderer shadowRadius. */
+  getShadowRadius(): number { return 0.15; }
+
   getTint(e: Entity): readonly [number, number, number] {
     const it = (e as ItemEntity).getItem;
     const id = typeof it === 'function' ? it.call(e).id : (e.getTypeName ? e.getTypeName() : 'stone');

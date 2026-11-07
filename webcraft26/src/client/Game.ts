@@ -71,7 +71,9 @@ const DEFAULT_OPTIONS: GameOptions = {
   renderDistance: 8,
   guiScale: 0,
   fov: 70,
-  brightness: 0,
+  // Vanilla Options.java:883-898 gamma option default is 0.5 ("options.gamma.default").
+  // LightmapRenderStateExtractor.java:68 feeds this to core/lightmap.fsh BrightnessFactor.
+  brightness: 0.5,
   gamemode: 'creative',
   shaders: true,
   shaderQuality: 'high',
@@ -492,18 +494,21 @@ export class Game {
   }
 
   /**
-   * Nearest water column at sea level, searched ring by ring from the spawn column (the first hit
-   * is the Chebyshev-nearest one). Reads real block states, so the spawn chunks must be loaded.
-   * Drives the "water within 24 blocks" spawn requirement and the initial camera yaw.
+   * Nearest water column, searched ring by ring from the spawn column (the first hit is the
+   * Chebyshev-nearest one). Uses the column's top block instead of a fixed y: sea level 63 means
+   * ocean source blocks stop at y=62, so probing one fixed layer misses most water (Heightmap
+   * WORLD_SURFACE top here is a fluid iff the column is water). Reads real block states, so the
+   * spawn chunks must be loaded. Drives the "water within 24 blocks" spawn rule + initial yaw.
    */
   private findNearestWater(x: number, z: number, radius: number): { x: number; z: number; dist: number } | null {
     for (let r = 0; r <= radius; r++) {
       for (let dz = -r; dz <= r; dz++) {
         for (let dx = -r; dx <= r; dx++) {
           if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-          if (this.mc.isLiquid(this.level.getBlockState(x + dx, this.level.seaLevel, z + dz))) {
-            return { x: x + dx, z: z + dz, dist: r };
-          }
+          const wx = x + dx;
+          const wz = z + dz;
+          const top = this.level.getHeight(wx, wz);
+          if (this.mc.isLiquid(this.level.getBlockState(wx, top, wz))) return { x: wx, z: wz, dist: r };
         }
       }
     }

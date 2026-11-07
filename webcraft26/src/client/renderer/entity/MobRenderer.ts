@@ -24,6 +24,9 @@ export class MobRenderer extends EntityRenderer<Entity> {
   getTextureKey(): string { return this.entry.texture; }
   getTint(): readonly [number, number, number] { return this.tint; }
 
+  /** Source: MobRenderer constructor shadowRadius (0.5 for the vanilla overworld mobs). */
+  getShadowRadius(): number { return 0.5; }
+
   /** Source: CreeperRenderer.scale — swelling inflates the model. */
   getExtraScale(e: Entity, out: Float64Array): void {
     if (this.typeName !== 'creeper') { out[0] = 1; out[1] = 1; out[2] = 1; return; }

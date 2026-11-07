@@ -22,7 +22,7 @@
 //   dispatcher.render(manager.getEntities(), viewProj, camera, partialTick);
 
 import { GlProgram, createTexture2D, loadImage } from '../gl/Gl.js';
-import { ENTITY_VERT, ENTITY_FRAG } from './EntityShaders.js';
+import { ENTITY_VERT, ENTITY_FRAG, SHADOW_VERT, SHADOW_FRAG } from './EntityShaders.js';
 import { EntityBatch, EntityRenderer, FLOATS_PER_VERTEX } from './EntityRenderer.js';
 import { MobRenderer } from './MobRenderer.js';
 import { ItemEntityRenderer } from './ItemEntityRenderer.js';
@@ -50,6 +50,14 @@ export class EntityRenderDispatcher {
   private combined: Float32Array = new Float32Array(4096 * FLOATS_PER_VERTEX);
   private readonly n: number;
   private loading: Promise<void> | null = null;
+
+  // entity shadows (ShadowFeatureRenderer): one program + one 1-float-per-vertex VBO
+  private readonly shadowProgram: GlProgram;
+  private readonly shadowTex: WebGLTexture;
+  private readonly shadowVao: WebGLVertexArrayObject | null;
+  private readonly shadowVbo: WebGLBuffer;
+  private shadowData: Float32Array = new Float32Array(6 * 64);
+  private shadowVertices = 0;
 
   /** 1x1 white fallback used until the real 16x16 lightmap arrives. */
   private readonly whiteLightmap: WebGLTexture;
@@ -95,6 +103,33 @@ export class EntityRenderDispatcher {
     gl.bindVertexArray(null);
     this.vao = vao;
     this.vbo = vbo;
+
+    // shadows: a soft radial blob (textures/misc/shadow.png equivalent) drawn as
+    // one quad per block below the entity.
+    this.shadowProgram = new GlProgram(gl, SHADOW_VERT, SHADOW_FRAG, 'entityShadow');
+    const S = 64;
+    const radial = new Uint8Array(S * S * 4);
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const dx = ((x + 0.5) / S) * 2 - 1;
+        const dz = ((y + 0.5) / S) * 2 - 1;
+        let a = 1 - Math.sqrt(Math.min(1, dx * dx + dz * dz));
+        a = a * a;
+        const i = (y * S + x) * 4;
+        radial[i + 3] = Math.round(a * 255);
+      }
+    }
+    this.shadowTex = createTexture2D(gl, S, S, radial, gl.LINEAR);
+    const shadowVao = gl.createVertexArray();
+    const shadowVbo = gl.createBuffer()!;
+    gl.bindVertexArray(shadowVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, shadowVbo);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 24, 12);
+    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 24, 20);
+    gl.bindVertexArray(null);
+    this.shadowVao = shadowVao;
+    this.shadowVbo = shadowVbo;
 
     // one renderer per renderable entity type
     for (const name of Object.keys(MODEL_REGISTRY)) {
@@ -229,6 +264,18 @@ export class EntityRenderDispatcher {
       gl.drawArrays(gl.TRIANGLES, this.starts[t], this.counts[t]);
     }
     gl.bindVertexArray(null);
+
+    // vanilla draws entity shadows right after the models (ShadowFeatureRenderer)
+    this.renderShadows(entities, viewProj, camera);
+
+    // GL state contract (REPORTS/session-reports/05-environment-audio.md:74-76):
+    // draw only into the current framebuffer, never touch viewport/FBO/clear, and
+    // restore depthMask / CULL_FACE BACK / BLEND off before returning.
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+    gl.disable(gl.BLEND);
+    gl.depthMask(true);
+    gl.activeTexture(gl.TEXTURE0);
   }
 
   /** Number of draw calls the last render used (one per non-empty texture). */
@@ -236,6 +283,92 @@ export class EntityRenderDispatcher {
     let n = 0;
     for (let t = 0; t < this.n; t++) if (this.counts[t] > 0) n++;
     return n;
+  }
+
+  /**
+   * Source: net.minecraft.client.renderer.feature.ShadowFeatureRenderer +
+   * EntityRenderer.extractShadow. Every entity within 16 blocks gets one
+   * textured quad per full block below it (vanilla shadowPower = 1 - distSq/256,
+   * depth = min(power / 0.5 - 1, radius), alpha = powerAtDepth * 0.5 * brightness).
+   */
+  private renderShadows(entities: Iterable<Entity>, viewProj: Float32Array, camera: EntityCamera): void {
+    const gl = this.gl;
+    let out = this.shadowData;
+    let o = 0;
+
+    for (const e of entities) {
+      if (e.isRemoved()) continue;
+      const renderer = this.renderers.get(e.getTypeName());
+      if (!renderer) continue;
+      const radius = Math.min(renderer.getShadowRadius(e) * e.scale, 32);
+      if (radius <= 0) continue;
+      const dx = e.x - camera.x, dy = e.y - camera.y, dz = e.z - camera.z;
+      const pow = (1 - (dx * dx + dy * dy + dz * dz) / 256) * renderer.getShadowStrength(e);
+      if (pow <= 0) continue;
+      const depth = Math.min(pow / 0.5 - 1, radius);
+      const x0 = Math.floor(e.x - radius), x1 = Math.floor(e.x + radius);
+      const z0 = Math.floor(e.z - radius), z1 = Math.floor(e.z + radius);
+      const y0 = Math.floor(e.y - depth), y1 = Math.floor(e.y);
+      const level = e.level;
+
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          for (let y = y0; y <= y1; y++) {
+            const state = level.getBlockState(x, y - 1, z);
+            if (state === 0) continue;
+            if (level.mc.collision(state).length === 0) continue;
+            const brightness = level.getBrightness(x, y, z);
+            if (brightness <= 3) continue;
+            const alpha = Math.max(0, Math.min(1, (pow - (e.y - y) * 0.5) * 0.5 * (brightness / 15)));
+            if (alpha <= 0) continue;
+
+            const need = o + 36;
+            if (need > out.length) {
+              let cap = out.length;
+              while (cap < need) cap *= 2;
+              const grown = new Float32Array(cap);
+              grown.set(out);
+              out = grown;
+            }
+            const wy = y + 0.02;
+            const u0 = -(x - e.x) / (2 * radius) + 0.5;
+            const u1 = -(x + 1 - e.x) / (2 * radius) + 0.5;
+            const v0 = -(z - e.z) / (2 * radius) + 0.5;
+            const v1 = -(z + 1 - e.z) / (2 * radius) + 0.5;
+            // two triangles: (0,1,2) (0,2,3)
+            out[o++] = x; out[o++] = wy; out[o++] = z; out[o++] = u0; out[o++] = v0; out[o++] = alpha;
+            out[o++] = x; out[o++] = wy; out[o++] = z + 1; out[o++] = u0; out[o++] = v1; out[o++] = alpha;
+            out[o++] = x + 1; out[o++] = wy; out[o++] = z + 1; out[o++] = u1; out[o++] = v1; out[o++] = alpha;
+            out[o++] = x; out[o++] = wy; out[o++] = z; out[o++] = u0; out[o++] = v0; out[o++] = alpha;
+            out[o++] = x + 1; out[o++] = wy; out[o++] = z + 1; out[o++] = u1; out[o++] = v1; out[o++] = alpha;
+            out[o++] = x + 1; out[o++] = wy; out[o++] = z; out[o++] = u1; out[o++] = v0; out[o++] = alpha;
+          }
+        }
+      }
+    }
+
+    this.shadowData = out;
+    this.shadowVertices = o / 6;
+    if (this.shadowVertices === 0) return;
+
+    this.shadowProgram.use();
+    this.shadowProgram.setMat4('uViewProj', viewProj);
+    this.shadowProgram.set1i('uTex', 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowTex);
+    gl.bindVertexArray(this.shadowVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.shadowVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, out, gl.DYNAMIC_DRAW);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+    gl.disable(gl.CULL_FACE);
+    gl.drawArrays(gl.TRIANGLES, 0, this.shadowVertices);
+    gl.bindVertexArray(null);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
   }
 
   private ensureCombined(floats: number): void {

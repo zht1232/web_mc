@@ -16,6 +16,7 @@ import type { SkyState } from '../EnvironmentLighting.js';
 import { chunkKey } from '../../vanilla/core/Geometry.js';
 import { PostProcessor } from './post/PostProcessor.js';
 import { ShadowMap } from './post/ShadowMap.js';
+import { argbFromRgb, computeFog } from './environment/FogState.js';
 
 export interface Camera {
   x: number; y: number; z: number;
@@ -50,6 +51,7 @@ export class LevelRenderer {
   readonly shadow: ShadowMap;
 
   private readonly sunDir: [number, number, number] = [0, 1, 0];
+  private readonly moonDir: [number, number, number] = [0, -1, 0];
   private readonly lightDir: [number, number, number] = [0, 1, 0];
   private readonly sunColor: [number, number, number] = [1, 1, 1];
   private shadowsActive = false;
@@ -557,46 +559,57 @@ export class LevelRenderer {
   /**
    * Sun/moon direction and direct-light colour for this frame.
    *
-   * The sun position matches renderer/environment/SkyRenderer.ts:305-306 exactly, i.e.
-   * theta = timeOfDay*2PI and the sun on a (0, sin, cos) circle around the X axis; the moon is
-   * drawn at -sunDir (SkyRenderer.ts:370-372). NOTE: SkyState.sunAngleDeg from
-   * EnvironmentLighting.ts:207 is a *different* value (t/24000*360+90); using it here would put
-   * the shadow a quarter turn away from the drawn sun, so this uses the SkyRenderer formula.
+   * Direction comes straight from the authoritative SkyState angles (the light package validated
+   * them against Timelines.java): visual/sun_angle is 0 at noon and 180 at midnight, and vanilla
+   * SkyRenderer.java:344 rotates the sun billboard by Axis.XP * sunAngle after an Axis.YP(-90)
+   * pre-rotation, which puts the sun at
+   *   sunDir  = (-sin(sunAngle),  cos(sunAngle),  0)
+   *   moonDir = (-sin(moonAngle), cos(moonAngle), 0)
+   * (SkyRenderer.java:334-360, moon rendered at its own MOON_ANGLE). We do not re-derive the
+   * angle from level.time here; that would be a second source of truth.
    */
-  private updateSunLight(level: ClientLevel): void {
-    const phase = (((level.time % 24000) + 24000) % 24000) / 24000;
-    const theta = phase * Math.PI * 2;
-    this.sunDir[0] = 0;
-    this.sunDir[1] = Math.sin(theta);
-    this.sunDir[2] = Math.cos(theta);
+  private updateSunLight(sky: SkyState, rainLevel: number): void {
+    const sunAngle = (sky.sunAngleDeg * Math.PI) / 180;
+    const moonAngle = (sky.moonAngleDeg * Math.PI) / 180;
+    this.sunDir[0] = -Math.sin(sunAngle);
+    this.sunDir[1] = Math.cos(sunAngle);
+    this.sunDir[2] = 0;
+    this.moonDir[0] = -Math.sin(moonAngle);
+    this.moonDir[1] = Math.cos(moonAngle);
+    this.moonDir[2] = 0;
 
-    const rainLevel = (level as unknown as { getRainLevel?: () => number }).getRainLevel;
-    const rain = typeof rainLevel === 'function' ? Math.min(1, Math.max(0, level.getRainLevel())) : 0;
+    const rain = Math.min(1, Math.max(0, rainLevel));
     const smoothstep = (a: number, b: number, x: number) => {
       const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
       return t * t * (3 - 2 * t);
     };
 
-    const up = this.sunDir[1];
-    if (up >= 0) {
-      // Day: white-warm direct sun, dying out in the last few degrees above the horizon.
+    if (this.sunDir[1] > 0) {
+      // Day: warm-white direct sun, dying out in the last few degrees above the horizon.
+      const up = this.sunDir[1];
       const warmth = Math.min(1, up * 2.5);
-      const strength = smoothstep(0.015, 0.30, up) * 0.55 * (1 - rain * 0.7);
+      const strength = smoothstep(0.0, 0.30, up) * 0.55 * (1 - rain * 0.7);
       this.lightDir[0] = this.sunDir[0];
       this.lightDir[1] = this.sunDir[1];
       this.lightDir[2] = this.sunDir[2];
       this.sunColor[0] = 1.0 * strength;
       this.sunColor[1] = (0.58 + (0.97 - 0.58) * warmth) * strength;
       this.sunColor[2] = (0.32 + (0.90 - 0.32) * warmth) * strength;
-    } else {
-      // Night: weak bluish moonlight, from the opposite direction.
-      const strength = smoothstep(0.015, 0.30, -up) * 0.10 * (1 - rain * 0.85);
-      this.lightDir[0] = -this.sunDir[0];
-      this.lightDir[1] = -this.sunDir[1];
-      this.lightDir[2] = -this.sunDir[2];
+    } else if (this.moonDir[1] > 0) {
+      // Night: deliberately weak bluish moonlight (the night darkening itself comes from
+      // SKY_LIGHT_FACTOR 0.24 through the lightmap, not from this term).
+      const up = this.moonDir[1];
+      const strength = smoothstep(0.0, 0.30, up) * 0.08 * (1 - rain * 0.85);
+      this.lightDir[0] = this.moonDir[0];
+      this.lightDir[1] = this.moonDir[1];
+      this.lightDir[2] = this.moonDir[2];
       this.sunColor[0] = 0.55 * strength;
       this.sunColor[1] = 0.65 * strength;
       this.sunColor[2] = 1.00 * strength;
+    } else {
+      this.sunColor[0] = 0;
+      this.sunColor[1] = 0;
+      this.sunColor[2] = 0;
     }
   }
 
@@ -674,17 +687,42 @@ export class LevelRenderer {
     translucent.sort((a, b) => b.dist - a.dist);
 
     // Sun/moon shadow map. Off when shaders are off (the shader path must equal vanilla then).
-    this.updateSunLight(level);
+    const rainLevel = typeof level.getRainLevel === 'function' ? level.getRainLevel() : 0;
+    this.updateSunLight(sky, rainLevel);
     this.shadowsActive = this.post.enabled && this.post.shadowsEnabled && this.post.shadowSize > 0;
     if (this.shadowsActive) this.renderShadowPass(camera);
 
+    // Fog: single source of truth is renderer/environment/FogState.ts (FogRenderer.setupFog).
+    // The old hand-rolled fogStart/fogEnd formula is gone; terrain, entities, weather and sky
+    // all consume the same vanilla fog data now.
+    const forward = cameraBasis((camera.yaw * Math.PI) / 180, (camera.pitch * Math.PI) / 180).forward;
+    const fog = computeFog({
+      fogType: 'atmospheric',
+      renderDistanceBlocks: this.renderDistance * 16,
+      cameraPosition: { x: camera.x, y: camera.y, z: camera.z },
+      cameraForward: { x: forward[0], y: forward[1], z: forward[2] },
+      partialTicks,
+      minY: level.minY,
+      fogColorArgb: argbFromRgb(sky.fogColor),
+      skyColorArgb: argbFromRgb(sky.skyColor),
+      sunriseSunsetColorArgb: sky.sunriseColorArgb,
+      sunAngleDeg: sky.sunAngleDeg,
+      fogStartDistance: sky.fogStartDistance,
+      fogEndDistance: sky.fogEndDistance,
+      skyFogEndDistance: sky.skyFogEndDistance,
+      cloudFogEndDistance: sky.cloudFogEndDistance,
+      rainLevel,
+      skyLightLevel: level.getSkyLight(Math.floor(camera.x), Math.floor(camera.y), Math.floor(camera.z)),
+    });
+
     this.terrain.use();
     this.terrain.setMat4('uViewProj', this.viewProj);
-    this.terrain.set3f('uFogColor', sky.fogColor[0], sky.fogColor[1], sky.fogColor[2]);
-    const fogStart = Math.max(16, (this.renderDistance - 2) * 16 * 0.55);
-    const fogEnd = this.renderDistance * 16;
-    this.terrain.set1f('uFogStart', fogStart);
-    this.terrain.set1f('uFogEnd', fogEnd);
+    this.terrain.set3f('uFogColor', fog.color[0], fog.color[1], fog.color[2]);
+    this.terrain.set1f('uFogEnvStart', fog.environmentalStart);
+    this.terrain.set1f('uFogEnvEnd', fog.environmentalEnd);
+    this.terrain.set1f('uFogRdStart', fog.renderDistanceStart);
+    this.terrain.set1f('uFogRdEnd', fog.renderDistanceEnd);
+    this.terrain.set1f('uFogEnabled', 1);
     this.terrain.set3f('uCameraPos', camera.x, camera.y, camera.z);
     this.terrain.set1f('uAlphaTest', 0.1);
     this.terrain.set1f('uTranslucent', 0);

@@ -79,6 +79,8 @@ export interface AnimContext {
   swell: number;
   /** chicken wing flap angle: (sin(flap) + 1) * flapSpeed */
   flapAngle: number;
+  /** Bat.isResting() — hanging upside down (BatRenderState.isResting) */
+  isResting: boolean;
 }
 
 export interface BakedPart {

@@ -99,3 +99,43 @@ void main() {
 
   fragColor = vec4(color, c.a);
 }`;
+
+// ---------------------------------------------------------------------------
+// Entity shadows (net.minecraft.client.renderer.feature.ShadowFeatureRenderer,
+// textures/misc/shadow.png). One flat textured quad per block under the entity.
+// ---------------------------------------------------------------------------
+
+export const SHADOW_VERT = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec2 aUV;
+layout(location = 2) in float aAlpha;
+
+uniform mat4 uViewProj;
+
+out vec2 vUV;
+out float vAlpha;
+
+void main() {
+  gl_Position = uViewProj * vec4(aPos, 1.0);
+  vUV = aUV;
+  vAlpha = aAlpha;
+}`;
+
+export const SHADOW_FRAG = `#version 300 es
+precision highp float;
+
+in vec2 vUV;
+in float vAlpha;
+
+uniform sampler2D uTex;
+
+out vec4 fragColor;
+
+void main() {
+  float a = texture(uTex, vUV).a * vAlpha;
+  if (a < 0.01) discard;
+  fragColor = vec4(0.0, 0.0, 0.0, a);
+}`;
+

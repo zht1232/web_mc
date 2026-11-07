@@ -5,12 +5,13 @@
    - 上下文：`BlockPlaceContext`（replaceClicked / getClickedPos / canPlace / getNearestLookingDirections，含 not-replaceClicked 时把 opposite(clickedFace) 提到最前）；`BlockItem.place` 的 canPlace→getStateForPlacement→canPlace；`StandingAndWallBlockItem`（火把/红石火把地面↔墙）。
    - `getStateForPlacement` 分派：stairs(facing/half/shape)、slab(type/double)、log/wood(axis)、fence/wall/iron_bars(_pane)(四向连接+初始连接+waterlogged)、door(facing/hinge/upper 一体放置)、torch(floor/wall)、bed(foot+head)、button/lever(face/facing)、trapdoor、carpet、snow_layer(layers 累加)、tall_grass/large_fern 两格、vegetation(SUPPORTS_VEGETATION)、ladder、fence_gate、waterlogged；`canSurvive` 全部照 `BlockState.canSurvive`。
    - 失败判据：目标格 canBeReplaced（replaceable tag 29 项 + Slab/SnowLayer 覆写）、canSurvive（torch 用 SupportType.CENTER、雪层 isFaceFull、植物 tag…）、`Level.isUnobstructed`（可选注入，默认放行）、多格方块第二格不可替换（门上半/床头/高草上半）。
-2. **新增 `scripts/test-placement.mts`**：fs 读 `public/mc/blocks.json+blocks.bin`（同 test-mesher）+ 内存 Map 假 level，覆盖 15 类方块 × 各朝向/面/命中高度 + 8 种失败场景。
-3. **未改 `Game.ts`**、未改 public/mc/**、无 git 写操作。
+2. **新增 `scripts/test-placement.mts`**：fs 读 `public/mc/blocks.json+blocks.bin`（同 test-mesher）+ 内存 Map 假 level，覆盖 15 类方块 × 各朝向/面/命中高度 + 8 种失败场景；末尾再用真实 `ClientLevel`+`LevelChunk` 做一次门（两格）集成断言。
+3. **未改 `Game.ts`/`smoke.mjs`**（Lead 自己接入 `placeBlock`，1029-1055 行复核无问题）、未改 public/mc/**、无 git 写操作。
 
 ## 证据
 - `npx tsx scripts/test-placement.mts` → **Total: 131 PASS, 0 FAIL**（stairs 6 组：yaw=0/90、侧面上半、waterlogged、outer_left/inner_left；slab bottom/top/double/waterlogged；log y/x/z；fence 连接 木/非木/实心；wall none/low/tall/UP/bars 连接；iron_bars 四向；door facing+hinge left/right+上半+失败；torch floor/wall/红石墙变体/fence 柱 CENTER 支撑/无支撑失败；bed foot+head+失败；button/lever floor/ceiling/wall/无支撑失败；trapdoor 2 组；carpet+失败；snow 1/layers+1/底台阶失败；short_grass/flower/tall_grass 成功与失败；非替换方块点击位置；实体阻挡；另含真实 `ClientLevel`+`LevelChunk` 集成段：门上下两格写入 + chunk 标脏）。
 - `npx tsc --noEmit` → **0 错误**（现在整仓 0；我交付时他人文件曾有 1 个 HandRenderer 错误，已由本人修复）。
+- **浏览器实放（Lead 接入后）**：`SHOT_EVAL` 走 `scripts/shot.mjs http://127.0.0.1:5174/` 对真实 `window.__mc` 连按 10 次右键（pitch=50、清目标格、每轮还原），结果 `{"ok":10}`，10/10 全部放置成功（hotbar 首格 grass_block，命中 face=1 UP）；截图 `shots/placement/browser-10place.png`。该 eval 也确认 raycast→ctx→placeBlock 链路与 yaw/pitch 传参正常。
 
 ## 现有实现为什么冒烟 3/10（静态分析，Game.ts 旧 stateForPlacement 约 1044-1080 行）
 - 目标格判定只有 `existing!==0 && !isLiquid`，没有 replaceable（不能替换草/雪/藤）、没有 `canSurvive`、没有实体阻挡，也没有 “不可替换 → target 变为相对格” 的上下文语义；点击可替换方块时应替换点击格，现在是叠到旁边。

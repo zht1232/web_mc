@@ -27,11 +27,12 @@ function check(name: string, ok: boolean, detail: string): void {
 // ---------------------------------------------------------------------------
 
 interface FakeOpts {
-  yaw?: number; pitch?: number;
+  yaw?: number; pitch?: number; yHeadRot?: number;
   walkAnimPos?: number; walkAnimSpeed?: number; walkAnimSpeedOld?: number;
   hurtTime?: number; dead?: boolean; deathTime?: number;
   aggressive?: boolean; swell?: number;
   skyLight?: number; blockLight?: number;
+  onGround?: boolean;
 }
 
 const GROUND = 64;
@@ -41,7 +42,7 @@ function fakeEntity(typeName: string, opts: FakeOpts = {}): Entity {
   return {
     xo: 0, yo: y, zo: 0, x: 0, y, z: 0,
     yaw: opts.yaw ?? 0, pitch: opts.pitch ?? 0, yRotO: opts.yaw ?? 0, xRotO: opts.pitch ?? 0,
-    scale: 1, tickCount: 42, onGround: true,
+    scale: 1, tickCount: 42, onGround: opts.onGround ?? true,
     level: {
       getSkyLight: () => opts.skyLight ?? 15,
       getBlockLight: () => opts.blockLight ?? 0,
@@ -53,7 +54,7 @@ function fakeEntity(typeName: string, opts: FakeOpts = {}): Entity {
     walkAnimSpeed: opts.walkAnimSpeed ?? 0,
     walkAnimSpeedOld: opts.walkAnimSpeedOld ?? opts.walkAnimSpeed ?? 0,
     swingProgress: 0,
-    yBodyRot: 0, yBodyRotO: 0, yHeadRot: 0, yHeadRotO: 0,
+    yBodyRot: 0, yBodyRotO: 0, yHeadRot: opts.yHeadRot ?? 0, yHeadRotO: opts.yHeadRot ?? 0,
     dead: opts.dead ?? false,
     deathTime: opts.deathTime ?? 0,
     hurtTime: opts.hurtTime ?? 0,
@@ -244,6 +245,26 @@ for (const t of TYPES) {
   }
 }
 check('[10] 13 mobs x 5 render states produce finite vertices', fuzzOk, `states=${TYPES.length * states.length}`);
+
+// ---------------------------------------------------------------------------
+// 8. head yaw and bat resting pose (BatAnimation.BAT_RESTING)
+// ---------------------------------------------------------------------------
+
+const headAhead = renderAndMeasure('zombie', { yaw: 0, yHeadRot: 0 });
+const headLeft = renderAndMeasure('zombie', { yaw: 0, yHeadRot: 70 });
+let headYawDelta = 0;
+for (let i = 0; i < Math.min(headAhead.pos.length, headLeft.pos.length); i++) {
+  headYawDelta = Math.max(headYawDelta, Math.abs(headAhead.pos[i] - headLeft.pos[i]));
+}
+check('[11] head yaw turns only the head', headYawDelta > 0.05, `maxDelta=${headYawDelta.toFixed(3)}`);
+
+const batFly = renderAndMeasure('bat', { onGround: false });
+const batRest = renderAndMeasure('bat', { onGround: true });
+let batDelta = 0;
+for (let i = 0; i < Math.min(batFly.pos.length, batRest.pos.length); i++) {
+  batDelta = Math.max(batDelta, Math.abs(batFly.pos[i] - batRest.pos[i]));
+}
+check('[12] bat hanging (resting) pose differs from flying', batDelta > 0.1, `maxDelta=${batDelta.toFixed(3)}`);
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED  EXIT=0' : `\n${failures} CHECK(S) FAILED  EXIT=1`);
 process.exit(failures === 0 ? 0 : 1);

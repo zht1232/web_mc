@@ -814,11 +814,13 @@ export function computeSkyState(worldTime: number, brightnessOption = 0, opts: S
 }
 
 /**
- * Level.isBrightOutside(): `!hasFixedTime() && skyDarken < 4` (Level.java:384).
+ * Level.isBrightOutside(): `!dimensionType().hasFixedTime() && skyDarken < 4`
+ * (Level.java:384). The overworld has a fixed time = false, so the flag only
+ * matters for dimensions with a fixed clock (nether/end); callers can pass it.
  * Gameplay only - the renderer never reads this.
  */
-export function isBrightOutside(state: SkyState): boolean {
-  return state.skyDarken < 4;
+export function isBrightOutside(state: SkyState, hasFixedTime = false): boolean {
+  return !hasFixedTime && state.skyDarken < 4;
 }
 
 /**

@@ -47,15 +47,51 @@ dark_forest #507A32 全部与公认值一致；`GrassColor.getDefaultColor()` = 
 原版 `NoiseChunk.computePreliminarySurfaceLevel` 在 chunk 内用**插值后**密度，我们的走未插值密度 → 建议 worldgen 核对。
 `noise shot`: `shots/world/_probe-water-verify.mts`（生成 25 区块 features=false 对照真实方块）。
 
-## 4. C. 三群系白天巡检（time=6000）
+## 4. C. 三群系白天巡检（time=6000，1280×720，flying，`shots/world/`）
 
-- `shots/world/plains.png`（256,-116）：草色是正确的平原绿（不再橄榄黄），水是蓝色（不再黑），
-  蒲公英/虞美人/滨菊/矢车菊、草簇正常；**右下角有一个巨大的石头材质方块跟随镜头**（疑似第一人称手持模型
-  位置/缩放错误，render 包）；水面/岸边有绿色 sprite（疑似 seagrass/kelp 顶面画到水面之上，render 包）；
-  天空地平线偏灰白（post/fog，render 包）。
-- `shots/world/forest.png` / `shots/world/birch_forest.png`：（见下）
-- 每次运行控制台都有大量 `GL_INVALID_OPERATION: Two textures of different types use the same sampler location`
-  与 `Mismatch between texture format and sampler type` → 采样器/纹理单元绑定冲突，render 包。
+> 截图将用最终代码覆盖重拍（icons/HDR 管线/群系色都改完后）：plains / forest / birch_forest。
+> 本轮首拍（02:06–02:21，旧 icons、旧 LDR 管线）保留下面的观察；重拍后逐张复核。
+
+**错误清单（分两组）**
+
+### A. render 包需求（`LevelRenderer.ts` / `Shaders.ts` / `renderer/post/**` / `SectionMesher.ts`，我无权改）
+
+1. **叶子透明孔疑似被吃掉（叶子实心化）**。证据：`public/mc/textures/block/oak_leaves.png` 16×16 里
+   **84/256 像素非不透明（minAlpha 0）**、`birch_leaves.png` **112/256**；同场景 `short_grass.png` 116/256 非不透明
+   却有正常镂空。mesher 把 `*_leaves` 放进 `RenderLayer.CUTOUT`（SectionMesher.ts:336）、`LevelRenderer.drawSection(CUTOUT, 0.1)`
+   也确实有 `uAlphaTest`（Shaders.ts:81 `if (tex.a < uAlphaTest) discard`），但截图里叶面看不到任何透光孔
+   → 怀疑 CUTOUT 的 mipmap/alpha 路径对 leaves 不生效（mip 平均把 alpha 抬过 0.1 就会变实心）。近距单棵树对天空的图见 `_zoom-leaves.png`。
+2. **第一人称手持方块模型位置/缩放错**：三张图右下角都有同一个巨大石头材质方块跟随镜头（不是世界方块，转镜头跟着动）。
+3. **雾/远景**：地平线 60–90 格外的地形被雾洗成天空色（`plains.png` 右侧、`spawn.png` 远处），**很可能就是 Lead 问的
+   「半空悬浮 short_grass」的成因**——雾带正好压在那几簇草的根部。见下面 §4.1 的分析。
+4. **水面/岸边有绿色 sprite 浮在水面上**（`plains.png` 右上水域）：疑似 seagrass/kelp 顶面或水草类方块顶面没按水面裁剪。
+5. 控制台每个场景都刷：`GL_INVALID_OPERATION: Two textures of different types use the same sampler location`
+   与 `Mismatch between texture format and sampler type (signed/unsigned/float/shadow)`
+   → 采样器类型与纹理格式不匹配（sampler2D 绑到了 usampler/深度纹理），渲染循环里持续报错。
+6. 快捷栏图标仍显示为「64」数字、无物品图标（`spawn-eye.png` 等）；若 icons 包已 PASS，说明 HUD 快捷栏走的是另一条路径。
+
+### B. 非缺陷 / 瞬态
+
+1. **草丛悬空（Lead 的 `shots/bugs/spawn.png`）——不是 OffsetType，也不是稳定缺网格**：
+   - OffsetType：全仓 `grep -n "OffsetType\|offsetFunction"` → **0 命中**，mesher 根本没实现植物随机偏移；
+     而且 vanilla 的 XYZ 偏移 y 只会 ≤ 0（`BlockBehaviour.java:1248-1255`：`((seed>>4&15)/15 - 1) * maxVerticalOffset` ∈ [-0.25, 0]），
+     只会向下沉，不可能浮空。
+   - 不是稳定缺网格：我在同一个出生点（256,-116）以眼高复现并隔 10 s 再拍一张（`spawn-eye.png` / `spawn-eye-10s.png`），
+     两帧只有 3938/921600 = **0.4% 像素不同（全是云）**，地形与植物高度完全一致，没有悬浮草。
+   - 结论：最可能是**远距离雾把地面洗成天空色、1 格高的草丛 sprite 还露在雾带上方**（视觉上像悬空）；
+     加上 Lead 拍那张时可能仍在流式加载（区块网格按预算逐个上传）。判定需要 render 包核对雾的距离
+     与 CUTOUT/SOLID 是否走同一雾路径；我这边复现不到稳定悬空，先不当作 mesher 缺陷。
+2. 树冠挡镜头/出生点被树包围：不是渲染 bug，是 SpawnSelector 生成前看不到树（feature 后才放置）；Lead 已加 ±10 格 refine。
+3. `http://127.0.0.1:5174/` 期间多次整站挂掉（curl 000 / 端口无监听）与多份 vite 抢 5174 的现象：环境问题，不是代码缺陷。
+
+### 4.1 各图观察
+
+- `plains.png`（256,-116，flying +10，俯角 28°）：草色正确（不再橄榄黄），水是蓝的（不再黑），
+  蒲公英/虞美人/滨菊/矢车菊、草簇正常，云有体积感。
+- `forest.png`（-564,-804）：树干/树冠成片，光照层次正常；叶面实心化见 A1。
+- `birch_forest.png`（-644,-668）：白桦干正确；但**桦树叶是暗绿**（被 biome foliage 染成 #6BA940），
+  原版固定色 #80A755 更亮 → render 包改用 `blockTintInt()` 区分 spruce/birch 固定叶色。
+
 
 ## 5. 没做 / 已知问题 / 对别人的请求
 

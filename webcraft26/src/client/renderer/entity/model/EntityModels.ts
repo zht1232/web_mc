@@ -467,9 +467,22 @@ export const BatModel: BakedModel = withAnimator(bakeModel(makeModel(32, 32, [
     P('left_ear', 1.1, -3, 0, [B(-0.1, -3, 0, 3, 5, 0, 8, 15)]),
   ]),
 ])), (model, ctx) => {
-  // Source: net.minecraft.client.animation.definitions.BatAnimation.BAT_FLYING
-  // (looping, 0.5 s). Only the rotation channels are applied; position channels
-  // are omitted (the model stays at its rest offset).
+  // Source: BatAnimation.BAT_RESTING (static hanging pose) / BAT_FLYING (looping,
+  // 0.5 s). Rotation channels are transcribed; position channels are omitted
+  // except the resting 0.5-unit body/head drop.
+  if (ctx.isResting) {
+    const body = pose(model, 'body');
+    body.rx += Math.PI;
+    body.y -= 0.5; // KeyframeAnimations.posVec(0, 0.5, 0) => y -= 0.5
+    const head = pose(model, 'head');
+    head.rx += Math.PI;
+    head.y -= 0.5;
+    pose(model, 'right_wing').ry += -10 * DEG;
+    pose(model, 'left_wing').ry += 10 * DEG;
+    pose(model, 'right_wing_tip').ry += -120 * DEG;
+    pose(model, 'left_wing_tip').ry += 120 * DEG;
+    return;
+  }
   const phase = (ctx.ageInTicks / 20) % 0.5;
   pose(model, 'body').rx += keyframe(phase, BAT_FLY.body) * DEG;
   pose(model, 'head').rx += keyframe(phase, BAT_FLY.head) * DEG;

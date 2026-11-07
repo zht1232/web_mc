@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "80b67048-0e81-4f04-9606-d4545e2e0b74",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "游玩起来看起来就像个",
+    "begin_at": 1793503736129,
+    "stage": "processing"
+  },
+  "id": "13",
+  "subject": "Fix movement: walking must work with gravity and step-up",
+  "description": "Walking/gravity is broken so the player can only move by flying. Diagnose with live instrumentation on http://127.0.0.1:5174/?preview via __mc.player: check onGround, vel.y, solid[] flags, sub-stepping/tunneling, step-up height, and whether update() is gated off. Deliver vanilla-like ground movement: gravity, jump, step-up 0.6, no tunneling, sprint, and correct keyboard+touch input.",
+  "activeForm": "Fixing player movement physics",
+  "status": "in_progress",
+  "blocks": [],
+  "blockedBy": []
+}

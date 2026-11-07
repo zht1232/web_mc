@@ -1,0 +1,13 @@
+.mc-menu {
+  position: fixed; inset: 0; z-index: 1000; overflow: hidden; background: #080a08;
+  user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; touch-action: none;
+}
+.mc-menu[hidden] { display: none !important; }
+.mc-menu > canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.mc-menu .mc-menu-bg { z-index: 0; background: #080a08; }
+.mc-menu .mc-menu-ui { z-index: 1; cursor: default; }
+.mc-menu .mc-menu-input {
+  position: fixed; left: 0; top: 0; width: 2px; height: 2px; margin: 0; padding: 0; border: 0;
+  opacity: 0.01; pointer-events: none; background: transparent; color: transparent; caret-color: transparent;
+  font-size: 16px; z-index: 0;
+}

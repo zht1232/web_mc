@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "1e27710c-e545-4f57-bbff-d76016d754fd",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "我另一个复刻mc的s",
+    "begin_at": 1793509326048,
+    "stage": "processing"
+  },
+  "id": "12",
+  "subject": "M8 浏览器多人客户端接 Paper 桥接",
+  "description": "M8：src/ 里 WebSocket 出现 0 次，\"加入服务器\"只是 2.8 秒假进度条。按 bridge/PROTOCOL.md 实现浏览器客户端：连 ws://127.0.0.1:8765/ws、palette+RLE 区块解码到本地方块/状态映射、方块修改、聊天、玩家与实体快照渲染。线上 Paper 服务器未经批准不得安装/重启插件，用独立副本测桥接。",
+  "activeForm": "接通多人客户端",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

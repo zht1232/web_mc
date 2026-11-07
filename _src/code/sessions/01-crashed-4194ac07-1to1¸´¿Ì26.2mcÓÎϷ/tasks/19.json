@@ -1,0 +1,21 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "148c6220-f1a6-4b4c-89f7-ffeb3bb07213",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "<task-noti",
+    "begin_at": 1793505985720,
+    "stage": "start"
+  },
+  "id": "19",
+  "subject": "M1 Blockstate + JSON model pipeline (all 1,198 states)",
+  "description": "Foundation milestone, unblocks items/crafting/structures/survival. Measured vanilla surface: 1,198 blockstates (1,096 variant-keyed, only 102 multipart), 7,296 variant entries, 61 distinct properties, 2,657 block models (1,183 raw elements / 4,227 faces), 1,269 block PNGs + 179 mcmeta. Today scripts/build-assets.mjs:277 throws on multipart and bakes exactly ONE variant per block (85 blocks). Work: (1) real JSON model loader with parent/element inheritance, from/to, faces (uv, texture, cullface, tintindex, uvlock), element x/y rotation, render_type, ambientocclusion; (2) variant-key dispatcher covering all 1,096 variant blockstates with a property table and state-id encoding; (3) multipart condition trees for the 102 files (AND/OR, selectors, weight); (4) runtime state ids in the chunk array, placement inferring facing/axis/half/type from look+sneak, connecting behaviour for stairs/fences/panes/walls; (5) expand the texture array to the full block set. Verification: stairs of all 4 facings + top/bottom + corners, slabs both types, fence/pane connections, log all 3 axes, bed two-part, and a screenshot comparison per family.",
+  "activeForm": "Building blockstate + model pipeline",
+  "status": "pending",
+  "blocks": [
+    "20"
+  ],
+  "blockedBy": []
+}

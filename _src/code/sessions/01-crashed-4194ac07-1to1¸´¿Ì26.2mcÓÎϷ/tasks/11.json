@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "b1f54726-ee0b-4318-829d-0e5436a3a456",
+    "model_key": "dfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "材质看起来很奇怪，不",
+    "begin_at": 1793499168499,
+    "stage": "processing"
+  },
+  "id": "11",
+  "subject": "Crafting, containers, and survival item stacks",
+  "description": "Remaining gameplay scope: generalized item registry/stacks, 2x2/3x3 crafting, crafting table/chest/furnace UIs and storage, then survival inventory behavior and drops. Mobs, health, village/ruins and the creative/survival inventory layouts are already delivered.",
+  "activeForm": "Expanding gameplay systems",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

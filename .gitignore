@@ -1,0 +1,13 @@
+# Generated full-project bundles (the zip is a local artifact, never committed)
+/*.zip
+/*.7z
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.swp
+
+# Local scratch logs (the archived copies live in REPORTS/test-logs/)
+/vite*.log

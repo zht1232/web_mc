@@ -1,0 +1,21 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "1e27710c-e545-4f57-bbff-d76016d754fd",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "我另一个复刻mc的s",
+    "begin_at": 1793509326048,
+    "stage": "processing"
+  },
+  "id": "5",
+  "subject": "M1d 原版放置推断与邻居更新规则",
+  "description": "对照反编译的各 Block 子类 getStateForPlacement / neighborShapeChanged / hasStencilProperty，逐族实现楼梯、半砖、原木/叶子、栅栏与栅栏门、玻璃板、墙、床、门、活板门、梯子、书架、压力板、比较器、火把、海泡菜、蛋糕、附魔架等属性推断，并把破坏/放置后的方块更新接到世界 tick。",
+  "activeForm": "复刻放置与状态推断规则",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": [
+    "4"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "1e27710c-e545-4f57-bbff-d76016d754fd",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "我另一个复刻mc的s",
+    "begin_at": 1793509326048,
+    "stage": "processing"
+  },
+  "id": "1",
+  "subject": "反编译 26.2 客户端 jar 得到逐类 Java 源码",
+  "description": "用 Vineflower 1.11.2 + Mojang Java 25 运行时把 G:/ck-web26/client-26.2.jar（Mojang-mapped，10,372 个类）反编译到 G:/ck-web26/src-vanilla，作为\"逐源码复刻\"的权威规格来源。完成后确认关键包可读：client/renderer/block/model、client/renderer、world/level/block、world/level/block/state、world/item、core、world/level/material、world/level/light。",
+  "activeForm": "反编译 vanilla 客户端 jar",
+  "status": "completed",
+  "blocks": [
+    "3"
+  ],
+  "blockedBy": []
+}

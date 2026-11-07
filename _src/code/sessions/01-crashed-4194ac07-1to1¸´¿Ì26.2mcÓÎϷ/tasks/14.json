@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "80b67048-0e81-4f04-9606-d4545e2e0b74",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "游玩起来看起来就像个",
+    "begin_at": 1793503736129,
+    "stage": "processing"
+  },
+  "id": "14",
+  "subject": "Fix shadow map flicker while moving",
+  "description": "Shadows shimmer/flicker while the player moves because the shadow camera center follows the eye continuously without texel snapping. Make the ortho light view snap to shadow-texel increments (and radius quantized), stabilize depth range, tune slope bias, and verify no visible crawling while walking.",
+  "activeForm": "Fixing shadow map stability",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -1,0 +1,16 @@
+name: WebCraftBridge
+version: '0.1.0'
+main: io.webcraft.bridge.WebcraftBridgePlugin
+api-version: '26.2'
+description: Server-authoritative WebSocket sidecar for browser clients (WebCraft 26.2).
+author: WebCraft
+website: https://localhost
+commands:
+  wcbridge:
+    description: Show WebCraft bridge status.
+    usage: /wcbridge <status|token>
+    permission: webcraft.bridge.admin
+permissions:
+  webcraft.bridge.admin:
+    description: Allows viewing bridge status and the configured token.
+    default: op

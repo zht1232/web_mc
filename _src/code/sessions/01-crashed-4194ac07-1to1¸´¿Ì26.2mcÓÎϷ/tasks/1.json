@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "2312053f-2146-4514-b880-cec10e0dac0b",
+    "model_key": "dfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "能1:1给我用网页复",
+    "begin_at": 1793488427175,
+    "stage": "processing"
+  },
+  "id": "1",
+  "subject": "获取并解包官方 26.2 客户端资源",
+  "description": "从 Mojang piston-data 下载官方 client.jar（39MB）到 G:，解包出 textures/models/blockstates/font/sounds，验证 26.2 新方块资源。",
+  "activeForm": "下载并解包 26.2 官方资源",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

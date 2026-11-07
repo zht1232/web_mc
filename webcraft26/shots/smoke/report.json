@@ -1,0 +1,912 @@
+{
+  "url": "http://127.0.0.1:5174/",
+  "startedAt": "2026-11-07 11:56:16",
+  "finishedAt": "2026-11-07 11:59:21",
+  "bisect": false,
+  "only": null,
+  "browser": {
+    "chromium": "133.0.6943.16",
+    "webglMode": "swiftshader",
+    "headless": true
+  },
+  "boot": {
+    "state": "ready",
+    "ms": 14220
+  },
+  "scenes": [
+    {
+      "name": "boot",
+      "no": 0,
+      "status": "PASS",
+      "ms": 5110,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "chunks=60",
+        "meshSections=107",
+        "fps=10",
+        "workers=true",
+        "webgl=swiftshader",
+        "bootMs=17337",
+        "chunks=86 fps=10 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/00-boot.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          53,
+          -7.5
+        ],
+        "chunks": 86,
+        "mesh": {
+          "ms": 6.0999999940395355,
+          "count": 1,
+          "sections": 148
+        },
+        "fps": 10,
+        "queue": 141,
+        "inflight": 8,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 57528588,
+          "total": 73090220,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "idle10s",
+      "no": 1,
+      "status": "PASS",
+      "ms": 12171,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "fps 10->10",
+        "chunks 92->236 (+144)",
+        "queue=0 inflight=0",
+        "chunks=260 fps=10 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/01-idle10s.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          53,
+          -7.5
+        ],
+        "chunks": 260,
+        "mesh": {
+          "ms": 6.5,
+          "count": 4,
+          "sections": 415
+        },
+        "fps": 10,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 86854062,
+          "total": 111721362,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "walk",
+      "no": 2,
+      "status": "PASS",
+      "ms": 7786,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "位移 5.20 格",
+        "y 53.0->53.0",
+        "chunks=289 fps=16 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/02-walk.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          53,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 9.399999998509884,
+          "count": 17,
+          "sections": 697
+        },
+        "fps": 16,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 73965762,
+          "total": 105803642,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "jump",
+      "no": 3,
+      "status": "PASS",
+      "ms": 11590,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "10 次跳跃 峰值 y=53.76 (+0.76)",
+        "落地 onGround=true",
+        "chunks=289 fps=18 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/03-jump.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          53,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 8.5,
+          "count": 1,
+          "sections": 1087
+        },
+        "fps": 18,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 64096018,
+          "total": 99031698,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "sprint",
+      "no": 4,
+      "status": "PASS",
+      "ms": 10836,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "5 s 位移 0.00 格",
+        "sprinting=true",
+        "chunks=289 fps=22 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/04-sprint.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          53,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 9.199999995529652,
+          "count": 3,
+          "sections": 1568
+        },
+        "fps": 22,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 70964482,
+          "total": 104525618,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "fly",
+      "no": 5,
+      "status": "PASS",
+      "ms": 8584,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "上升 40.5 格",
+        "落地 y=67.5",
+        "chunks=289 fps=14 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/05-fly.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          53,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 7.700000002980232,
+          "count": 5,
+          "sections": 1894
+        },
+        "fps": 14,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 67791070,
+          "total": 101659458,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "lookAround",
+      "no": 6,
+      "status": "PASS",
+      "ms": 26584,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "pointerLock=on mouseYawDelta=15.0",
+        "yaw=60,105,150,195,240,285,330,15",
+        "8 张截图",
+        "chunks=289 fps=13 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/06-lookAround-8.png",
+      "screenshots": [
+        "shots/smoke/06-lookAround-1.png",
+        "shots/smoke/06-lookAround-2.png",
+        "shots/smoke/06-lookAround-3.png",
+        "shots/smoke/06-lookAround-4.png",
+        "shots/smoke/06-lookAround-5.png",
+        "shots/smoke/06-lookAround-6.png",
+        "shots/smoke/06-lookAround-7.png",
+        "shots/smoke/06-lookAround-8.png"
+      ],
+      "snapshot": {
+        "pos": [
+          16.5,
+          53,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 18.200000002980232,
+          "count": 2,
+          "sections": 3004
+        },
+        "fps": 13,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 65154331,
+          "total": 99801959,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "breakBlock",
+      "no": 7,
+      "status": "PASS",
+      "ms": 6196,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "目标 16,52,-3 state 118->1",
+        "attack 成功 11/12",
+        "breakProgress=0",
+        "chunks=289 fps=21 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/07-breakBlock.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          42,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 6,
+          "count": 14,
+          "sections": 3008
+        },
+        "fps": 21,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 63026283,
+          "total": 98331095,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "placeBlock",
+      "no": 8,
+      "status": "PASS",
+      "ms": 5620,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "放置成功 3/10",
+        "slot1 item=1",
+        "chunks=289 fps=21 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/08-placeBlock.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          42,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 11.200000002980232,
+          "count": 2,
+          "sections": 3242
+        },
+        "fps": 21,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 68647631,
+          "total": 102528231,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "inventory",
+      "no": 9,
+      "status": "FAIL",
+      "ms": 2199,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "模块未接线：__mc.screens 不存在，按 E 无反应（不是代码 bug）",
+        "chunks=289 fps=18 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/09-inventory.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          42,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 7.200000002980232,
+          "count": 2,
+          "sections": 3440
+        },
+        "fps": 18,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 71761251,
+          "total": 104025607,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "pause",
+      "no": 10,
+      "status": "FAIL",
+      "ms": 2614,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "模块未接线：__mc.screens 不存在，Esc 打不开暂停菜单（不是代码 bug）",
+        "chunks=289 fps=21 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/10-pause.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          42,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 18,
+          "count": 2,
+          "sections": 3630
+        },
+        "fps": 21,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 78068883,
+          "total": 109145511,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "options",
+      "no": 11,
+      "status": "FAIL",
+      "ms": 2146,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "模块未接线：__mc.screens 不存在，无法进入选项/视频设置（不是代码 bug）",
+        "chunks=289 fps=19 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/11-options.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          42,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 16.200000002980232,
+          "count": 0,
+          "sections": 3770
+        },
+        "fps": 19,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 71908891,
+          "total": 103401335,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "creativeTab",
+      "no": 12,
+      "status": "FAIL",
+      "ms": 2267,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "模块未接线：__mc.screens 不存在，无法打开创造背包（不是代码 bug）",
+        "chunks=289 fps=23 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/12-creativeTab.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          42,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 11.600000001490116,
+          "count": 4,
+          "sections": 3932
+        },
+        "fps": 23,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 62978475,
+          "total": 97969719,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "night",
+      "no": 13,
+      "status": "PASS",
+      "ms": 3543,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "time=18001 isDay=true",
+        "skyFactor=0.24 brightness=0",
+        "fog/clear 由 skyFactor 驱动",
+        "chunks=289 fps=27 gl=0"
+      ],
+      "warn": [
+        "time=18000 仍判定为白天"
+      ],
+      "screenshot": "shots/smoke/13-night.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          42,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 6.299999997019768,
+          "count": 3,
+          "sections": 4206
+        },
+        "fps": 27,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 68865859,
+          "total": 101797543,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "rain",
+      "no": 14,
+      "status": "PASS",
+      "ms": 4684,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "rainLevel=1",
+        "天气渲染已接线=unknown",
+        "luma=26.4",
+        "chunks=289 fps=22 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/14-rain.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          42,
+          -2.3
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 6.600000001490116,
+          "count": 1,
+          "sections": 4610
+        },
+        "fps": 22,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 69804979,
+          "total": 102944327,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "teleportFar",
+      "no": 15,
+      "status": "PASS",
+      "ms": 19119,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "chunk 1,-1 -> 126,124",
+        "chunks 289->578",
+        "queue=0 inflight=0",
+        "mesh=5740 sections",
+        "chunks=578 fps=18 gl=0"
+      ],
+      "warn": [],
+      "samples": [
+        {
+          "t": 1,
+          "chunks": 298,
+          "queue": 269,
+          "inflight": 8
+        },
+        {
+          "t": 2,
+          "chunks": 320,
+          "queue": 220,
+          "inflight": 8
+        },
+        {
+          "t": 3,
+          "chunks": 342,
+          "queue": 176,
+          "inflight": 8
+        },
+        {
+          "t": 4,
+          "chunks": 363,
+          "queue": 128,
+          "inflight": 8
+        },
+        {
+          "t": 5,
+          "chunks": 385,
+          "queue": 82,
+          "inflight": 8
+        },
+        {
+          "t": 6,
+          "chunks": 405,
+          "queue": 37,
+          "inflight": 8
+        },
+        {
+          "t": 7,
+          "chunks": 427,
+          "queue": 0,
+          "inflight": 2
+        },
+        {
+          "t": 8,
+          "chunks": 448,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 9,
+          "chunks": 470,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 10,
+          "chunks": 492,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 11,
+          "chunks": 513,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 12,
+          "chunks": 534,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 13,
+          "chunks": 554,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 14,
+          "chunks": 573,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 15,
+          "chunks": 578,
+          "queue": 0,
+          "inflight": 0
+        }
+      ],
+      "screenshot": "shots/smoke/15-teleportFar.png",
+      "snapshot": {
+        "pos": [
+          2016.5,
+          120,
+          1997.7
+        ],
+        "chunks": 578,
+        "mesh": {
+          "ms": 7.600000001490116,
+          "count": 2,
+          "sections": 5906
+        },
+        "fps": 18,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 103526294,
+          "total": 169951850,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "resize",
+      "no": 16,
+      "status": "PASS",
+      "ms": 12069,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "1280x720 canvas=1280x720 expect=1280x720 guiScale=3",
+        "800x600 canvas=800x600 expect=800x600 guiScale=2",
+        "1920x1080 canvas=1920x1080 expect=1920x1080 guiScale=4",
+        "chunks=578 fps=12 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/16-resize-1920x1080.png",
+      "screenshots": [
+        "shots/smoke/16-resize-1280x720.png",
+        "shots/smoke/16-resize-800x600.png",
+        "shots/smoke/16-resize-1920x1080.png"
+      ],
+      "snapshot": {
+        "pos": [
+          2016.5,
+          120,
+          1997.7
+        ],
+        "chunks": 578,
+        "mesh": {
+          "ms": 17.899999998509884,
+          "count": 5,
+          "sections": 6551
+        },
+        "fps": 12,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 100352463,
+          "total": 167583863,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "save",
+      "no": 17,
+      "status": "SKIP",
+      "ms": 3538,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "存档模块未接线（无 saveManager/autosave），跳过",
+        "chunks=578 fps=13 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/17-save.png",
+      "snapshot": {
+        "pos": [
+          2016.5,
+          120,
+          1997.7
+        ],
+        "chunks": 578,
+        "mesh": {
+          "ms": 6,
+          "count": 17,
+          "sections": 6718
+        },
+        "fps": 13,
+        "queue": 0,
+        "inflight": 0,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 110443963,
+          "total": 175175439,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "reload",
+      "no": 18,
+      "status": "PASS",
+      "ms": 20451,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "重载 14220ms",
+        "chunks 578 -> 77",
+        "pos 2016.50/120.00/1997.70 -> 16.50/53.00/-7.50",
+        "存档已接=false",
+        "chunks=103 fps=11 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke/18-reload.png",
+      "snapshot": {
+        "pos": [
+          16.5,
+          53,
+          -7.5
+        ],
+        "chunks": 103,
+        "mesh": {
+          "ms": 8.100000001490116,
+          "count": 17,
+          "sections": 313
+        },
+        "fps": 11,
+        "queue": 99,
+        "inflight": 8,
+        "entities": null,
+        "screenClass": null,
+        "memory": {
+          "used": 99972159,
+          "total": 137172711,
+          "limit": 4294705152
+        }
+      }
+    }
+  ],
+  "summary": {
+    "pass": 14,
+    "fail": 4,
+    "skip": 1,
+    "firstFailure": "inventory",
+    "boot": "ready",
+    "webgl": "swiftshader",
+    "notWired": [
+      "inventory",
+      "pause",
+      "options",
+      "creativeTab",
+      "save"
+    ]
+  },
+  "events": []
+}

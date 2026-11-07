@@ -1,0 +1,936 @@
+{
+  "url": "http://127.0.0.1:5174/",
+  "startedAt": "2026-11-07 13:59:58",
+  "finishedAt": "2026-11-07 14:04:18",
+  "bisect": false,
+  "only": null,
+  "browser": {
+    "chromium": "133.0.6943.16",
+    "webglMode": "swiftshader",
+    "headless": true
+  },
+  "boot": {
+    "state": "ready",
+    "ms": 25409
+  },
+  "scenes": [
+    {
+      "name": "boot",
+      "no": 0,
+      "status": "PASS",
+      "ms": 5333,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "chunks=54",
+        "meshSections=77",
+        "fps=10",
+        "workers=true",
+        "webgl=swiftshader",
+        "bootMs=15390",
+        "chunks=78 fps=10 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/00-boot.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          70,
+          -219.5
+        ],
+        "chunks": 78,
+        "mesh": {
+          "ms": 10.600000000558794,
+          "count": 1,
+          "sections": 125
+        },
+        "fps": 10,
+        "queue": 171,
+        "inflight": 8,
+        "entities": 0,
+        "screenClass": null,
+        "memory": {
+          "used": 93758342,
+          "total": 107195962,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "idle10s",
+      "no": 1,
+      "status": "PASS",
+      "ms": 12780,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "fps 10->10",
+        "chunks 84->188 (+104, 满视野≈289)",
+        "queue=0 inflight=0",
+        "chunks=208 fps=10 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/01-idle10s.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          70,
+          -219.5
+        ],
+        "chunks": 208,
+        "mesh": {
+          "ms": 14.5,
+          "count": 1,
+          "sections": 272
+        },
+        "fps": 10,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 0,
+        "screenClass": null,
+        "memory": {
+          "used": 106750210,
+          "total": 139003710,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "walk",
+      "no": 2,
+      "status": "PASS",
+      "ms": 6259,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "位移 7.94 格",
+        "y 70.0->68.0",
+        "chunks=286 fps=10 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/02-walk.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          68,
+          -211.52121149409095
+        ],
+        "chunks": 286,
+        "mesh": {
+          "ms": 9.099999999627471,
+          "count": 0,
+          "sections": 385
+        },
+        "fps": 10,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 0,
+        "screenClass": null,
+        "memory": {
+          "used": 86993358,
+          "total": 118181758,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "jump",
+      "no": 3,
+      "status": "PASS",
+      "ms": 13014,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "10 次跳跃 峰值 y=68.83 (+0.83)",
+        "落地 onGround=true",
+        "chunks=289 fps=15 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/03-jump.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          68,
+          -211.52121142562908
+        ],
+        "chunks": 289,
+        "mesh": {
+          "ms": 15.799999999813735,
+          "count": 4,
+          "sections": 1023
+        },
+        "fps": 15,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 0,
+        "screenClass": null,
+        "memory": {
+          "used": 97719268,
+          "total": 133815060,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "sprint",
+      "no": 4,
+      "status": "PASS",
+      "ms": 17871,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "最佳 5 s 位移 11.22 格",
+        "方向尝试 1/4",
+        "sprinting=true",
+        "chunks=306 fps=13 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/04-sprint.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          46,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 11.900000000372529,
+          "count": 17,
+          "sections": 1633
+        },
+        "fps": 13,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 0,
+        "screenClass": null,
+        "memory": {
+          "used": 93266914,
+          "total": 126372150,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "fly",
+      "no": 5,
+      "status": "PASS",
+      "ms": 9234,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "上升 40.5 格",
+        "落地 y=66.0",
+        "chunks=306 fps=12 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/05-fly.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          46,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 8.900000000372529,
+          "count": 3,
+          "sections": 2121
+        },
+        "fps": 12,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 3,
+        "screenClass": null,
+        "memory": {
+          "used": 91298072,
+          "total": 125182540,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "lookAround",
+      "no": 6,
+      "status": "PASS",
+      "ms": 34515,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "pointerLock=on mouseYawDelta=15.0",
+        "yaw=60,105,150,195,240,285,330,15",
+        "8 张截图",
+        "chunks=306 fps=13 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/06-lookAround-8.png",
+      "screenshots": [
+        "shots/smoke-wired/06-lookAround-1.png",
+        "shots/smoke-wired/06-lookAround-2.png",
+        "shots/smoke-wired/06-lookAround-3.png",
+        "shots/smoke-wired/06-lookAround-4.png",
+        "shots/smoke-wired/06-lookAround-5.png",
+        "shots/smoke-wired/06-lookAround-6.png",
+        "shots/smoke-wired/06-lookAround-7.png",
+        "shots/smoke-wired/06-lookAround-8.png"
+      ],
+      "snapshot": {
+        "pos": [
+          228.5,
+          46,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 8.299999999813735,
+          "count": 3,
+          "sections": 3466
+        },
+        "fps": 13,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 10,
+        "screenClass": null,
+        "memory": {
+          "used": 89756587,
+          "total": 124468763,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "breakBlock",
+      "no": 7,
+      "status": "PASS",
+      "ms": 10197,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "目标 228,45,-201 state 124->0 isAir=true",
+        "attack 改变方块 9/12",
+        "breakProgress=undefined",
+        "chunks=306 fps=13 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/07-breakBlock.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          37,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 6.5,
+          "count": 3,
+          "sections": 3555
+        },
+        "fps": 13,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 7,
+        "screenClass": null,
+        "memory": {
+          "used": 97494416,
+          "total": 130811116,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "placeBlock",
+      "no": 8,
+      "status": "PASS",
+      "ms": 9832,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "放置成功 3/10",
+        "slot1 item=1",
+        "chunks=306 fps=14 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/08-placeBlock.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          37,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 8.700000000186265,
+          "count": 3,
+          "sections": 3776
+        },
+        "fps": 14,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 7,
+        "screenClass": null,
+        "memory": {
+          "used": 92364064,
+          "total": 126845572,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "inventory",
+      "no": 9,
+      "status": "PASS",
+      "ms": 11310,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "打开 CreativeModeInventoryScreen",
+        "Esc 后 screenClass=null",
+        "chunks=306 fps=13 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/09-inventory.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          37,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 9.599999999627471,
+          "count": 3,
+          "sections": 4134
+        },
+        "fps": 13,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 7,
+        "screenClass": null,
+        "memory": {
+          "used": 103157565,
+          "total": 133950577,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "pause",
+      "no": 10,
+      "status": "PASS",
+      "ms": 5852,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "screenClass=PauseScreen",
+        "pointerLock=false",
+        "chunks=306 fps=10 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/10-pause.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          37,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 7.5,
+          "count": 16,
+          "sections": 4249
+        },
+        "fps": 10,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 7,
+        "screenClass": "PauseScreen",
+        "memory": {
+          "used": 107299648,
+          "total": 131527072,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "options",
+      "no": 11,
+      "status": "PASS",
+      "ms": 5312,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "options=OptionsScreen",
+        "video=VideoSettingsScreen",
+        "chunks=306 fps=10 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/11-options.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          37,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 6.599999999627471,
+          "count": 0,
+          "sections": 4346
+        },
+        "fps": 10,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 7,
+        "screenClass": "VideoSettingsScreen",
+        "memory": {
+          "used": 106469820,
+          "total": 162373632,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "creativeTab",
+      "no": 12,
+      "status": "PASS",
+      "ms": 15164,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "CreativeModeInventoryScreen tabs=14",
+        "选定标签 1,2,3",
+        "chunks=306 fps=13 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/12-creativeTab-3.png",
+      "screenshots": [
+        "shots/smoke-wired/12-creativeTab-1.png",
+        "shots/smoke-wired/12-creativeTab-2.png",
+        "shots/smoke-wired/12-creativeTab-3.png"
+      ],
+      "snapshot": {
+        "pos": [
+          228.5,
+          37,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 14.900000000372529,
+          "count": 1,
+          "sections": 4779
+        },
+        "fps": 13,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 6,
+        "screenClass": "CreativeModeInventoryScreen",
+        "memory": {
+          "used": 94742799,
+          "total": 162777723,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "night",
+      "no": 13,
+      "status": "PASS",
+      "ms": 6795,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "time=18001 isDay=true",
+        "skyFactor=0.24 skyLightLevel=4.0000002",
+        "skyLightColor=1.00,0.48,0.48",
+        "fogColor=0.75,0.06,0.07",
+        "luma=5.2",
+        "chunks=306 fps=12 gl=0"
+      ],
+      "warn": [
+        "time=18000 仍判定为白天 (isDay=true)",
+        "夜间 skyLightColor 偏红 (R>B)，夜晚应偏蓝"
+      ],
+      "screenshot": "shots/smoke-wired/13-night.png",
+      "screenshots": [
+        "shots/smoke-wired/13-night.png"
+      ],
+      "snapshot": {
+        "pos": [
+          228.5,
+          37,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 7.2000000001862645,
+          "count": 2,
+          "sections": 4950
+        },
+        "fps": 12,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 5,
+        "screenClass": null,
+        "memory": {
+          "used": 96252217,
+          "total": 164800945,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "rain",
+      "no": 14,
+      "status": "PASS",
+      "ms": 9621,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "rainLevel=1",
+        "环境渲染对象: weather=true sky/cloud=true",
+        "luma=14.3",
+        "chunks=306 fps=12 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/14-rain.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          37,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 10.299999999813735,
+          "count": 3,
+          "sections": 5237
+        },
+        "fps": 12,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 5,
+        "screenClass": null,
+        "memory": {
+          "used": 89681385,
+          "total": 94566401,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "teleportFar",
+      "no": 15,
+      "status": "PASS",
+      "ms": 18331,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "chunk 14,-13 -> 139,112",
+        "chunks 306->573 (满视野≈289)",
+        "原位置区块仍加载=true",
+        "queue=0 inflight=0",
+        "mesh=5801 sections",
+        "chunks=595 fps=10 gl=0"
+      ],
+      "warn": [
+        "区块未卸载：573 > 满视野 289，长途移动会持续吃内存"
+      ],
+      "samples": [
+        {
+          "t": 1,
+          "chunks": 309,
+          "queue": 275,
+          "inflight": 8
+        },
+        {
+          "t": 2,
+          "chunks": 315,
+          "queue": 267,
+          "inflight": 8
+        },
+        {
+          "t": 3,
+          "chunks": 328,
+          "queue": 243,
+          "inflight": 8
+        },
+        {
+          "t": 4,
+          "chunks": 348,
+          "queue": 198,
+          "inflight": 8
+        },
+        {
+          "t": 5,
+          "chunks": 368,
+          "queue": 154,
+          "inflight": 8
+        },
+        {
+          "t": 6,
+          "chunks": 388,
+          "queue": 110,
+          "inflight": 8
+        },
+        {
+          "t": 7,
+          "chunks": 408,
+          "queue": 67,
+          "inflight": 8
+        },
+        {
+          "t": 8,
+          "chunks": 428,
+          "queue": 23,
+          "inflight": 8
+        },
+        {
+          "t": 9,
+          "chunks": 448,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 10,
+          "chunks": 468,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 11,
+          "chunks": 489,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 12,
+          "chunks": 510,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 13,
+          "chunks": 530,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 14,
+          "chunks": 551,
+          "queue": 0,
+          "inflight": 0
+        },
+        {
+          "t": 15,
+          "chunks": 571,
+          "queue": 0,
+          "inflight": 0
+        }
+      ],
+      "screenshot": "shots/smoke-wired/15-teleportFar.png",
+      "snapshot": {
+        "pos": [
+          2228.5,
+          120,
+          1799.7
+        ],
+        "chunks": 595,
+        "mesh": {
+          "ms": 11.5,
+          "count": 2,
+          "sections": 5873
+        },
+        "fps": 10,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 0,
+        "screenClass": null,
+        "memory": {
+          "used": 127455545,
+          "total": 143617225,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "resize",
+      "no": 16,
+      "status": "PASS",
+      "ms": 13585,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "1280x720 canvas=1280x720 expect=1280x720 guiScale=3",
+        "800x600 canvas=800x600 expect=800x600 guiScale=2",
+        "1920x1080 canvas=1920x1080 expect=1920x1080 guiScale=4",
+        "chunks=595 fps=14 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/16-resize-1920x1080.png",
+      "screenshots": [
+        "shots/smoke-wired/16-resize-1280x720.png",
+        "shots/smoke-wired/16-resize-800x600.png",
+        "shots/smoke-wired/16-resize-1920x1080.png"
+      ],
+      "snapshot": {
+        "pos": [
+          2228.5,
+          120,
+          1799.7
+        ],
+        "chunks": 595,
+        "mesh": {
+          "ms": 8.300000000745058,
+          "count": 4,
+          "sections": 6600
+        },
+        "fps": 14,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 0,
+        "screenClass": null,
+        "memory": {
+          "used": 128251025,
+          "total": 162540129,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "save",
+      "no": 17,
+      "status": "FAIL",
+      "ms": 4489,
+      "errors": [
+        "pageerror: Cannot read properties of undefined (reading 'chunks')"
+      ],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "存在 saveManager,autosave",
+        "调用 flushDirty()",
+        "1 条 console/page error",
+        "chunks=595 fps=15 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/17-save.png",
+      "snapshot": {
+        "pos": [
+          2228.5,
+          120,
+          1799.7
+        ],
+        "chunks": 595,
+        "mesh": {
+          "ms": 6,
+          "count": 14,
+          "sections": 6776
+        },
+        "fps": 15,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 0,
+        "screenClass": null,
+        "memory": {
+          "used": 127188041,
+          "total": 162107217,
+          "limit": 4294705152
+        }
+      }
+    },
+    {
+      "name": "reload",
+      "no": 18,
+      "status": "PASS",
+      "ms": 33871,
+      "errors": [],
+      "netErrors": [],
+      "glError": 0,
+      "newGlErrors": 0,
+      "notes": [
+        "重载 25409ms",
+        "chunks 595 -> 306",
+        "pos 2228.50/120.00/1799.70 -> 228.50/37.00/-200.30",
+        "存档已接=true",
+        "chunks=306 fps=0 gl=0"
+      ],
+      "warn": [],
+      "screenshot": "shots/smoke-wired/18-reload.png",
+      "snapshot": {
+        "pos": [
+          228.5,
+          37,
+          -200.3
+        ],
+        "chunks": 306,
+        "mesh": {
+          "ms": 6,
+          "count": 15,
+          "sections": 503
+        },
+        "fps": 0,
+        "queue": 0,
+        "inflight": 0,
+        "entities": 0,
+        "screenClass": null,
+        "memory": {
+          "used": 89887339,
+          "total": 158060959,
+          "limit": 4294705152
+        }
+      }
+    }
+  ],
+  "summary": {
+    "pass": 18,
+    "fail": 1,
+    "skip": 0,
+    "firstFailure": "save",
+    "boot": "ready",
+    "webgl": "swiftshader",
+    "notWired": []
+  },
+  "events": [
+    {
+      "at": 221784,
+      "kind": "pageerror",
+      "level": "error",
+      "text": "Cannot read properties of undefined (reading 'chunks')"
+    }
+  ]
+}

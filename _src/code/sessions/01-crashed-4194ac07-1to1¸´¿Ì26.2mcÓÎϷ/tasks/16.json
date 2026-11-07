@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "80b67048-0e81-4f04-9606-d4545e2e0b74",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "游玩起来看起来就像个",
+    "begin_at": 1793503736129,
+    "stage": "processing"
+  },
+  "id": "16",
+  "subject": "Replace crude first-person arm with vanilla arm model",
+  "description": "The current hand is three colored cuboids and looks wrong. Rebuild the first-person viewmodel arm as a proper Minecraft 4x12x4-pixel right arm cuboid with correct UV mapping from a player skin texture, correct shoulder pivot, swing animation and held-item placement; fall back to official-steve-like skin if no skin asset exists locally.",
+  "activeForm": "Rebuilding first-person arm",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

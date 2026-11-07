@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "148c6220-f1a6-4b4c-89f7-ffeb3bb07213",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "<task-noti",
+    "begin_at": 1793505985720,
+    "stage": "processing"
+  },
+  "id": "27",
+  "subject": "M9 Full GUI screens, lang table, particles, audio",
+  "description": "Authoritative HUD spec obtained by disassembling the Mojang-mapped client jar (classes Hud, GuiGraphicsExtractor, AbstractContainerScreen, CreativeModeInventoryScreen, InventoryMenu, TooltipRenderUtil, LogoRenderer, SplashRenderer, Panorama, Toast, RenderPipelines, Window) plus measuring the shipped PNGs. Hotbar geometry already matches (W/2-91, H-22, 182x22, selection 24x23 at -1,-1, item 16px at +2/+3). Corrections still needed, ranked: (1) ENTIRE left/right HUD bar set is missing: armour 9x9 at (left+i*8, H-49); food right-to-left at (W/2+91-i*8-9, H-39); air bubbles at the food x column, H-49; XP background (W/2-91,H-29) 182x5 with progress xp*183 and the green XP level text at H-35. (2) Hearts must sit at H-39 (we draw H-33), x = W/2-91+i*8, with <=4HP jitter +rnd(2), the healthBlink blink, and HeartType variants full/half/poison/withered/absorb plus container. (3) Crosshair uses RenderPipelines.CROSSHAIR with BlendFunction.INVERT (ONE_MINUS_DST_COLOR, ONE_MINUS_SRC_COLOR), 15x15 at ((W-15)/2,(H-15)/2) — our plain alpha draw disappears against light sky. (4) Slot stack count: x+19-2-width, y+9, 0xFFFFFF with shadow, only when count>1, plain digits. (5) Held-item pop on slot change: f=1+pop/5 with scale(1/f,(f+1)/2) about pivot (x+8,y+12), pop = 5 ticks. (6) Selected item name at H-59 (creative H-45), alpha min(255,timer*256/10) over 60 ticks, rarity colour, italic when renamed. (7) Tooltip: sprite background plus a 3px stretched frame at (x-3,y-3,w+6,h+6), per-rarity background sprite, multi-line, name coloured by rarity, glint overlay — we currently draw a flat rect. (8) Real survival inventory is 176x166 at uv(0,0) with armour slots (8,8+18i), 2x2 craft (98,18), result (154,28), 27 slots at (8+18c,84+18r), hotbar y142, offhand (77,62), player avatar rect (26,8)-(75,78) — we reuse the 195x136 creative panel. (9) Creative tabs: left+col*27 and left+195-27*(7-col)+1, y top-28 / top+132, icon +5,+9 (top) or +7 (bottom), sprite 26x32; scroller at left+175, top+18+(int)(95*scroll) 12x15 with a disabled variant; search EditBox at left+82, top+6, 80x9, max 50 chars on the tab_item_search.png panel. (10) Hover highlight is the slot_highlight_back sprite at (x-4,y-4) 24x24, not a white alpha rect. (11) Title screen: logo 256x64 at (W/2-128,44) plus edition.png 128x16 at (W/2-64,51) with its 1/10000 minceraft joke, splash at translate(+123,+69) rotate(-0.349066) scale(1.8-|sin(t/1000*2PI)|*0.1) colour 0xFFFFFF3F, panorama spin 0.1 degrees per frame (~6 deg/s, we run ~1 deg/s) with mouse parallax and panorama_overlay.png. (12) Toasts are top-right 160x32 cards in 32px slots with a 300ms slide and 5000ms life, title at (30,7) gold and body at (30,18) — we draw centred text. (13) GUI scale: largest s with fbW/(s+1)>=320 and fbH/(s+1)>=240, forced even.",
+  "activeForm": "Completing GUI, lang and audio",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "148c6220-f1a6-4b4c-89f7-ffeb3bb07213",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "<task-noti",
+    "begin_at": 1793505985720,
+    "stage": "processing"
+  },
+  "id": "25",
+  "subject": "M7 Mob models, animation rig, AI and spawn rules",
+  "description": "Measured: vanilla ships 0 JSON entity models (meshes are code-only, must be hand-authored), 725 entity textures across 79 families, 1,210 classes under net/minecraft/world/entity (75 monster, 104 animal), 363 ai classes, 795 biome spawn-category entries, plus 26.2-era newcomers confirmed by texture dirs: copper_golem, sulfur_cube, nautilus/zombie_nautilus, bear, creaking, breeze, happy_ghast, armadillo, camel, allay, axolotl, wolf variants. Today: 4 mob types with hand-typed cuboid part lists, no death drops (onMobPath/onMobDeath never assigned), no pathfinding around obstacles, no spawn rules beyond a single light test. Work: a data-driven model/animation rig (per-part pivot, UV, animation curves), the common AI layer (wander, flee, target, melee, ranged, swim, climb, jump, hurt, burn-in-daylight, despawn), spawn rules per biome spawn-category with light/cap/biome checks, projectiles, mob-specific behaviours, loot on death, and sounds once the audio index is pulled.",
+  "activeForm": "Expanding mobs and AI",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

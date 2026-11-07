@@ -1,0 +1,21 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "148c6220-f1a6-4b4c-89f7-ffeb3bb07213",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "<task-noti",
+    "begin_at": 1793505985720,
+    "stage": "processing"
+  },
+  "id": "21",
+  "subject": "M3 Survival loop: mining, drops, crafting, containers",
+  "description": "Measured vanilla surface: 1,585 recipe files across 21 types (shaped 733, shapeless 323, stonecutting 319, smelting 73, crafting_transmute 33, blasting 25, smithing_trim 18, bannerduplicate 16, smithing_transform 12, campfire 9, smoking 9, crafting_dye 6, plus 8 single-count specials), 1,355 loot tables (1,113 block loot), 1,688 advancements (1,562 recipe unlock), 43 enchantments, 40 mob effects, 51 damage types. Today: hardness data is baked into manifest.json but referenced nowhere in src/ (every block breaks in one click, bedrock included), no drops, no crafting, no containers, no hunger/air/XP, game mode is ignored (src/menu.ts:12,572,945 and src/main.ts:326-337). Work: mining time from hardness + tool tier + enchantment, official destroy_stage_0..9 crack overlay, correct loot-table drops, item drop entities with pickup, crafting table + 2x2 + recipe book UI with the 29 recipe-book sprites, furnace/blasting/smoking/campfire, chest/barrel/shulker/ender chest screens using generic_54.png, hunger+saturation, air bubbles, XP and the experience bar, game modes actually wired to the menu, difficulty, death/respawn with beds.",
+  "activeForm": "Building survival mechanics",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": [
+    "20"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "1e27710c-e545-4f57-bbff-d76016d754fd",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "我另一个复刻mc的s",
+    "begin_at": 1793509326048,
+    "stage": "processing"
+  },
+  "id": "8",
+  "subject": "M3 生存循环（挖掘/掉落/合成/容器/饥饿经验）",
+  "description": "M3：接上已烘焙但零引用的硬度数据，按 digTime = hardness/工具倍率/物品合适性 实现挖掘时间与 crack overlay（destroy_stage_0..9）；对照 loot_table/ 的 1,355 张表实现方块掉落与掉落物实体；实现 1,585 条配方与 21 种配方类型的匹配引擎、工作台/熔炉/箱子容器界面与 InventoryMenu 槽位；饥饿、经验、游戏模式切换、潜行/攻击/受伤死亡掉落、onMobDeath 从未赋值的 bug。",
+  "activeForm": "复刻生存玩法循环",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": [
+    "4",
+    "7"
+  ]
+}

@@ -1,0 +1,406 @@
+########## scripts/test-audio-particles.mts
+
+=== 1. ogg 复制与 sounds/index.json ===
+PASS  源 ogg 数量 == 复制数量 — src=112 dst=112
+PASS  sounds/index.json 存在
+PASS  index.json 每个路径在磁盘存在 — checked=112 missing=0
+PASS  index.json fileCount 与实际 ogg 一致 — index.fileCount=112 actual=112
+PASS  index.json eventCount 与事件表一致 — events=28
+
+=== 2. 粒子池：10000 粒子 / 300 帧 / < 2ms 每帧 ===
+PASS  加入 10000 粒子 — count=10000
+PASS  池满后 add 返回 -1（不增长） — returned=-1
+PASS  池容量保持 10000 — capacity=10000
+PASS  tick 300 帧后无 NaN
+PASS  槽位未越界 — slotCount=10000 capacity=10000
+PASS  池容量未增长
+PASS  平均帧耗时 < 2 ms — avg=0.775ms worst=5.346ms total=232.5ms/300f
+  性能实测: avg=0.7748 ms/frame, worst=5.3456 ms, alive=10000
+
+=== 3. 同 seed 两次粒子轨迹一致 ===
+PASS  同 seed 60 帧指纹完全一致 — frames=60 first=2257258569 last=2166136261
+PASS  不同 seed 轨迹不同（随机有效）
+
+=== 4. 云网格（fast/fancy）顶点数与 UV ===
+PASS  fast 顶点数 = 候选格子数 × 6 — vertices=1734 gridCells=289 cell=12 blocks
+PASS  fast 顶点数是 6 的倍数
+PASS  fast 层数 = 1
+PASS  fancy 顶点数 = fast × 3 层 — fancy=5202 fast=1734
+PASS  fancy 层数 = 3
+PASS  fast UV 在 0..1 — uvMin=0.0000 uvMax=1.0000
+PASS  fancy UV 在 0..1 — uvMin=0.0000 uvMax=1.0000
+PASS  全空 alpha 生成 0 顶点
+
+=== 5. 粒子精灵图集：particles/*.json 引用解析 ===
+PASS  图集 PNG 已写出 — 512x512 sprites=288 textures=288
+PASS  particles.json 已写出 — events=112
+PASS  每个定义引用的贴图都有 uv — checked=494 unresolved=0
+PASS  生成结果的 unresolved 为空
+PASS  所有 sprite uv 在 0..1 且合法
+  未解析贴图: (无)
+
+=== 结果 ===
+ALL CHECKS PASSED
+EXIT=0
+########## scripts/test-entities.mts
+PASS  [extra] 14 data-driven models baked  parts=98 vertices=3816
+PASS  1. all entities stay above ground & inside world  checked 200 ticks, 15 entities
+PASS  2. zombie moves toward player (distance monotonically decreases, noise allowed)  start=8.00 end=1.55 maxIncrease=0.000
+PASS  3. pig random-walks (position changes)  maxDisplacement=3.35
+PASS  4. dropped items land, come to rest and are pickable  atRest=10/10 picked=10 stillPresent=0
+PASS  5. 200 ticks complete in < 50 ms  cold=38.43 ms warm=19.24 ms worst=38.43 ms (0.1922 ms/tick), loopWall=41.29/20.82 ms
+PASS  6. same seed produces identical results  checksums=200 finalFields=135
+
+ALL CHECKS PASSED
+EXIT=0
+########## scripts/test-features.mts
+seed 0x2602c0de, region (10,-40)..(16,-34) = 49 chunks
+
+--- tracked block counts ---
+      oak_log                  1087
+      oak_leaves               9271
+      short_grass              2728
+      dandelion                15
+      coal_ore                 4498
+      iron_ore                 1852
+      deepslate_coal_ore       40
+      deepslate_iron_ore       1119
+      oak_log = 1087
+PASS  1a. oak_log count > 0
+      oak_leaves 9271 > 3261 (logs*3)
+PASS  1b. oak_leaves > oak_log * 3
+      short_grass = 2728
+PASS  1c. short_grass > 0
+      total ore = 7509
+PASS  1d. at least one ore appears (coal_ore / iron_ore, incl. deepslate)
+PASS  2. no oak_log / oak_leaves outside y in [-64, 320]
+      trunk (175, 63..71, -637): 9 contiguous logs, base on dirt
+PASS  3. a trunk is vertically continuous and its base sits on grass/dirt
+PASS  4. same seed generates identical block counts (and identical chunk hash)
+      cold 7x7: 92.74 ms/chunk (terrain + features, first pass)
+      pure features: 14.52 ms/chunk (raw, this host)
+      terrain-only: 63.20 ms/chunk (this host; project baseline 25)
+      CPU-normalised features: 5.74 ms/chunk (x 25/terrain)
+PASS  5a. features meet the 8 ms/chunk budget (CPU-normalised)
+
+--- non-air block histogram (top 22) ---
+      deepslate                    714071
+      stone                        551561
+      dirt                         46221
+      water                        39072
+      bedrock                      37460
+      gravel                       17839
+      oak_leaves                   9271
+      granite                      8209
+      tuff                         7747
+      andesite                     7410
+      diorite                      7153
+      grass_block                  6481
+      coal_ore                     4498
+      short_grass                  2728
+      sand                         2657
+      birch_leaves                 2567
+      iron_ore                     1852
+      jungle_leaves                1635
+      copper_ore                   1452
+      deepslate_diamond_ore        1342
+      deepslate_redstone_ore       1253
+      lava                         1174
+      44 distinct blocks, 1480740 non-air voxels
+PASS  5b. printed ms/chunk and the block histogram
+
+feature decoration: 14.52 ms/chunk
+
+all checks passed
+EXIT=0
+########## scripts/test-gui.mts
+
+[1] TitleScreen button rectangles (TitleScreen.java)
+PASS  JAVA_TITLE_CONSTANTS match the decompiled literals  -- spacing=24, top=height/4+48, 200x20, 98x20, 3x20px icons
+PASS  singleplayer = (width/2-100, height/4+48, 200, 20)  -- (140,115,200x20) expected (140,115,200x20)
+PASS  multiplayer = (width/2-100, topPos+24, 200, 20)  -- (140,139,200x20)
+PASS  online = (width/2-100, topPos+48, 200, 20)  -- (140,163,200x20)
+PASS  3 icon buttons = 20x20 at getHorizontalPosition(i,3,20)  -- (206,187,20x20) (230,187,20x20) (254,187,20x20)
+PASS  options = (width/2-100, topPos+96, 98, 20)  -- (140,211,98x20)
+PASS  quit = (width/2+2, topPos+96, 98, 20)  -- (242,211,98x20)
+PASS  copyright = (width-copyrightWidth-2, height-10, copyrightWidth, 10)  -- (478,260,0x10)
+PASS  logo = (width/2-128, 30, 256x44) / edition at y=30+44-7  -- (112,30,256x44)
+PASS  TitleScreen actually creates 8 widgets (3 big + 3 icons + options + quit)  -- got 8
+PASS  TitleScreen widget[0] singleplayer rect matches Java  -- (140,115,200x20)
+PASS  TitleScreen widget[1] multiplayer rect matches Java  -- (140,139,200x20)
+PASS  TitleScreen options / quit widgets match Java  -- (140,211,98x20) (242,211,98x20)
+
+[2] guiScale algorithm (Window.java:445-463, Options.java:911)
+PASS  guiScale 1920x1080 = 4 (vanilla)  -- got 4
+PASS  guiScale 1920x1080 matches the Java while-loop  -- java=4
+PASS  getMaxGuiScale 1920x1080 = 4
+PASS  autoGuiScale(css w,h, dpr=1) 1920x1080 = 4
+PASS  guiScale 1280x720 = 3 (vanilla)  -- got 3
+PASS  guiScale 1280x720 matches the Java while-loop  -- java=3
+PASS  getMaxGuiScale 1280x720 = 3
+PASS  autoGuiScale(css w,h, dpr=1) 1280x720 = 3
+PASS  guiScale 800x600 = 2 (vanilla)  -- got 2
+PASS  guiScale 800x600 matches the Java while-loop  -- java=2
+PASS  getMaxGuiScale 800x600 = 2
+PASS  autoGuiScale(css w,h, dpr=1) 800x600 = 2
+PASS  calcGuiScale matches javaCalculateScale over 320..3840 sweep (incl. forced / unicode)
+PASS  forced guiScale=2 on 1920x1080 = 2
+PASS  enforceUnicode bumps odd 3 -> 4 on 1280x720
+PASS  minimum guiScale is 1 on a tiny window
+
+[3] Survival inventory slot mapping
+PASS  JAVA_SLOT_CONSTANTS match decompiled literals
+PASS  container slots 0..8 are the hotbar
+PASS  container slots 9..35 are the main inventory
+PASS  playerInventorySlotRects has 41 slots (0..40)
+PASS  survivalInventorySlotXY(0..40) matches Java for every slot
+PASS  hotbar slot 0 = (8,142) [top+58]
+PASS  hotbar slot 8 = (8+8*18,142)
+PASS  main slot 9 = (8,84)
+PASS  main slot 35 = (152,120)
+PASS  armor slot 39 = (8,8) [39-i, 8+18i]
+PASS  offhand slot 40 = (77,62)
+PASS  InventoryMenu slots 36..44 -> hotbar 0..8, 9..35 -> main 9..35
+PASS  InventoryMenu result slot 0 = (154,28)
+PASS  InventoryMenu craft grid 1..4 = (98,18),(116,18),(98,36),(116,36)
+PASS  AbstractContainerScreen origin = ((480-176)/2,(270-166)/2) = (152,52)
+
+[4] Creative tabs / item registry
+PASS  data/creative_tabs.json parsed  -- 14 tabs
+PASS  DEFAULT_CREATIVE_TABS.length == data/creative_tabs.json tab count  -- 14 vs 14
+PASS  CreativeModeInventoryScreen.TABS.length == data/creative_tabs.json tab count  -- 14
+PASS  loadCreativeTabs() parses the shipped JSON shape
+PASS  tab keys match the JSON exactly  -- order + keys
+PASS  tab icons match the JSON exactly
+PASS  every tab icon / item id exists in data/items.json  -- checked 14 refs, missing: none
+PASS  every item id referenced BY THE JSON exists in items.json  -- none
+PASS  items.json actually contains ~1537 items  -- 1537 items
+
+[5] Tooltip wrapping / Button hit test / nine-slice mcmeta
+PASS  wrapText produces no line wider than maxWidth  -- [one two:42] [three:30] [four:24] [five:24]
+PASS  wrapText keeps all words (no data loss)  -- one two|three|four|five
+PASS  wrapText respects explicit newlines
+PASS  wrapText hard-breaks a single over-long word  -- abcde|fghij
+PASS  wrapTooltipLines flattens multiple source lines
+PASS  Button tooltip holds both lines
+PASS  Button hit: inside top-left (10,20)
+PASS  Button hit: inside bottom-right (209,39)
+PASS  Button hit: half-open rect rejects (210,40)
+PASS  Button hit: rejects left of rect (9,20)
+PASS  Button.mouseClicked inside -> true + onPress fired
+PASS  Button.mouseClicked outside -> false, no press
+PASS  disabled Button ignores clicks
+PASS  Button.builder().bounds(...,200,20) produces 200x20
+PASS  Button.big() is 200x20 (vanilla BIG_WIDTH / DEFAULT_HEIGHT)
+PASS  button.png.mcmeta is nine_slice 200x20 border 3
+PASS  nine-slice of a 200x20 button yields 9 patches
+PASS  nine-slice stretching keeps the 3px corner borders
+PASS  tab.png.mcmeta object-form border {2,2,2,0} is parsed
+PASS  sprite without .mcmeta falls back to fixed scaling
+
+ALL PASS: 73/73 checks passed
+EXIT=0
+########## scripts/test-items.mts
+==== items / inventory / crafting / survival test suite ====
+items.json=1537  blocks=1196  recipes=1521  loot tables=1113
+PASS  1. oak_log -> oak_planks x4 (shapeless, recipe exists + result)
+PASS  2. stick + iron_ingot 3x3 -> iron_pickaxe (mirror / offset / invalid)
+PASS  3. diamond_pickaxe mining progress vs bare hand / dirt / tool tier
+PASS  4. stone -> cobblestone, grass_block -> dirt, silk_touch -> stone
+PASS  5. furnace: raw_iron + coal -> iron_ingot (burn time / cook time)
+PASS  6. PlayerInventory add / overflow / quickMove / split / slot numbering
+PASS  7. hunger exhaustion over 1000 sprint+jump ticks / starvation damage
+PASS  8. same seed twice -> identical loot sequence (deterministic)
+PASS  bonus. getRemainingItems returns buckets; raw fallback yields a drop
+---- performance ----
+RecipeManager build: 18.1 ms (1521 recipes, inverted index 515 keys)
+LootTable build:     1.3 ms (1113 tables)
+getRecipeFor:        1.80 us/lookup over 20000 calls, cache=2 entries
+LootTable.getDrops:  0.58 us/lookup over 20000 calls
+getDestroyProgress:  0.66 us/call over 20000 calls
+--------------------------------------------------------
+9 passed, 0 failed
+EXIT=0
+########## scripts/test-mesher.mts
+--- layer assignment -------------------------------------------------
+PASS  layerFor(stone) == SOLID  [got 0, expected 0]
+PASS  layerFor(torch) == CUTOUT  [got 1, expected 1]
+PASS  layerFor(short_grass) == CUTOUT  [got 1, expected 1]
+PASS  layerFor(oak_door) == CUTOUT  [got 1, expected 1]
+PASS  layerFor(ladder) == CUTOUT  [got 1, expected 1]
+PASS  layerFor(oak_leaves) == CUTOUT  [got 1, expected 1]
+PASS  layerFor(iron_bars) == CUTOUT  [got 1, expected 1]
+PASS  layerFor(glass) == TRANSLUCENT  [got 2, expected 2]
+PASS  layerFor(ice) == TRANSLUCENT  [got 2, expected 2]
+PASS  layerFor(white_stained_glass) == TRANSLUCENT  [got 2, expected 2]
+PASS  layerFor(water) == TRANSLUCENT  [got 2, expected 2]
+PASS  layerFor(lava) == SOLID  [got 0, expected 0]
+
+--- 1. lone stone ----------------------------------------------------
+PASS  stone: 6 quads  [got 6, expected 6]
+PASS  stone: all in SOLID  [got 6, expected 6]
+PASS  stone: 24 vertices  [got 24, expected 24]
+PASS  stone: 36 indices  [got 36, expected 36]
+PASS  stone: no CUTOUT/TRANSLUCENT  [got 0, expected 0]
+PASS  stone: CCW winding faces outward (0,1,2)+(0,2,3)
+
+--- 2. two adjacent stone blocks ------------------------------------
+PASS  two stone: 10 quads (shared face culled)  [got 10, expected 10]
+
+--- 3. torch --------------------------------------------------------
+PASS  torch: 6 quads  [got 6, expected 6]
+PASS  torch: in CUTOUT  [got 6, expected 6]
+PASS  torch: nothing in SOLID  [got 0, expected 0]
+
+--- 4. glass --------------------------------------------------------
+PASS  glass: 6 quads  [got 6, expected 6]
+PASS  glass: in TRANSLUCENT  [got 6, expected 6]
+PASS  two glass: 12 quads (TransparentBlock has no skipRendering)  [got 12, expected 12]
+PASS  two ice: 10 quads (HalfTransparentBlock.skipRendering)  [got 10, expected 10]
+
+--- 5. oak stairs ---------------------------------------------------
+PASS  oak_stairs: 11 quads (baked model)  [got 11, expected 11]
+
+--- 6. oak fence ----------------------------------------------------
+PASS  oak_fence: connected emits more quads than isolated  [connected 46 > isolated 6]
+PASS  oak_fence: isolated post is 6 quads  [got 6, expected 6]
+PASS  oak_fence: 4 connections is post + 4 sides = 46 quads  [got 46, expected 46]
+
+--- 7. water --------------------------------------------------------
+PASS  water alone on stone: 5 quads  [got 5, expected 5]
+PASS  water alone: 1 top quad  [got 1, expected 1]
+PASS  water alone: 4 side quads  [got 4, expected 4]
+PASS  water alone: 0 bottom quads  [got 0, expected 0]
+PASS  water pool: meshFluid returns geometry
+PASS  water pool: 1 top quad  [got 1, expected 1]
+PASS  water pool: top y == 8/9 - 0.001  [y=0.88789 blocks, expected 0.88789]
+PASS  water pool: top y within 0.02/16 of 8/9*16 = 14.222 in 16ths  [14.20622 vs 14.2222 sixteenths]
+PASS  water pool: water tint applied (r channel)  [got 63, expected 63]
+PASS  water pool: alpha is 255  [got 255, expected 255]
+PASS  water level=1: meshFluid returns geometry
+PASS  water level=1: 1 top quad  [got 1, expected 1]
+PASS  water level=1: top y == 7/9 - 0.001 blocks  [y=0.77678 blocks (12.4284 in 16ths)]
+PASS  lava: meshFluid returns geometry
+PASS  lava: SOLID layer  [got 0, expected 0]
+PASS  lava: block light 15  [got 15, expected 15]
+PASS  lava: sky light 0  [got 0, expected 0]
+PASS  lava: no tint (white)  [got 255, expected 255]
+
+--- 8. ambient occlusion --------------------------------------------
+PASS  AO: neighbour above the top face darkens it  [r 255 -> 204]
+PASS  AO: per-vertex colour varies across the quad  [r in [153, 204]]
+PASS  AO: the darker vertices are the ones next to the occluder  [min r=153]
+
+--- 9. vertex invariants --------------------------------------------
+PASS  vertex buffers are multiples of 24 bytes
+PASS  sky/block light stays within 0..15
+PASS  alpha is always 255
+PASS  indices are in range
+PASS  skipped counts the chest (block entity)  [skipped=1]
+PASS  mixed section produced geometry  [solid=23 cutout=15 translucent=41]
+PASS  block light from the world callback reaches the vertices
+
+--- 10. variant determinism -----------------------------------------
+PASS  same variantSeed -> identical buffer
+PASS  stone slab: 96 quads (one variant per block, no duplicates)  [got 96, expected 96]
+PASS  different variantSeed rotates at least one stone model
+
+--- 11. winding of every model --------------------------------------
+PASS  all 67478 baked quads are CCW for (0,1,2)+(0,2,3)  [6812 models, 0 degenerate, 0 wrong]
+
+62 passed, 0 failed
+EXIT=0
+########## scripts/test-save.mts
+
+==== 1. NBT — 12 tags / binary / BigInt / SNBT ====
+[PASS] 1.1 binary write->read deep equal (all 12 tags) — 286 bytes
+[PASS] 1.2 LongTag 0x7fffffffffffffff preserved
+[PASS] 1.3 LongArray BigInt fidelity
+[PASS] 1.4 modified UTF-8 (NUL + emoji) preserved
+[PASS] 1.5 ByteArray bytes preserved
+[PASS] 1.6 SNBT serialize->parse round-trip equal
+[PASS] 1.7 SNBT valid vanilla-style output — len=345
+
+==== 2. NbtIo — gzip / uncompressed / auto / cross-compat ====
+[PASS] 2.1 gzip write->read deep equal — 243 gz bytes
+[PASS] 2.2 uncompressed write->read deep equal
+[PASS] 2.3 readAuto detects gzip
+[PASS] 2.4 readAuto detects uncompressed
+[PASS] 2.5 CompressionStream gzip -> zlib gunzip cross-read
+[PASS] 2.6 zlib gzip -> CompressionStream read
+
+==== 3. ChunkSerializer — 200 states / biomes / light / per-cell equality ====
+[PASS] 3.1 chunk NBT has sections list
+[PASS] 3.2 palette uses BlockStateParser strings
+[PASS] 3.3 DataVersion = 26.2 (4903)
+[PASS] 3.4 serialize->deserialize per-cell equal (states+biomes+light)
+      chunk NBT = 17747 bytes, zlib-deflated = 1784 bytes (compression ratio 9.9x)
+
+==== 3b. real MinecraftData codec (26.2 blocks.json + blocks.bin) ====
+[PASS] 3b.1 real codec round-trips real 26.2 states — stateCount=32366
+[PASS] 3b.2 real palette string is BlockStateParser form
+
+==== 4. RegionFile — 4 chunks / sector table / alignment ====
+[PASS] 4.1 sector table has 4 non-overlapping ranges — [{"start":2,"count":1},{"start":3,"count":1},{"start":4,"count":1},{"start":5,"count":1}]
+[PASS] 4.2 all chunks report hasChunk
+[PASS] 4.3 exported .mca is 4096-aligned — 32768 bytes
+[PASS] 4.4 reopen(fromBytes) reads all 4 chunks byte-exact
+[PASS] 4.5 larger overwrite round-trips (sector reallocation)
+
+==== 5. WorldSaveManager — create/load/save/flush/delete (fake IKeyValueStore) ====
+[PASS] 5.1 createWorld returns an id — world-mw6f60he-5t9a
+[PASS] 5.2 flushDirty wrote dirty chunks — wrote 2
+[PASS] 5.3 loadWorld returns level NBT
+[PASS] 5.4 loadWorld returns chunk map — chunks=2
+[PASS] 5.5 seed fully restored — seed=123456789012345
+[PASS] 5.6 time fully restored (Time/DayTime) — Time=98765 DayTime=12345
+[PASS] 5.7 player NBT returned
+[PASS] 5.8 player position fully restored — pos=(12.5,70.25,-8.75)
+[PASS] 5.9 player rotation fully restored
+[PASS] 5.10 inventory fully restored
+[PASS] 5.11 hotbar / xp / food fully restored
+[PASS] 5.12 applyToPlayer restores live player pos
+[PASS] 5.13 WorldListProvider.list() works
+[PASS] 5.14 getSummary() parses level.dat
+[PASS] 5.15 rename() updates metadata + level.dat
+[PASS] 5.16 exportWorld/importWorld round-trips chunks + player — chunks=2
+[PASS] 5.17 imported seed preserved
+[PASS] 5.18 exportRegion() returns a valid aligned .mca — 16384 bytes
+[PASS] 5.19 delete() clears world metadata
+[PASS] 5.20 delete() clears chunks/player/regions
+
+==== 6. Performance — <2ms/chunk + budgeted 100-chunk flush ====
+[PASS] 6.1 single chunk serialization < 2 ms — median 0.701 ms, min 0.642 ms (7x40 iters)
+      measured single-chunk serialize (median) = 0.701 ms
+      batches(ms): 0.78, 0.73, 0.70, 0.64, 0.65, 0.71, 0.70
+[PASS] 6.2 one flush never writes the whole world — wrote 13/100 in frame 1
+[PASS] 6.3 flush respects <=16 chunks/transaction — cap=16
+[PASS] 6.4 all 100 chunks eventually flushed — total=100 over 7 frames
+[PASS] 6.5 AUTOSAVE_INTERVAL = 6000 ticks
+
+==== SUMMARY ====
+  49 passed, 0 failed
+  ALL CHECKS PASSED
+EXIT=0
+########## scripts/test-worldgen.mts
+      chunk (0,0): top-non-air 62..64, terrain 54..64
+      biome at (8,80,8): minecraft:lukewarm_ocean (id 8)
+      100.0% of columns in 55..75; terrain floor 54..66
+PASS  1. surface height is plausible and near sea level
+      206/256 columns have an extra bedrock layer in -63..-60
+PASS  2. bedrock floor at y=-64..-60
+      worst column is 95.7% solid
+PASS  3. columns are mostly solid below the surface
+      5018 water columns, all topped at y=62
+PASS  4. oceans are filled to y=62 (sea level 63)
+      3 distinct biomes over 26 chunks: minecraft:lukewarm_ocean, minecraft:beach, minecraft:plains
+PASS  5. biome ids are valid and varied
+PASS  6. the same seed generates identical chunks
+PASS  7. a different seed generates different terrain
+      plains column (212, -132) y=65 -> short_grass
+FAIL  8. the top block of a plains column is grass_block - topped by short_grass at y=65
+      cold 94.17 ms/chunk, warm 95.65 ms/chunk, CPU scale x0.64
+FAIL  9. ms/chunk budget (61.19 normalised > 25)
+
+2 check(s) failed
+EXIT=1

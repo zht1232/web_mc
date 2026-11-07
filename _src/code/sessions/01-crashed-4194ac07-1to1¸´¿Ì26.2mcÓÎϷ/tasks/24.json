@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "148c6220-f1a6-4b4c-89f7-ffeb3bb07213",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "<task-noti",
+    "begin_at": 1793505985720,
+    "stage": "processing"
+  },
+  "id": "24",
+  "subject": "M6 Apply jar-derived lightmap, sky, sun/moon, cloud, fog and weather spec",
+  "description": "Authoritative spec obtained by disassembling the Mojang-mapped client jar (G:/ck-web26/client-26.2.jar) plus its bundled shaders. Confirmed ALREADY CORRECT in our renderer: the light curve l/(4-3l) matches core/lightmap.fsh exactly; fog #c0d8ff, sky #78a7ff, water fog #050533 with end distance 96; cloud alpha 0.8, height 192.33, drift 0.03/tick = 0.6 blocks/s; uBlockFactor 1.4. Corrections to apply, ranked: (1) night skylight must drop the LEVEL to 4 (curve 0.083) with sky_light_factor 1.0, instead of our uSkyFactor=0.24+0.76*day on a level-15 sky — this is why our nights wash out instead of going dark with contrast. (2) Block light needs the parabolic white mix from lightmap.fsh: mix(BlockLightTint, vec3(1), 0.9*(2l-1)^2), so torch-lit surfaces approach white at level 15 rather than staying deep orange. (3) Sky is not a gradient: core/sky.fsh draws two flat discs (top #78a7ff, dark #282828) and the horizon is sky fog over FogSkyEnd=512. (4) Sun must be translate(0,100,0) scale(30,1,30) and moon scale(20,1,20) — ours are 3-7x too small; sun.png is 32x32 with no mcmeta (not animated, no halo mesh) and the moon needs all 8 phase sprites from environment/celestial/moon/*. (5) Clouds are extruded boxes (CellSize derived from 12.0/4.0) with per-face shading top 1.0 / sides 0.9 and 0.8 / bottom 0.7 and a linear alpha fade over 0..2048, not one flat quad; stars are a 1500-entry pool faded by the star_brightness attribute; render-distance fog must be cylindrical max(|xz|,|y|) combined with the spherical 0..1024 envelope per include/fog.glsl; ambient should be #0a0a0a. Also add the 66-biome attributes table (sky_color 56, fog_color 8, water_fog_color 8, water_fog_end_distance 2, ambient_particles 4, background_music 42, ambient_sounds 5) extracted from data/minecraft/worldgen/biome/*.json, weather using environment/rain.png and snow.png (both 64x256 animated columns, ~32x512 region, alpha 0.8/0.5/0.25) with ambient.rain/snow loops, and make mobs and water cast shadows (only the solid mesh currently enters the shadow map). Note the bloom/god-ray/saturation/contrast/vignette grade is deliberately NOT vanilla (user asked for a Complementary-like look) so keep it behind the existing shaders toggle.",
+  "activeForm": "Fixing sky, lightmap and weather",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

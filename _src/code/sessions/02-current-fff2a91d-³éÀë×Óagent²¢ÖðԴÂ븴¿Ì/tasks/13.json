@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "1e27710c-e545-4f57-bbff-d76016d754fd",
+    "model_key": "qfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "我另一个复刻mc的s",
+    "begin_at": 1793509326048,
+    "stage": "processing"
+  },
+  "id": "13",
+  "subject": "M9 全部界面/语言表/粒子/音频",
+  "description": "M9：GUI 用原版 466 个 sprite / 24 组与 lang/en_us.json 的 8,123 键 + 454 splash 替换硬编码英文串；补齐 HUD 条（护甲 H-49、饥饿从右往左 W/2+91-i*8-9、气泡、经验条 182×5 + 等级绿字）、生存背包 176×166 面板与 InventoryMenu 槽位坐标、tooltip sprite 背景/3px 边框/稀有度色/多行、堆叠数量、创造标签页与搜索框精确坐标、右上 160×32 toast、GUI scale 取偶数；粒子 112 种/288 贴图（现在 1 种）；音频需要远端 Mojang assets index（jar 里 0 个 ogg、无 sounds.json）。",
+  "activeForm": "复刻界面/语言/粒子/音频",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

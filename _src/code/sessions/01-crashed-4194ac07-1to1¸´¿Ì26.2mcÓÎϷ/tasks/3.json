@@ -1,0 +1,19 @@
+{
+  "businessInfo": {
+    "version": "1.1.79-hotfix.7",
+    "id": "2312053f-2146-4514-b880-cec10e0dac0b",
+    "model_key": "dfmodel",
+    "product": "app",
+    "type": "agent",
+    "name": "能1:1给我用网页复",
+    "begin_at": 1793488427175,
+    "stage": "processing"
+  },
+  "id": "3",
+  "subject": "实现原版光照与渲染管线",
+  "description": "天光/方块光 15 级 BFS、平滑光照、AO、原版光照曲线、面明暗、雾、天空/日月光/云、水面。",
+  "activeForm": "实现原版光照与渲染",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

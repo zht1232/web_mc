@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "source": "official-assets-mc/sounds (26.2 ships no sounds.json; events derived from directory names)",
+  "eventCount": 28,
+  "fileCount": 112,
+  "events": {
+    "ambient.underwater.enter": [
+      "ambient.underwater.enter/enter1.ogg",
+      "ambient.underwater.enter/enter2.ogg",
+      "ambient.underwater.enter/enter3.ogg"
+    ],
+    "ambient.underwater.exit": [
+      "ambient.underwater.exit/exit1.ogg",
+      "ambient.underwater.exit/exit2.ogg",
+      "ambient.underwater.exit/exit3.ogg"
+    ],
+    "block.glass.break": [
+      "block.glass.break/glass1.ogg",
+      "block.glass.break/glass2.ogg",
+      "block.glass.break/glass3.ogg"
+    ],
+    "block.glass.place": [
+      "block.glass.place/stone1.ogg",
+      "block.glass.place/stone2.ogg",
+      "block.glass.place/stone3.ogg",
+      "block.glass.place/stone4.ogg"
+    ],
+    "block.glass.step": [
+      "block.glass.step/stone1.ogg",
+      "block.glass.step/stone2.ogg",
+      "block.glass.step/stone3.ogg",
+      "block.glass.step/stone4.ogg",
+      "block.glass.step/stone5.ogg",
+      "block.glass.step/stone6.ogg"
+    ],
+    "block.grass.break": [
+      "block.grass.break/grass1.ogg",
+      "block.grass.break/grass2.ogg",
+      "block.grass.break/grass3.ogg",
+      "block.grass.break/grass4.ogg"
+    ],
+    "block.grass.place": [
+      "block.grass.place/grass1.ogg",
+      "block.grass.place/grass2.ogg",
+      "block.grass.place/grass3.ogg",
+      "block.grass.place/grass4.ogg"
+    ],
+    "block.grass.step": [
+      "block.grass.step/grass1.ogg",
+      "block.grass.step/grass2.ogg",
+      "block.grass.step/grass3.ogg",
+      "block.grass.step/grass4.ogg",
+      "block.grass.step/grass5.ogg",
+      "block.grass.step/grass6.ogg"
+    ],
+    "block.gravel.break": [
+      "block.gravel.break/gravel1.ogg",
+      "block.gravel.break/gravel2.ogg",
+      "block.gravel.break/gravel3.ogg",
+      "block.gravel.break/gravel4.ogg"
+    ],
+    "block.gravel.place": [
+      "block.gravel.place/gravel1.ogg",
+      "block.gravel.place/gravel2.ogg",
+      "block.gravel.place/gravel3.ogg",
+      "block.gravel.place/gravel4.ogg"
+    ],
+    "block.gravel.step": [
+      "block.gravel.step/gravel1.ogg",
+      "block.gravel.step/gravel2.ogg",
+      "block.gravel.step/gravel3.ogg",
+      "block.gravel.step/gravel4.ogg"
+    ],
+    "block.sand.break": [
+      "block.sand.break/sand1.ogg",
+      "block.sand.break/sand2.ogg",
+      "block.sand.break/sand3.ogg",
+      "block.sand.break/sand4.ogg"
+    ],
+    "block.sand.place": [
+      "block.sand.place/sand1.ogg",
+      "block.sand.place/sand2.ogg",
+      "block.sand.place/sand3.ogg",
+      "block.sand.place/sand4.ogg"
+    ],
+    "block.sand.step": [
+      "block.sand.step/sand1.ogg",
+      "block.sand.step/sand2.ogg",
+      "block.sand.step/sand3.ogg",
+      "block.sand.step/sand4.ogg",
+      "block.sand.step/sand5.ogg"
+    ],
+    "block.snow.break": [
+      "block.snow.break/snow1.ogg",
+      "block.snow.break/snow2.ogg",
+      "block.snow.break/snow3.ogg",
+      "block.snow.break/snow4.ogg"
+    ],
+    "block.snow.place": [
+      "block.snow.place/snow1.ogg",
+      "block.snow.place/snow2.ogg",
+      "block.snow.place/snow3.ogg",
+      "block.snow.place/snow4.ogg"
+    ],
+    "block.snow.step": [
+      "block.snow.step/snow1.ogg",
+      "block.snow.step/snow2.ogg",
+      "block.snow.step/snow3.ogg",
+      "block.snow.step/snow4.ogg"
+    ],
+    "block.stone.break": [
+      "block.stone.break/stone1.ogg",
+      "block.stone.break/stone2.ogg",
+      "block.stone.break/stone3.ogg",
+      "block.stone.break/stone4.ogg"
+    ],
+    "block.stone.place": [
+      "block.stone.place/stone1.ogg",
+      "block.stone.place/stone2.ogg",
+      "block.stone.place/stone3.ogg",
+      "block.stone.place/stone4.ogg"
+    ],
+    "block.stone.step": [
+      "block.stone.step/stone1.ogg",
+      "block.stone.step/stone2.ogg",
+      "block.stone.step/stone3.ogg",
+      "block.stone.step/stone4.ogg",
+      "block.stone.step/stone5.ogg",
+      "block.stone.step/stone6.ogg"
+    ],
+    "block.water.ambient": [
+      "block.water.ambient/water.ogg"
+    ],
+    "block.wood.break": [
+      "block.wood.break/wood1.ogg",
+      "block.wood.break/wood2.ogg",
+      "block.wood.break/wood3.ogg",
+      "block.wood.break/wood4.ogg"
+    ],
+    "block.wood.place": [
+      "block.wood.place/wood1.ogg",
+      "block.wood.place/wood2.ogg",
+      "block.wood.place/wood3.ogg",
+      "block.wood.place/wood4.ogg"
+    ],
+    "block.wood.step": [
+      "block.wood.step/wood1.ogg",
+      "block.wood.step/wood2.ogg",
+      "block.wood.step/wood3.ogg",
+      "block.wood.step/wood4.ogg",
+      "block.wood.step/wood5.ogg",
+      "block.wood.step/wood6.ogg"
+    ],
+    "block.wool.break": [
+      "block.wool.break/cloth1.ogg",
+      "block.wool.break/cloth2.ogg",
+      "block.wool.break/cloth3.ogg",
+      "block.wool.break/cloth4.ogg"
+    ],
+    "block.wool.place": [
+      "block.wool.place/cloth1.ogg",
+      "block.wool.place/cloth2.ogg",
+      "block.wool.place/cloth3.ogg",
+      "block.wool.place/cloth4.ogg"
+    ],
+    "block.wool.step": [
+      "block.wool.step/cloth1.ogg",
+      "block.wool.step/cloth2.ogg",
+      "block.wool.step/cloth3.ogg",
+      "block.wool.step/cloth4.ogg"
+    ],
+    "ui.button.click": [
+      "ui.button.click/click_stereo.ogg"
+    ]
+  },
+  "categories": {
+    "ambient": [
+      "ambient.underwater.enter",
+      "ambient.underwater.exit"
+    ],
+    "block": [
+      "block.glass.break",
+      "block.glass.place",
+      "block.glass.step",
+      "block.grass.break",
+      "block.grass.place",
+      "block.grass.step",
+      "block.gravel.break",
+      "block.gravel.place",
+      "block.gravel.step",
+      "block.sand.break",
+      "block.sand.place",
+      "block.sand.step",
+      "block.snow.break",
+      "block.snow.place",
+      "block.snow.step",
+      "block.stone.break",
+      "block.stone.place",
+      "block.stone.step",
+      "block.water.ambient",
+      "block.wood.break",
+      "block.wood.place",
+      "block.wood.step",
+      "block.wool.break",
+      "block.wool.place",
+      "block.wool.step"
+    ],
+    "ui": [
+      "ui.button.click"
+    ]
+  }
+}

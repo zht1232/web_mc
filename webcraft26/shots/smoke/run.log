@@ -1,0 +1,9 @@
+[smoke] chromium 133.0.6943.16 webgl=swiftshader headless=true
+[smoke] loading http://127.0.0.1:5174/
+[smoke] boot: ready in 13504ms
+PASS 00-boot 4393ms  chunks=80 | meshSections=320 | fps=15 | workers=true | webgl=swiftshader | bootMs=13390 | chunks=104 fps=15 gl=0
+PASS 01-idle10s 12204ms  fps 13->50 | chunks 110->289 (+179, 满视野≈289) | queue=0 inflight=0 | chunks=289 fps=20 gl=0
+PASS 02-walk 6081ms  位移 5.20 格 | y 53.0->53.0 | chunks=289 fps=17 gl=0
+PASS 03-jump 10045ms  10 次跳跃 峰值 y=53.83 (+0.83) | 落地 onGround=true | chunks=289 fps=17 gl=0
+PASS 04-sprint 31907ms  最佳 5 s 位移 18.77 格 | 方向尝试 3/4 | sprinting=true | chunks=306 fps=15 gl=0
+PASS 05-fly 8286ms  上升 41.5 格 | 落地 y=64.2 | chunks=306 fps=13 gl=0

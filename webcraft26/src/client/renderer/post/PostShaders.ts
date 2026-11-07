@@ -171,6 +171,7 @@ uniform sampler2D uColor;
 uniform vec2 uTexel;
 uniform float uThreshold;
 uniform float uSoftKnee;
+uniform float uLinearize;   // 1 only for the first pass; later downsamples are already linear
 out vec4 fragColor;
 
 void main() {
@@ -180,7 +181,9 @@ void main() {
   c += texture(uColor, vUV + uTexel * vec2(-0.5,  0.5)).rgb;
   c += texture(uColor, vUV + uTexel * vec2( 0.5,  0.5)).rgb;
   c *= 0.25;
-  c = pow(max(c, vec3(0.0)), vec3(2.2));   // linear working space
+  // Linear working space. This used to run on every downsample level too, which raised values above 1
+  // to the power 2.2 once per mip (1.5 -> 2.4 -> 5.9 -> 14 -> 33 ...) and blew the sun up into a huge blob.
+  if (uLinearize > 0.5) c = pow(max(c, vec3(0.0)), vec3(2.2));
 
   float br = max(c.r, max(c.g, c.b));
   float knee = uThreshold * uSoftKnee + 1e-5;

@@ -392,6 +392,7 @@ export class PostProcessor {
     this.prefilter.set2f('uTexel', 1 / this.width, 1 / this.height);
     this.prefilter.set1f('uThreshold', this.bloomThreshold);
     this.prefilter.set1f('uSoftKnee', this.bloomKnee);
+    this.prefilter.set1f('uLinearize', 1);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // 2. downsample: every following mip is a 4-tap box of the previous one
@@ -402,6 +403,7 @@ export class PostProcessor {
       this.prefilter.set2f('uTexel', 1 / mips[i - 1].w, 1 / mips[i - 1].h);
       this.prefilter.set1f('uThreshold', 0);
       this.prefilter.set1f('uSoftKnee', 1);
+      this.prefilter.set1f('uLinearize', 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
 

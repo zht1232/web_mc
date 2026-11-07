@@ -44,6 +44,7 @@ import type { LevelLike } from './renderer/environment/EnvCommon.js';
 import { ParticleEngine, spawnBlockBreakParticles } from './particle/ParticleEngine.js';
 import { AmbientParticles } from './particle/AmbientParticles.js';
 import { SoundEngine } from './audio/SoundEngine.js';
+import { MobSounds } from './audio/MobSounds.js';
 import { WorldSaveManager, type LoadedWorld } from './world/save/WorldSaveManager.js';
 import { Autosave } from './world/save/Autosave.js';
 import {
@@ -123,6 +124,11 @@ export class Game {
   /** Torch flames, lava pops, fire smoke: ClientLevel.animateTick sampling around the player. */
   ambientParticles!: AmbientParticles;
   sounds!: SoundEngine;
+  private readonly mobSounds = new MobSounds();
+  /** Last survival health / hurtTime seen by the damage-sound watcher. */
+  private lastHurtTicks = 0;
+  private wasDead = false;
+  private rainLoopTimer = 0;
   /** First-person arm / held item / screen effects (hand package). */
   handRenderer!: HandRenderer;
   /** Block breaking decal (hand package). */
@@ -313,6 +319,12 @@ export class Game {
     // (128) is the 1.17 value. Passed as an option so the module itself stays untouched.
     this.cloudRenderer = new CloudRenderer(this.gl, { quality: 'fancy', height: 192.33 });
     this.weatherRenderer = new WeatherRenderer(this.gl);
+    // LightningBolt: the impact is heard everywhere at full volume (thunder), a muffled crack follows
+    this.weatherRenderer.onThunder = (x, y, z) => {
+      // vanilla volume 10000 means "audible at any distance"; SoundEngine clamps the volume, so play it unpositioned
+      this.sounds.play('entity.lightning_bolt.thunder', undefined, undefined, undefined, 1, 0.8 + Math.random() * 0.2);
+      this.sounds.play('entity.lightning_bolt.impact', x, y, z, 1, 0.5 + Math.random() * 0.2);
+    };
     this.particles = new ParticleEngine(this.gl, 4000);
     ParticleEngine.setInstance(this.particles);
     this.particles.blockLayerForState = (state) => this.blockLayerFor(state);
@@ -955,20 +967,33 @@ export class Game {
     return 'stone';
   }
 
+  /**
+   * `block.<type>` for a block state. blocks.json stores each block's SoundType as its break event
+   * ("block.stone.break"), so the step/place/hit/fall events share its prefix. Falls back to the
+   * coarse name heuristic for sound types that have no imported files.
+   */
+  private blockSoundBase(state: number): string {
+    const sound = this.mc.blockOf(state).sound;
+    const m = /^(block\.[a-z_]+)\.break$/.exec(sound ?? '');
+    if (m && this.sounds.hasRealEvent(`${m[1]}.step`)) return m[1];
+    return `block.${this.blockMaterial(this.mc.blockOf(state).name)}`;
+  }
+
   private playStepSound(): void {
     const p = this.player;
     if (!p.onGround || p.flying) { this.stepDistance = p.walkDist; return; }
     if (p.walkDist - this.stepDistance < 1) return;
     this.stepDistance = p.walkDist;
     const below = this.level.getBlockState(Math.floor(p.pos.x), Math.floor(p.pos.y - 0.2), Math.floor(p.pos.z));
-    const material = this.blockMaterial(this.mc.blockOf(below).name);
-    this.sounds.play(`block.${material}.step`, p.pos.x, p.pos.y, p.pos.z, 0.15, 1);
+    // Entity.playStepSound: volume 0.15 * SoundType.volume; sneaking is silent
+    if (p.sneaking) return;
+    this.sounds.play(`${this.blockSoundBase(below)}.step`, p.pos.x, p.pos.y, p.pos.z, 0.15, 1);
   }
 
   private breakEffects(state: number, x: number, y: number, z: number): void {
     spawnBlockBreakParticles(state, x, y, z, 20);
-    const material = this.blockMaterial(this.mc.blockOf(state).name);
-    this.sounds.play(`block.${material}.break`, x + 0.5, y + 0.5, z + 0.5, 1, 1);
+    // SoundType.getBreakSound at volume (v + 1) / 2 and pitch * 0.8 (BlockBehaviour / LevelEvent 2001)
+    this.sounds.play(`${this.blockSoundBase(state)}.break`, x + 0.5, y + 0.5, z + 0.5, 1, 0.8);
   }
 
   /**
@@ -1064,6 +1089,29 @@ export class Game {
     this.screens.open('death', this.survival.lastHurtBy, String(experience));
   }
 
+  /**
+   * Sounds that vanilla plays from LivingEntity/ClientLevel tick code: mob voices, the player hurt/death cry,
+   * the rain loop and thunder.
+   */
+  private tickAudioEvents(): void {
+    const p = this.player.pos;
+    this.mobSounds.tick(this.entityManager.getEntities(), this.sounds, p.x, this.player.eyeY, p.z);
+
+    const hurt = this.survival.hurtTime;
+    if (hurt > this.lastHurtTicks) this.sounds.play('entity.player.hurt', p.x, p.y, p.z, 1, 1);
+    this.lastHurtTicks = hurt;
+    const dead = this.survival.health <= 0;
+    if (dead && !this.wasDead) this.sounds.play('entity.player.death', p.x, p.y, p.z, 1, 1);
+    this.wasDead = dead;
+
+    // weather.rain loops while it rains (WeatherEffectRenderer: 40 tick cadence, volume follows the rain level)
+    const rain = this.level.getRainLevel();
+    if (rain > 0.01 && --this.rainLoopTimer <= 0) {
+      this.rainLoopTimer = 40;
+      this.sounds.play('weather.rain', undefined, undefined, undefined, 0.35 * rain, 1);
+    }
+  }
+
   /** Player.respawn (DeathScreen "Respawn" button / callbacks.onRespawn). */
   private respawnPlayer(): void {
     this.survival.respawn();
@@ -1105,6 +1153,7 @@ export class Game {
     };
     const plan = placeBlock(this.mc, this.level, item.block, ctx);
     if (!plan) return;
+    this.sounds.play(`${this.blockSoundBase(this.level.getBlockState(plan.x, plan.y, plan.z))}.place`, plan.x + 0.5, plan.y + 0.5, plan.z + 0.5, 1, 0.8);
     this.updateNeighbors(plan.x, plan.y, plan.z);
     for (const extra of plan.extras) this.updateNeighbors(extra.x, extra.y, extra.z);
     if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
@@ -1285,6 +1334,7 @@ export class Game {
     };
     this.weatherRenderer.tick(cam, this.levelLike, 1);
     this.sounds.tick(cam, this.levelLike);
+    this.tickAudioEvents();
 
     // keep the ring of chunks around the player loaded; generation happens on the workers and
     // finished chunks are applied here under a time budget
@@ -1316,6 +1366,8 @@ export class Game {
       if (stack.isEmpty()) { e.remove(); continue; }
       if (!this.survival.inventory.add(stack)) continue; // inventory full: leave it on the ground
       e.remove();
+      // ItemEntity.playerTouch: ENTITY_ITEM_PICKUP volume 0.2, pitch (random - random) * 1.4 + 2 (clamped by the engine)
+      this.sounds.play('entity.item.pickup', p.x, p.y, p.z, 0.2, 1.6 + Math.random() * 0.4);
     }
   }
 

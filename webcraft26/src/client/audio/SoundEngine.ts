@@ -134,6 +134,12 @@ export class SoundEngine {
 
   hasEvent(name: string): boolean { return this.resolveEvent(name) !== null; }
 
+  /** True only for events that have their own files (not an alias to some other sound). */
+  hasRealEvent(name: string): boolean { return this.index !== null && this.index.events[name] !== undefined; }
+
+  /** Number of play() calls per resolved event (debug / tests: `__mc.sounds.stats`). */
+  readonly stats: Record<string, number> = {};
+
   /** Resolves a name directly or through SOUND_ALIASES to a real event id. */
   resolveEvent(name: string): string | null {
     if (!this.index) return null;
@@ -192,6 +198,9 @@ export class SoundEngine {
     if (!event) return;
     const files = this.index.events[event];
     if (!files || !files.length) return;
+    // A crowd of mobs must not turn into hundreds of live audio nodes (SoundEngine.java caps channels at 247).
+    if (this.activeSources.size >= 64) return;
+    this.stats[event] = (this.stats[event] ?? 0) + 1;
     const path = files[this.random.nextInt(files.length)];
     const vol = clamp01(volume);
     const cat = categoryOf(event);

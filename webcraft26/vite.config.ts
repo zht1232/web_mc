@@ -5,13 +5,12 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5174,
     strictPort: true,
-    // Several agents write files in this workspace at the same time. Vite's fs.watch based
-    // chokidar watcher kills the whole dev server with EBUSY whenever it catches an atomic
-    // replace ("~RF*.TMP", ".tmpdir", or the target file itself), so poll instead.
+    // Do not watch the ~40k official asset files, screenshots, logs and reports: with several agents writing
+    // into the workspace the default fs.watch watcher used to crash the server (EBUSY on atomic replaces of
+    // *.TMP files), and polling instead pegged two cores walking all of public/mc.
     watch: {
-      usePolling: true,
-      interval: 300,
-      ignored: ['**/*.TMP', '**/*.tmp', '**/*.tmpdir/**', '**/node_modules/**', '**/dist/**'],
+      ignored: ['**/*.TMP', '**/*.tmp', '**/*.tmpdir/**', '**/node_modules/**', '**/dist/**', '**/public/mc/**',
+        '**/shots/**', '**/logs/**', '**/REPORTS/**', '**/research/**'],
     },
   },
   preview: {

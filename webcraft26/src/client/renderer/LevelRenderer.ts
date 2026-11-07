@@ -874,6 +874,9 @@ export class LevelRenderer {
   get meshStats(): { ms: number; count: number; sections: number } {
     return { ms: this.lastMeshMs, count: this.meshCount, sections: this.sections.size };
   }
+
+  /** Sections still waiting for a remesh (tests wait for this to reach 0 after editing blocks). */
+  get pendingRebuilds(): number { return this.rebuildQueue.length; }
 }
 
 const vaoBuffers = new WeakMap<WebGLVertexArrayObject, { vbo: WebGLBuffer | null; ibo: WebGLBuffer | null }>();

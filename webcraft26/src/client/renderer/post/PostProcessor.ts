@@ -49,6 +49,8 @@ export interface PostStats {
   frames: number;
   lastGlError: number;
   sceneBound: boolean;
+  /** Scene depth is a sampleable texture (needed by the depth-based passes: SSAO/TAA). */
+  depthTexture: boolean;
 }
 
 export class PostProcessor {
@@ -64,6 +66,9 @@ export class PostProcessor {
   /** Colours are sampled with LINEAR: the bloom chain downsamples with bilinear taps. */
   private sceneTex: WebGLTexture | null = null;
   private sceneFbo: WebGLFramebuffer | null = null;
+  /** Scene depth. A texture when the driver allows it (depth-based post passes sample it). */
+  private depthTex: WebGLTexture | null = null;
+  private depthTextureOk = false;
   private depthRb: WebGLRenderbuffer | null = null;
   private ldrTex: WebGLTexture | null = null;
   private ldrFbo: WebGLFramebuffer | null = null;
@@ -155,8 +160,12 @@ export class PostProcessor {
       frames: this.frameCount,
       lastGlError: this.gl.getError(),
       sceneBound: this.sceneBound,
+      depthTexture: this.depthTextureOk,
     };
   }
+
+  /** True when the scene depth attachment is a texture that post passes can sample. */
+  get depthTextureAvailable(): boolean { return this.depthTextureOk; }
 
   // ------------------------------------------------------------------ targets
 
@@ -182,12 +191,15 @@ export class PostProcessor {
     if (this.sceneFbo) gl.deleteFramebuffer(this.sceneFbo);
     if (this.depthRb) gl.deleteRenderbuffer(this.depthRb);
     if (this.sceneTex) gl.deleteTexture(this.sceneTex);
+    if (this.depthTex) gl.deleteTexture(this.depthTex);
     if (this.ldrFbo) gl.deleteFramebuffer(this.ldrFbo);
     if (this.ldrTex) gl.deleteTexture(this.ldrTex);
     for (const t of this.mipTextures) gl.deleteTexture(t);
     this.sceneFbo = null;
     this.depthRb = null;
     this.sceneTex = null;
+    this.depthTex = null;
+    this.depthTextureOk = false;
     this.ldrFbo = null;
     this.ldrTex = null;
     this.mips = [];
@@ -216,10 +228,19 @@ export class PostProcessor {
     this.sceneFbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.sceneTex, 0);
-    this.depthRb = gl.createRenderbuffer()!;
-    gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRb);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, this.width, this.height);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.depthRb);
+    // Depth as a texture so depth-based post passes (SSAO/TAA) can read it. WebGL2 depth textures
+    // are sampleable; a renderbuffer fallback keeps the scene working if the driver rejects it.
+    this.depthTextureOk = false;
+    if (this.depthTex) { gl.deleteTexture(this.depthTex); this.depthTex = null; }
+    this.depthTex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, this.width, this.height, 0,
+      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, this.depthTex, 0);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
 
     let complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
@@ -238,6 +259,21 @@ export class PostProcessor {
       this.hdrFormat = 'RGBA8';
       complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
       if (!complete) console.warn('[post] HDR framebuffer incomplete, shaders disabled');
+    }
+
+    // Depth texture rejected together with the colour format: fall back to a plain renderbuffer and
+    // disable the depth-based passes instead of failing the whole shader path.
+    if (complete) {
+      this.depthTextureOk = true;
+    } else {
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, null, 0);
+      if (this.depthTex) { gl.deleteTexture(this.depthTex); this.depthTex = null; }
+      this.depthRb = gl.createRenderbuffer()!;
+      gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRb);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, this.width, this.height);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.depthRb);
+      complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      if (!complete) console.warn('[post] scene framebuffer incomplete, shaders disabled');
     }
 
     // --- LDR intermediate for the FXAA pass

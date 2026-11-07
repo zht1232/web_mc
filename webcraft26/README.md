@@ -74,6 +74,7 @@ Esc 暂停，F3 调试屏，**F6 光影开关**；左键挖/攻击、右键放/�
 npx tsc --noEmit                                  # 类型检查
 for t in scripts/test-*.mts; do npx tsx $t; done  # 18 套单测
 npx tsx scripts/test-mobs-render.mts              # 生物渲染 19 项
+npx tsx scripts/test-glmath.mts                   # 矩阵工具 6 项
 node scripts/test-menu.mjs                        # 主菜单/世界选择 9 项
 node scripts/test-touch.mjs                       # 触屏 15 项
 node scripts/smoke.mjs                            # 浏览器冒烟 19 场景（默认 ?play）

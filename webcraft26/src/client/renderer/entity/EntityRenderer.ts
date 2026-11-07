@@ -273,9 +273,11 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     // always rendered in the bow pose (HumanoidModel.ArmPose.BOW_AND_ARROW).
     ctx.isHoldingBow = e.getTypeName() === 'skeleton';
     ctx.swell = typeof mob.swell === 'number' ? Math.min(1, Math.max(0, mob.swell)) : 0;
-    // ChickenModel: flapAngle = (sin(flap) + 1) * flapSpeed. The flap counters live
-    // in the survival package's Chicken class; approximate from the current state.
-    ctx.flapAngle = e.getTypeName() === 'chicken'
+    // ChickenModel/ParrotModel: flapAngle = (sin(flap) + 1) * flapSpeed. The flap
+    // counters live in the survival package's Chicken/Parrot classes; approximate
+    // from the current state (a hovering parrot uses the larger flying value).
+    const typeName = e.getTypeName();
+    ctx.flapAngle = (typeName === 'chicken' || typeName === 'parrot')
       ? (1 + Math.sin(ctx.ageInTicks * 0.9)) * (e.onGround ? 0.05 : 0.6)
       : 0;
     // Source: Bat.isResting()/BatRenderState.isResting (hanging upside down)

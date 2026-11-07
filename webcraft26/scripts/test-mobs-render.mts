@@ -13,8 +13,18 @@ import {
   QuadrupedModel, PigModel, CowModel, SheepModel, ChickenModel,
   ZombieModel, SkeletonModel, CreeperModel, SpiderModel, EndermanModel,
   SilverfishModel, WolfModel, RabbitModel, BatModel,
+  SlimeModel, WitchModel, ZombieVillagerModel, FelineModel, FoxModel,
+  ParrotModel, SquidModel, CodModel, SalmonModel,
 } from '../src/client/renderer/entity/model/EntityModels.ts';
+import {
+  MODEL_REGISTRY, ALL_TEXTURE_KEYS, getModelEntry,
+} from '../src/client/renderer/entity/model/ModelRegistry.ts';
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Entity } from '../src/vanilla/world/entity/Entity.ts';
+
+const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 let failures = 0;
 function check(name: string, ok: boolean, detail: string): void {
@@ -32,7 +42,7 @@ interface FakeOpts {
   hurtTime?: number; dead?: boolean; deathTime?: number;
   aggressive?: boolean; swell?: number;
   skyLight?: number; blockLight?: number;
-  onGround?: boolean;
+  onGround?: boolean; tickCount?: number; scale?: number;
 }
 
 const GROUND = 64;
@@ -42,7 +52,7 @@ function fakeEntity(typeName: string, opts: FakeOpts = {}): Entity {
   return {
     xo: 0, yo: y, zo: 0, x: 0, y, z: 0,
     yaw: opts.yaw ?? 0, pitch: opts.pitch ?? 0, yRotO: opts.yaw ?? 0, xRotO: opts.pitch ?? 0,
-    scale: 1, tickCount: 42, onGround: opts.onGround ?? true,
+    scale: opts.scale ?? 1, tickCount: opts.tickCount ?? 42, onGround: opts.onGround ?? true,
     level: {
       getSkyLight: () => opts.skyLight ?? 15,
       getBlockLight: () => opts.blockLight ?? 0,
@@ -118,6 +128,11 @@ const models: [string, { parts: unknown[]; vertexCount: number }][] = [
   ['SkeletonModel', SkeletonModel], ['CreeperModel', CreeperModel], ['SpiderModel', SpiderModel],
   ['EndermanModel', EndermanModel], ['SilverfishModel', SilverfishModel], ['WolfModel', WolfModel],
   ['RabbitModel', RabbitModel], ['BatModel', BatModel],
+  // HANDOFF 8.1 additions
+  ['SlimeModel', SlimeModel], ['WitchModel', WitchModel],
+  ['ZombieVillagerModel', ZombieVillagerModel], ['FelineModel', FelineModel],
+  ['FoxModel', FoxModel], ['ParrotModel', ParrotModel], ['SquidModel', SquidModel],
+  ['CodModel', CodModel], ['SalmonModel', SalmonModel],
 ];
 let allModelsOk = true;
 let totalVerts = 0;
@@ -125,7 +140,7 @@ for (const [name, m] of models) {
   totalVerts += m.vertexCount;
   if (m.parts.length === 0 || m.vertexCount <= 0) allModelsOk = false;
 }
-check('[1] 14 data-driven models baked', allModelsOk,
+check('[1] 23 data-driven models baked', allModelsOk,
   `parts=${models.reduce((s, [, m]) => s + m.parts.length, 0)} vertices=${totalVerts}`);
 
 const TYPES = ['zombie', 'skeleton', 'creeper', 'spider', 'enderman', 'silverfish',
@@ -265,6 +280,161 @@ for (let i = 0; i < Math.min(batFly.pos.length, batRest.pos.length); i++) {
   batDelta = Math.max(batDelta, Math.abs(batFly.pos[i] - batRest.pos[i]));
 }
 check('[12] bat hanging (resting) pose differs from flying', batDelta > 0.1, `maxDelta=${batDelta.toFixed(3)}`);
+
+// ---------------------------------------------------------------------------
+// 9. HANDOFF 8.1 additions: MODEL_REGISTRY entries, textures, vanilla sizes and
+//    the new walk/flap/tentacle animators.
+// ---------------------------------------------------------------------------
+
+const NEW_TYPES = ['slime', 'witch', 'cave_spider', 'zombie_villager', 'fox',
+  'cat', 'ocelot', 'parrot', 'squid', 'glow_squid', 'cod', 'salmon'];
+
+/** entity.scale exactly as set by the mob classes (src/vanilla/world/entity/**). */
+const PORT_SCALE: Record<string, number> = {
+  slime: 2, cave_spider: 0.7, fox: 0.8, cat: 0.8, ocelot: 0.8, parrot: 0.6,
+  squid: 0.8, glow_squid: 0.8, cod: 0.6, salmon: 0.7, witch: 1, zombie_villager: 1,
+};
+
+const EXPECTED_TEXTURE: Record<string, string> = {
+  slime: 'slime/slime',
+  witch: 'witch/witch',
+  cave_spider: 'spider/cave_spider',
+  zombie_villager: 'zombie_villager/zombie_villager',
+  fox: 'fox/fox',
+  cat: 'cat/cat_tabby',
+  ocelot: 'cat/ocelot',
+  parrot: 'parrot/parrot_red_blue',
+  squid: 'squid/squid',
+  glow_squid: 'squid/glow_squid',
+  cod: 'fish/cod',
+  salmon: 'fish/salmon',
+};
+
+/** Same as renderAndMeasure but with the real entity.scale for the type. */
+function renderNew(type: string, opts: FakeOpts = {}): Bounds {
+  return renderAndMeasure(type, { scale: PORT_SCALE[type] ?? 1, ...opts });
+}
+
+// 13: every new type resolves through MODEL_REGISTRY. That is exactly what makes
+// EntityRenderDispatcher.canRender() true, which in turn keeps Game.init from
+// nulling the factory (the "invisible mob" natural-spawn filter).
+let registryOk = true;
+let registryDetail = '';
+for (const t of NEW_TYPES) {
+  const entry = getModelEntry(t);
+  if (!entry || entry !== MODEL_REGISTRY[t]) {
+    registryOk = false; registryDetail += `${t}:missing `; continue;
+  }
+  if (entry.texture !== EXPECTED_TEXTURE[t]) {
+    registryOk = false; registryDetail += `${t}:tex=${entry.texture} `;
+  }
+}
+check('[13] 12 new types in MODEL_REGISTRY (canRender true)', registryOk,
+  registryDetail || `${NEW_TYPES.length} types`);
+
+// 14: every registered texture key is a real PNG under public/mc/textures/entity
+// and belongs to the batched texture key set (a missing PNG = silently invisible).
+let texturesOk = true;
+let textureDetail = '';
+for (const [type, entry] of Object.entries(MODEL_REGISTRY)) {
+  const file = resolve(PROJECT_ROOT, 'public/mc/textures/entity', `${entry.texture}.png`);
+  if (!existsSync(file)) { texturesOk = false; textureDetail += `${type}:file-missing `; }
+  if (!ALL_TEXTURE_KEYS.includes(entry.texture)) { texturesOk = false; textureDetail += `${type}:key-missing `; }
+}
+for (const key of ALL_TEXTURE_KEYS) {
+  if (key === '__white__') continue;
+  if (!existsSync(resolve(PROJECT_ROOT, 'public/mc/textures/entity', `${key}.png`))) {
+    texturesOk = false; textureDetail += `${key}:png-missing `;
+  }
+}
+check('[14] registry textures exist on disk and in ALL_TEXTURE_KEYS', texturesOk,
+  textureDetail || `${ALL_TEXTURE_KEYS.length - 1} entity png keys`);
+
+// 15: the new models produce real, finite geometry at vanilla size. The squid is
+// the documented exception: SquidRenderer.setupRotations lowers the model by 0.7
+// blocks (baked in as +11.2 texels), so its tentacles hang below the feet.
+let newGeometryOk = true;
+let newGeometryDetail = '';
+const newHeights: string[] = [];
+for (const t of NEW_TYPES) {
+  const b = renderNew(t);
+  if (b.nan || b.count === 0) { newGeometryOk = false; newGeometryDetail += `${t}:empty `; continue; }
+  const minY = b.minY - GROUND, maxY = b.maxY - GROUND;
+  newHeights.push(`${t}=${maxY.toFixed(2)}`);
+  if (t === 'squid' || t === 'glow_squid') {
+    if (minY < -1.4 || minY > -1.0 || maxY < 0.6 || maxY > 1.0) {
+      newGeometryOk = false; newGeometryDetail += `${t}:y=${minY.toFixed(2)}..${maxY.toFixed(2)} `;
+    }
+    continue;
+  }
+  if (minY < -0.1 || maxY < 0.2 || maxY > 2.6) {
+    newGeometryOk = false; newGeometryDetail += `${t}:y=${minY.toFixed(2)}..${maxY.toFixed(2)} `;
+  }
+  if (Math.abs(b.minX) > 2.5 || Math.abs(b.maxX) > 2.5 || b.minZ < -2.5 || b.maxZ > 2.5) {
+    newGeometryOk = false; newGeometryDetail += `${t}:xz `;
+  }
+}
+check('[15] 12 new mobs render finite geometry at vanilla size', newGeometryOk,
+  newGeometryDetail || newHeights.join(' '));
+
+// 16: vanilla-specific sizes: a size-2 slime is a 1-block cube, the witch (hat
+// included) is ~2.45 blocks tall, the cave spider is 70% of the normal spider.
+const slimeH = renderNew('slime').maxY - GROUND;
+const witchH = renderNew('witch').maxY - GROUND;
+const caveH = renderNew('cave_spider').maxY - GROUND;
+const spiderH = renderAndMeasure('spider').maxY - GROUND;
+check('[16] slime 1 block, witch hat > 2 blocks, cave spider < 0.8 * spider',
+  Math.abs(slimeH - 1.0) < 0.05 && witchH > 2.0 && caveH < spiderH * 0.8,
+  `slime=${slimeH.toFixed(3)} witch=${witchH.toFixed(3)} cave_spider=${caveH.toFixed(3)} spider=${spiderH.toFixed(3)}`);
+
+// 17: the new walk animators actually move the legs (fox/cat/ocelot/wolf).
+let newWalkOk = true;
+const newWalkDetail: string[] = [];
+for (const t of ['fox', 'cat', 'ocelot', 'wolf']) {
+  const a = renderNew(t, { walkAnimPos: 0, walkAnimSpeed: 1 });
+  const b = renderNew(t, { walkAnimPos: 4.716, walkAnimSpeed: 1 });
+  let delta = 0;
+  for (let i = 0; i < Math.min(a.pos.length, b.pos.length); i++) {
+    delta = Math.max(delta, Math.abs(a.pos[i] - b.pos[i]));
+  }
+  if (delta <= 0.02) newWalkOk = false;
+  newWalkDetail.push(`${t}=${delta.toFixed(2)}`);
+}
+check('[17] quadruped walk swing moves fox/cat/ocelot legs', newWalkOk, newWalkDetail.join(' '));
+
+// 18: head look (witch), wing flap (parrot) and tentacle idle motion (squid).
+const witchStill = renderNew('witch', { yaw: 0, yHeadRot: 0, pitch: 0 });
+const witchLook = renderNew('witch', { yaw: 0, yHeadRot: 60, pitch: 20 });
+let witchDelta = 0;
+for (let i = 0; i < Math.min(witchStill.pos.length, witchLook.pos.length); i++) {
+  witchDelta = Math.max(witchDelta, Math.abs(witchStill.pos[i] - witchLook.pos[i]));
+}
+const parrotGround = renderNew('parrot', { onGround: true, tickCount: 100 });
+const parrotAir = renderNew('parrot', { onGround: false, tickCount: 100 });
+let parrotDelta = 0;
+for (let i = 0; i < Math.min(parrotGround.pos.length, parrotAir.pos.length); i++) {
+  parrotDelta = Math.max(parrotDelta, Math.abs(parrotGround.pos[i] - parrotAir.pos[i]));
+}
+const squidIdleA = renderNew('squid', { tickCount: 42 });
+const squidIdleB = renderNew('squid', { tickCount: 50 });
+let squidDelta = 0;
+for (let i = 0; i < Math.min(squidIdleA.pos.length, squidIdleB.pos.length); i++) {
+  squidDelta = Math.max(squidDelta, Math.abs(squidIdleA.pos[i] - squidIdleB.pos[i]));
+}
+check('[18] witch head look / parrot wing flap / squid tentacle idle animation',
+  witchDelta > 0.05 && parrotDelta > 0.05 && squidDelta > 0.05,
+  `witch=${witchDelta.toFixed(2)} parrot=${parrotDelta.toFixed(2)} squid=${squidDelta.toFixed(2)}`);
+
+// 19: fuzz every new type through the same render states as the original 13.
+let newFuzzOk = true;
+for (const t of NEW_TYPES) {
+  for (const s of states) {
+    const b = renderNew(t, s);
+    if (b.nan || b.count === 0) { newFuzzOk = false; console.log(`      ${t} ${JSON.stringify(s)} -> nan=${b.nan} count=${b.count}`); }
+  }
+}
+check('[19] 12 new mobs x 5 render states produce finite vertices', newFuzzOk,
+  `states=${NEW_TYPES.length * states.length}`);
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED  EXIT=0' : `\n${failures} CHECK(S) FAILED  EXIT=1`);
 process.exit(failures === 0 ? 0 : 1);

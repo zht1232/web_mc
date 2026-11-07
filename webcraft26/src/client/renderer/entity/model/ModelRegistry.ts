@@ -6,8 +6,10 @@
 
 import type { BakedModel } from './ModelBox.js';
 import {
-  ZombieModel, SkeletonModel, CreeperModel, SpiderModel, EndermanModel, SilverfishModel,
-  PigModel, CowModel, SheepModel, ChickenModel, WolfModel, RabbitModel, BatModel,
+  ZombieModel, ZombieVillagerModel, SkeletonModel, CreeperModel, SpiderModel, EndermanModel,
+  SilverfishModel, SlimeModel, WitchModel,
+  PigModel, CowModel, SheepModel, ChickenModel, WolfModel, FoxModel, FelineModel, ParrotModel,
+  RabbitModel, BatModel, SquidModel, CodModel, SalmonModel,
   QuadrupedModel,
 } from './EntityModels.js';
 
@@ -31,6 +33,20 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   wolf: { model: WolfModel, texture: 'wolf/wolf' },
   rabbit: { model: RabbitModel, texture: 'rabbit/rabbit_brown' },
   bat: { model: BatModel, texture: 'bat/bat' },
+  // Mobs that had a factory but no renderer (HANDOFF 8.1); registering them
+  // here is what removes Game.init's "no renderer => no natural spawn" filter.
+  slime: { model: SlimeModel, texture: 'slime/slime' },
+  witch: { model: WitchModel, texture: 'witch/witch' },
+  cave_spider: { model: SpiderModel, texture: 'spider/cave_spider' },
+  zombie_villager: { model: ZombieVillagerModel, texture: 'zombie_villager/zombie_villager' },
+  fox: { model: FoxModel, texture: 'fox/fox' },
+  cat: { model: FelineModel, texture: 'cat/cat_tabby' },
+  ocelot: { model: FelineModel, texture: 'cat/ocelot' },
+  parrot: { model: ParrotModel, texture: 'parrot/parrot_red_blue' },
+  squid: { model: SquidModel, texture: 'squid/squid' },
+  glow_squid: { model: SquidModel, texture: 'squid/glow_squid' },
+  cod: { model: CodModel, texture: 'fish/cod' },
+  salmon: { model: SalmonModel, texture: 'fish/salmon' },
   // Zombie / skeleton variants share the base humanoid model; only the skin differs.
   husk: { model: ZombieModel, texture: 'zombie/husk' },
   drowned: { model: ZombieModel, texture: 'zombie/drowned' },

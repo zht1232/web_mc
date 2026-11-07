@@ -517,6 +517,290 @@ function keyframe(phase: number, frames: readonly (readonly [number, number])[])
 }
 
 // ---------------------------------------------------------------------------
+// 26.2 mob additions: slime / witch / zombie villager / fox / feline (cat +
+// ocelot) / parrot / squid + glow squid / cod / salmon.
+//
+// Every box below is a literal transcription of the vanilla createBodyLayer();
+// every animator follows the matching setupAnim(). ModelLayers.CAT,
+// CAVE_SPIDER, WITCH and the salmon variants apply MeshTransformer.scaling(s):
+// since that transformer adds yOffset = 24.016 * (1 - s) to every part pose, it
+// is exactly equivalent to scaling the finished model about the entity feet, so
+// those factors are applied by MobRenderer EXTRA_SCALE instead of baking scaled
+// coordinates (the cat and cave spider entity.scale already carry 0.8 / 0.7).
+// ---------------------------------------------------------------------------
+
+/** Source: AnimationUtils.animateZombieArms (same poses as the ZombieModel animator). */
+function zombieArmsAnim(model: BakedModel, ctx: AnimContext): void {
+  const drop = -Math.PI / (ctx.isAggressive ? 1.5 : 2.25);
+  const attack2 = Math.sin(ctx.attackTime * Math.PI);
+  const attack = Math.sin((1 - (1 - ctx.attackTime) * (1 - ctx.attackTime)) * Math.PI);
+  const xRot = drop + attack2 * 1.2 - attack * 0.4;
+  const yRot = 0.1 - attack2 * 0.6;
+  const rightArm = pose(model, 'right_arm');
+  const leftArm = pose(model, 'left_arm');
+  rightArm.rx = xRot; rightArm.ry = -yRot; rightArm.rz = 0;
+  leftArm.rx = xRot; leftArm.ry = yRot; leftArm.rz = 0;
+  bobModelPart(rightArm, ctx.ageInTicks, 1.0);
+  bobModelPart(leftArm, ctx.ageInTicks, -1.0);
+}
+
+/**
+ * Source: net.minecraft.client.model.monster.slime.SlimeModel (64x32).
+ *
+ * The renderer has no translucent pass: the outer shell (texOffs(0,0), alpha
+ * 180/255) is drawn opaque and the inner-layer eyes/mouth are moved one texel
+ * forward so they stay visible in front of the shell. The inner cube itself is
+ * omitted (it would be fully hidden). Squish is not simulated in the port; the
+ * Slime entity's scale = 2 reproduces AbstractCubeMobRenderer size scaling for
+ * the port's single size-2 slime (a 1-block cube).
+ */
+export const SlimeModel: BakedModel = bakeModel(makeModel(64, 32, [
+  P('cube', 0, 0, 0, [B(-4, 16, -4, 8, 8, 8, 0, 0)], {}, [
+    P('right_eye', 0, 0, 0, [B(-3.25, 18, -4.5, 2, 2, 2, 32, 0)]),
+    P('left_eye', 0, 0, 0, [B(1.25, 18, -4.5, 2, 2, 2, 32, 4)]),
+    P('mouth', 0, 0, 0, [B(0, 21, -4.5, 1, 1, 1, 32, 8)]),
+  ]),
+]));
+
+/**
+ * Source: net.minecraft.client.model.monster.witch.WitchModel.createBodyLayer
+ * (64x128) — VillagerModel.createBodyModel geometry, a replacement head, the
+ * four-part hat (the wide hat_rim is inherited from the villager body model) and
+ * the villager nose + witch mole. ModelLayers.WITCH scales the mesh by 0.9375.
+ */
+export const WitchModel: BakedModel = withAnimator(bakeModel(makeModel(64, 128, [
+  P('head', 0, 0, 0, [B(-4, -10, -4, 8, 10, 8, 0, 0)], {}, [
+    P('hat', -5, -10.03125, -5, [B(0, 0, 0, 10, 2, 10, 0, 64)], {}, [
+      P('hat_rim', 0, 0, 0, [B(-8, -8, -6, 16, 16, 1, 30, 47)], { rx: -HALF_PI }),
+      P('hat2', 1.75, -4, 2, [B(0, 0, 0, 7, 4, 7, 0, 76)],
+        { rx: -0.05235988, rz: 0.02617994 }, [
+          P('hat3', 1.75, -4, 2, [B(0, 0, 0, 4, 4, 4, 0, 87)],
+            { rx: -0.10471976, rz: 0.05235988 }, [
+              P('hat4', 1.75, -2, 2, [B(0, 0, 0, 1, 2, 1, 0, 95, false, 0.25)],
+                { rx: -Math.PI / 15, rz: 0.10471976 }),
+            ]),
+        ]),
+    ]),
+    P('nose', 0, -2, 0, [B(-1, -1, -6, 2, 4, 2, 24, 0)], {}, [
+      P('mole', 0, -2, 0, [B(0, 3, -6.75, 1, 1, 1, 0, 0, false, -0.25)]),
+    ]),
+  ]),
+  P('body', 0, 0, 0, [
+    B(-4, 0, -3, 8, 12, 6, 16, 20),
+    B(-4, 0, -3, 8, 20, 6, 0, 38, false, 0.5), // robe (villager jacket)
+  ]),
+  P('arms', 0, 3, -1, [
+    B(-8, -2, -2, 4, 8, 4, 44, 22),
+    B(4, -2, -2, 4, 8, 4, 44, 22, true),
+    B(-4, 2, -2, 8, 4, 4, 40, 38),
+  ], { rx: -0.75 }),
+  P('right_leg', -2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 22)]),
+  P('left_leg', 2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 22, true)]),
+])), (model, ctx) => {
+  // Source: WitchModel.setupAnim (head look, half-speed leg swing, nose twitch).
+  const head = pose(model, 'head');
+  head.rx = ctx.headPitch;
+  head.ry = ctx.headYaw;
+  const ap = ctx.limbSwing, as = ctx.limbSwingAmount;
+  pose(model, 'right_leg').rx = Math.cos(ap * 0.6662) * 1.4 * as * 0.5;
+  pose(model, 'left_leg').rx = Math.cos(ap * 0.6662 + Math.PI) * 1.4 * as * 0.5;
+  // WitchModel derives the twitch speed from entityId % 10, which the render
+  // state does not carry here, so a fixed 0.05 rad/tick speed stands in.
+  const speed = 0.05;
+  const nose = pose(model, 'nose');
+  nose.rx = Math.sin(ctx.ageInTicks * speed) * 4.5 * DEG;
+  nose.rz = Math.cos(ctx.ageInTicks * speed) * 2.5 * DEG;
+});
+
+/**
+ * Source: net.minecraft.client.model.monster.zombie.ZombieVillagerModel
+ * .createBodyLayer (64x64): villager head/nose/hat/robe on humanoid limbs.
+ */
+export const ZombieVillagerModel: BakedModel = withAnimator(bakeModel(makeModel(64, 64, [
+  P('head', 0, 0, 0, [
+    B(-4, -10, -4, 8, 10, 8, 0, 0),
+    B(-1, -3, -6, 2, 4, 2, 24, 0), // villager nose
+  ], {}, [
+    P('hat', 0, 0, 0, [B(-4, -10, -4, 8, 10, 8, 32, 0, false, 0.5)], {}, [
+      P('hat_rim', 0, 0, 0, [B(-8, -8, -6, 16, 16, 1, 30, 47)], { rx: -HALF_PI }),
+    ]),
+  ]),
+  P('body', 0, 0, 0, [
+    B(-4, 0, -3, 8, 12, 6, 16, 20),
+    B(-4, 0, -3, 8, 20, 6, 0, 38, false, 0.05), // robe
+  ]),
+  P('right_arm', -5, 2, 0, [B(-3, -2, -2, 4, 12, 4, 44, 22)]),
+  P('left_arm', 5, 2, 0, [B(-1, -2, -2, 4, 12, 4, 44, 22, true)]),
+  P('right_leg', -2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 22)]),
+  P('left_leg', 2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 22, true)]),
+])), (model, ctx) => {
+  humanoidAnim(model, ctx);
+  zombieArmsAnim(model, ctx);
+});
+
+/**
+ * Source: net.minecraft.client.model.animal.feline.AdultFelineModel
+ * .createBodyMesh(CubeDeformation.NONE) (64x32). ModelLayers.CAT applies
+ * CAT_TRANSFORMER scaling(0.8) and ModelLayers.OCELOT does not; the Cat class
+ * already reports scale 0.8, so this is the un-scaled mesh shared by cat and
+ * ocelot (MobRenderer EXTRA_SCALE compensates the ocelot).
+ */
+export const FelineModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32, [
+  P('head', 0, 15, -9, [
+    B(-2.5, -2, -3, 5, 4, 5, 0, 0),        // main
+    B(-1.5, -0.001, -4, 3, 2, 2, 0, 24),  // nose
+    B(-2, -3, 0, 1, 1, 2, 0, 10),         // ear1
+    B(1, -3, 0, 1, 1, 2, 6, 10),          // ear2
+  ]),
+  P('body', 0, 12, -10, [B(-2, 3, -8, 4, 16, 6, 20, 0)], { rx: HALF_PI }),
+  P('tail1', 0, 15, 8, [B(-0.5, 0, 0, 1, 8, 1, 0, 15)], { rx: 0.9 }),
+  P('tail2', 0, 20, 14, [B(-0.5, 0, 0, 1, 8, 1, 4, 15, false, -0.02)]),
+  P('left_hind_leg', 1.1, 18, 5, [B(-1, 0, 1, 2, 6, 2, 8, 13)]),
+  P('right_hind_leg', -1.1, 18, 5, [B(-1, 0, 1, 2, 6, 2, 8, 13)]),
+  P('left_front_leg', 1.2, 14.1, -5, [B(-1, 0, 0, 2, 10, 2, 40, 0)]),
+  P('right_front_leg', -1.2, 14.1, -5, [B(-1, 0, 0, 2, 10, 2, 40, 0)]),
+])), (model, ctx) => {
+  // Source: AdultFelineModel.setupAnim for the awake / walking / not-sitting
+  // state (body.xRot is already PI/2 in the rest pose), plus the tail sweep.
+  const head = pose(model, 'head');
+  head.rx = ctx.headPitch;
+  head.ry = ctx.headYaw;
+  const ap = ctx.limbSwing, as = ctx.limbSwingAmount;
+  pose(model, 'left_hind_leg').rx = Math.cos(ap * 0.6662) * as;
+  pose(model, 'right_hind_leg').rx = Math.cos(ap * 0.6662 + Math.PI) * as;
+  pose(model, 'left_front_leg').rx = Math.cos(ap * 0.6662 + Math.PI) * as;
+  pose(model, 'right_front_leg').rx = Math.cos(ap * 0.6662) * as;
+  pose(model, 'tail2').rx = 1.7278761 + QUARTER_PI * Math.cos(ap) * as;
+});
+
+/** Source: net.minecraft.client.model.animal.fox.AdultFoxModel.createBodyLayer (48x32). */
+export const FoxModel: BakedModel = withAnimator(bakeModel(makeModel(48, 32, [
+  P('head', -1, 16.5, -3, [
+    B(-3, -2, -5, 8, 6, 6, 1, 5),
+    B(-3, -4, -4, 2, 2, 1, 8, 1),    // right ear
+    B(3, -4, -4, 2, 2, 1, 15, 1),    // left ear
+    B(-1, 2.01, -8, 4, 2, 3, 6, 18), // nose
+  ]),
+  P('body', 0, 16, -6, [B(-3, 3.999, -3.5, 6, 11, 6, 24, 15)], { rx: HALF_PI }, [
+    P('tail', -4, 15, -1, [B(2, 0, -1, 4, 9, 5, 30, 0)], { rx: -0.05235988 }),
+  ]),
+  P('right_hind_leg', -5, 17.5, 7, [B(2, 0.5, -1, 2, 6, 2, 13, 24, false, 0.001)]),
+  P('left_hind_leg', -1, 17.5, 7, [B(2, 0.5, -1, 2, 6, 2, 4, 24, false, 0.001)]),
+  P('right_front_leg', -5, 17.5, 0, [B(2, 0.5, -1, 2, 6, 2, 13, 24, false, 0.001)]),
+  P('left_front_leg', -1, 17.5, 0, [B(2, 0.5, -1, 2, 6, 2, 4, 24, false, 0.001)]),
+])), (model, ctx) => {
+  // Source: FoxModel.setupAnim + AdultFoxModel.setWalkingPose. The port has no
+  // fox sleep/sit/crouch state, so only the walking pose is reproduced.
+  const ap = ctx.limbSwing, as = ctx.limbSwingAmount;
+  pose(model, 'right_hind_leg').rx = Math.cos(ap * 0.6662) * 1.4 * as;
+  pose(model, 'left_hind_leg').rx = Math.cos(ap * 0.6662 + Math.PI) * 1.4 * as;
+  pose(model, 'right_front_leg').rx = Math.cos(ap * 0.6662 + Math.PI) * 1.4 * as;
+  pose(model, 'left_front_leg').rx = Math.cos(ap * 0.6662) * 1.4 * as;
+  const head = pose(model, 'head');
+  head.rx = ctx.headPitch;
+  head.ry = ctx.headYaw;
+});
+
+/** Source: net.minecraft.client.model.animal.parrot.ParrotModel.createBodyLayer (32x32). */
+export const ParrotModel: BakedModel = withAnimator(bakeModel(makeModel(32, 32, [
+  P('body', 0, 16.5, -3, [B(-1.5, 0, -1.5, 3, 6, 3, 2, 8)], { rx: 0.4937 }),
+  P('tail', 0, 21.07, 1.16, [B(-1.5, -1, -1, 3, 4, 1, 22, 1)], { rx: 1.015 }),
+  P('left_wing', 1.5, 16.94, -2.76, [B(-0.5, 0, -1.5, 1, 5, 3, 19, 8)],
+    { rx: -0.6981, ry: -Math.PI }),
+  P('right_wing', -1.5, 16.94, -2.76, [B(-0.5, 0, -1.5, 1, 5, 3, 19, 8)],
+    { rx: -0.6981, ry: -Math.PI }),
+  P('head', 0, 15.69, -2.76, [B(-1, -1.5, -1, 2, 3, 2, 2, 2)], {}, [
+    P('head2', 0, -2, -1, [B(-1, -0.5, -2, 2, 1, 4, 10, 0)]),
+    P('beak1', 0, -0.5, -1.5, [B(-0.5, -1, -0.5, 1, 2, 1, 11, 7)]),
+    P('beak2', 0, -1.75, -2.45, [B(-0.5, 0, -0.5, 1, 2, 1, 16, 7)]),
+    P('feather', 0, -2.15, 0.15, [B(0, -4, -2, 0, 5, 4, 2, 18)], { rx: -0.2214 }),
+  ]),
+  P('left_leg', 1, 22, -1.05, [B(-0.5, 0, -0.5, 1, 2, 1, 14, 18)], { rx: -0.0299 }),
+  P('right_leg', -1, 22, -1.05, [B(-0.5, 0, -0.5, 1, 2, 1, 14, 18)], { rx: -0.0299 }),
+])), (model, ctx) => {
+  // Source: ParrotModel.setupAnim for Pose.FLYING. The port's Parrot hovers
+  // (noGravity) so it is always in the flying pose; flapAngle is approximated by
+  // EntityRenderer from ageInTicks/onGround, the same way as the chicken.
+  const flap = ctx.flapAngle;
+  const bob = flap * 0.3;
+  const head = pose(model, 'head');
+  head.rx = ctx.headPitch;
+  head.ry = ctx.headYaw;
+  head.y += bob;
+  pose(model, 'body').y += bob;
+  pose(model, 'tail').rx += Math.cos(ctx.limbSwing * 0.6662) * 0.3 * ctx.limbSwingAmount;
+  pose(model, 'tail').y += bob;
+  const leftWing = pose(model, 'left_wing');
+  const rightWing = pose(model, 'right_wing');
+  leftWing.rz = -0.0873 - flap;
+  rightWing.rz = 0.0873 + flap;
+  leftWing.y += bob;
+  rightWing.y += bob;
+  const leftLeg = pose(model, 'left_leg');
+  const rightLeg = pose(model, 'right_leg');
+  leftLeg.rx += (Math.PI * 2) / 9;  // ParrotModel.prepare(FLYING)
+  rightLeg.rx += (Math.PI * 2) / 9;
+  leftLeg.y += bob;
+  rightLeg.y += bob;
+});
+
+/**
+ * Source: net.minecraft.client.model.animal.squid.SquidModel.createBodyLayer
+ * (64x32); also used for the glow squid (same geometry, other texture).
+ * The +11.2 texel Y offset reproduces SquidRenderer.setupRotations' net
+ * translate(0, 0.5, 0) / translate(0, -1.2, 0) = -0.7 blocks (0.7 * 16) because
+ * the port's renderer has no squid body pitch/roll. Tentacle angle is not
+ * simulated by the port's Squid entity; a gentle idle sinusoid stands in.
+ */
+export const SquidModel: BakedModel = withAnimator(bakeModel((() => {
+  const children: PartDef[] = [
+    P('body', 0, 19.2, 0, [B(-6, -8, -6, 12, 16, 12, 0, 0, false, 0.02)]),
+  ];
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * Math.PI * 2) / 8;
+    children.push(P(`tentacle${i}`, Math.cos(angle) * 5, 26.2, Math.sin(angle) * 5,
+      [B(-1, 0, -1, 2, 18, 2, 48, 0)],
+      { ry: (i * Math.PI * -2) / 8 + HALF_PI }));
+  }
+  return makeModel(64, 32, children);
+})()), (model, ctx) => {
+  // SquidModel.setupAnim: every tentacle.xRot = state.tentacleAngle.
+  const angle = Math.abs(Math.sin(ctx.ageInTicks * 0.15)) * Math.PI * 0.25;
+  for (let i = 0; i < 8; i++) pose(model, `tentacle${i}`).rx = angle;
+});
+
+/** Source: net.minecraft.client.model.animal.fish.CodModel.createBodyLayer (32x32). */
+export const CodModel: BakedModel = withAnimator(bakeModel(makeModel(32, 32, [
+  P('body', 0, 22, 0, [B(-1, -2, 0, 2, 4, 7, 0, 0)]),
+  P('head', 0, 22, 0, [B(-1, -2, -3, 2, 4, 3, 11, 0)]),
+  P('nose', 0, 22, -3, [B(-1, -2, -1, 2, 3, 1, 0, 0)]),
+  P('right_fin', -1, 23, 0, [B(-2, 0, -1, 2, 0, 2, 22, 1)], { rz: -QUARTER_PI }),
+  P('left_fin', 1, 23, 0, [B(0, 0, -1, 2, 0, 2, 22, 4)], { rz: QUARTER_PI }),
+  P('tail_fin', 0, 22, 7, [B(0, -2, 0, 0, 4, 4, 22, 3)]),
+  P('top_fin', 0, 20, 0, [B(0, -1, -1, 0, 1, 6, 20, -6)]),
+])), (model, ctx) => {
+  // CodModel.setupAnim: tailFin.yRot = -1 * 0.45 * sin(0.6 * age) in water.
+  pose(model, 'tail_fin').ry = -0.45 * Math.sin(0.6 * ctx.ageInTicks);
+});
+
+/** Source: net.minecraft.client.model.animal.fish.SalmonModel.createBodyLayer (32x32, medium variant). */
+export const SalmonModel: BakedModel = withAnimator(bakeModel(makeModel(32, 32, [
+  P('body_front', 0, 20, -7.2, [B(-1.5, -2.5, 0, 3, 5, 8, 0, 0)], {}, [
+    P('top_front_fin', 0, -4.5, 5, [B(0, 0, 0, 0, 2, 3, 2, 1)]),
+  ]),
+  P('body_back', 0, 20, 0.8000002, [B(-1.5, -2.5, 0, 3, 5, 8, 0, 13)], {}, [
+    P('back_fin', 0, 0, 8, [B(0, -2.5, 0, 0, 5, 6, 20, 10)]),
+    P('top_back_fin', 0, -4.5, -1, [B(0, 0, 0, 0, 2, 4, 0, 2)]),
+  ]),
+  P('head', 0, 20, -7.2, [B(-1, -2, -3, 2, 4, 3, 22, 0)]),
+  P('right_fin', -1.5, 21.5, -7.2, [B(-2, 0, 0, 2, 0, 2, -4, 0)], { rz: -QUARTER_PI }),
+  P('left_fin', 1.5, 21.5, -7.2, [B(0, 0, 0, 2, 0, 2, 0, 0)], { rz: QUARTER_PI }),
+])), (model, ctx) => {
+  // SalmonModel.setupAnim: bodyBack.yRot = -1 * 0.25 * sin(0.6 * age) in water.
+  pose(model, 'body_back').ry = -0.25 * Math.sin(0.6 * ctx.ageInTicks);
+});
+
+// ---------------------------------------------------------------------------
 // Generic fallback models (items / projectiles), solid white texture
 // ---------------------------------------------------------------------------
 

@@ -217,6 +217,11 @@ export abstract class AbstractContainerScreen extends Screen {
     for (const s of this.slots) {
       this.drawSlotFrame(g, s.x, s.y);
       const stack = this.safeItem(s.index);
+      if (!(stack.itemId >= 0 && stack.count > 0)) {
+        // Slot.getNoItemIcon: the greyed armor / shield outline of an empty slot
+        const icon = this.emptySlotSprite(s.index);
+        if (icon && g.sprites.get(icon)) g.blitSprite(icon, s.x, s.y, 16, 16);
+      }
       if (stack.itemId >= 0 && stack.count > 0) {
         g.renderItem(stack.itemId, s.x, s.y, 16);
         g.renderItemDecorations(stack.itemId, stack.count, s.x, s.y);
@@ -230,6 +235,9 @@ export abstract class AbstractContainerScreen extends Screen {
       }
     }
   }
+
+  /** Sprite drawn in an empty slot (armor / offhand outlines); none by default. */
+  protected emptySlotSprite(_menuSlot: number): string | undefined { return undefined; }
 
   /** Vanilla slot frame colours (dark top/left, white bottom/right, #8B8B8B fill). */
   protected drawSlotFrame(g: GuiGraphics, x: number, y: number): void {

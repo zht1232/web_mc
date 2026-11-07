@@ -16,6 +16,12 @@ import { INVENTORY_TITLE_LABEL_X } from '../../GuiConstants.js';
 import { Button } from '../../components/Button.js';
 import { RecipeBookComponent, RECIPE_BOOK_WIDTH } from '../recipebook/RecipeBookComponent.js';
 
+/** InventoryMenu armor slots 5..8 (head, chest, legs, feet) and the offhand slot, with their empty-slot sprites. */
+const EMPTY_SLOT_SPRITES: Record<number, string> = {
+  5: 'container/slot/helmet', 6: 'container/slot/chestplate', 7: 'container/slot/leggings', 8: 'container/slot/boots',
+  [MENU_OFFHAND_SLOT]: 'container/slot/shield',
+};
+
 export class InventoryScreen extends AbstractContainerScreen {
   private readonly recipeBook: RecipeBookComponent;
   private xMouse = 0;
@@ -25,6 +31,13 @@ export class InventoryScreen extends AbstractContainerScreen {
     super(env, 'container.crafting');
     this.titleLabelX = INVENTORY_TITLE_LABEL_X;
     this.recipeBook = new RecipeBookComponent(env);
+  }
+
+  protected emptySlotSprite(menuSlot: number): string | undefined { return EMPTY_SLOT_SPRITES[menuSlot]; }
+
+  /** InventoryScreen only labels the crafting grid ("Crafting" at titleLabelX); there is no "Inventory" caption. */
+  protected drawLabels(g: GuiGraphics): void {
+    g.drawString(this.title, this.titleLabelX, this.titleLabelY, 0xff404040, false);
   }
 
   protected buildSlots(): SlotDef[] {
@@ -41,10 +54,11 @@ export class InventoryScreen extends AbstractContainerScreen {
     // AbstractRecipeBookScreen#getRecipeBookButtonPosition
     const bx = this.leftPos + 104;
     const by = Math.floor(this.height / 2) - 22;
-    const b = new Button(bx, by, 20, 18, 'R', () => {
+    // ImageButton with the recipe_book/button sprites (a green book), not a text button
+    const b = new Button(bx, by, 20, 18, '', () => {
       this.recipeBook.toggle();
       this.env.toast(this.recipeBook.isVisible() ? 'Recipe Book' : '');
-    });
+    }, { enabled: 'recipe_book/button', disabled: 'recipe_book/button', highlighted: 'recipe_book/button_highlighted' });
     this.addRenderableWidget(b);
   }
 

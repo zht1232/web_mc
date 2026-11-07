@@ -63,7 +63,8 @@ void main() {
   if (uDebug == 4) { fragColor = vec4(vLight / 15.0, 0.0, 1.0); return; }
   if (tex.a < uAlphaTest) discard;
 
-  vec2 lightUV = (vLight + 0.5) / 16.0;
+  // vLight = (sky, block); the lightmap texture is x = block light, y = sky light (core/lightmap.fsh)
+  vec2 lightUV = (vLight.yx + 0.5) / 16.0;
   vec3 light = texture(uLightmap, lightUV).rgb;
   if (uDebug == 9) { fragColor = vec4(light, 1.0); return; }
   if (uDebug == 10) { fragColor = vec4(vColor.rgb, 1.0); return; }

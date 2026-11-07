@@ -1285,7 +1285,12 @@ export class Game {
       setTime: (t) => { this.level.time = t; },
       setWeather: (kind) => {
         this.setRain(-1); // hand control back to the weather simulation
-        this.level.forceWeather(kind !== 'clear', kind === 'thunder');
+        // ServerLevel.setWeatherParameters: the state lasts for the given time, then the normal cycle toggles it
+        const raining = kind !== 'clear', thundering = kind === 'thunder';
+        this.level.setWeatherState({
+          raining, thundering,
+          rainTime: raining ? 6000 : 12000, thunderTime: thundering ? 6000 : 12000,
+        });
       },
       setGameMode: (m) => { this.options.gamemode = m; this.survival.gamemode = m; },
       teleport: (x, y, z) => { this.player.pos.x = x; this.player.pos.y = y; this.player.pos.z = z; this.player.vel.x = 0; this.player.vel.y = 0; this.player.vel.z = 0; },

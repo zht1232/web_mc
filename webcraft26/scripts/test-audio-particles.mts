@@ -64,7 +64,8 @@ function walk(dir: string, ext: string): string[] {
 section('1. ogg 复制与 sounds/index.json');
 const srcOgg = walk(OFFICIAL_SOUNDS, '.ogg');
 const dstOgg = walk(PUBLIC_SOUNDS, '.ogg');
-check('源 ogg 数量 == 复制数量', srcOgg.length > 0 && srcOgg.length === dstOgg.length,
+// build-sounds.mjs adds the rest of the vanilla events on top of the original 112 files, so the copy is a superset
+check('源 ogg 全部已复制 (dst >= src)', srcOgg.length > 0 && dstOgg.length >= srcOgg.length,
   `src=${srcOgg.length} dst=${dstOgg.length}`);
 const indexPath = path.join(PUBLIC_SOUNDS, 'index.json');
 check('sounds/index.json 存在', fs.existsSync(indexPath));

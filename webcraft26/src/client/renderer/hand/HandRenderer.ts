@@ -86,6 +86,25 @@ interface ItemEntry {
   layers?: ItemLayer[];
   guiLight?: 'front' | 'side';
   parts?: ItemEntry[];
+  /** items/*.json tint sources, index = the model's tintindex (grass_block, leaves, ...) */
+  tints?: { type: string; value?: number }[];
+}
+
+type Rgb = [number, number, number];
+
+function rgbOfArgb(argb: number): Rgb {
+  return [((argb >> 16) & 255) / 255, ((argb >> 8) & 255) / 255, (argb & 255) / 255];
+}
+
+/**
+ * Static colour of one item tint source (ItemTintSource): `constant` is the stored ARGB value; `grass` is
+ * GrassColor.get(0.5, 1.0), the same 0x91BD59 build-itemmodels bakes into the flat layers.
+ */
+function tintOfSource(src: { type: string; value?: number } | undefined): Rgb | undefined {
+  if (!src) return undefined;
+  if (src.type === 'constant' && typeof src.value === 'number') return rgbOfArgb(src.value | 0);
+  if (src.type === 'grass') return rgbOfArgb(0x91bd59);
+  return undefined;
 }
 
 interface DisplayTransform { rotation: number[]; translation: number[]; scale: number[]; }
@@ -96,6 +115,8 @@ interface GpuMesh {
   ibo: WebGLBuffer;
   count: number;
   array: 'block' | 'item' | 'skin';
+  /** multiplied into the texture colour (grass / foliage tinted items) */
+  tint?: Rgb;
 }
 
 interface GpuItem { parts: GpuMesh[]; }
@@ -252,8 +273,18 @@ export class HandRenderer {
     }
 
     if (entry.kind === 'block' && entry.model !== undefined) {
-      const mesh = buildBlockMesh(this.models.getModel(entry.model));
-      const gpu: GpuItem = { parts: [this.upload(mesh, 'block')] };
+      // Faces carry a tintindex (grass_block top + side overlay, leaves, ...): one mesh per tint source so each
+      // part can be drawn with its own colour; untinted faces keep a white multiplier.
+      const model = this.models.getModel(entry.model);
+      const indices = [...new Set(model.quads.map((q) => q.tint))];
+      const parts: GpuMesh[] = [];
+      for (const idx of indices) {
+        const sub = { ...model, quads: model.quads.filter((q) => q.tint === idx) };
+        const part = this.upload(buildBlockMesh(sub), 'block');
+        if (idx >= 0) part.tint = tintOfSource(entry.tints?.[idx]);
+        parts.push(part);
+      }
+      const gpu: GpuItem = { parts };
       this.itemCache.set(key, gpu);
       return gpu;
     }
@@ -284,7 +315,9 @@ export class HandRenderer {
         ? this.textures.blockTextureLayer(layer.texture)
         : this.textures.itemTextureLayer(layer.texture);
       if (layerIndex < 0) continue;
-      parts.push(this.upload(buildFlatMesh(layerIndex, alpha), array));
+      const part = this.upload(buildFlatMesh(layerIndex, alpha), array);
+      if (layer.tint !== undefined && layer.tint !== -1) part.tint = rgbOfArgb(layer.tint | 0);
+      parts.push(part);
     }
     if (!parts.length) throw new Error(`no resolvable layers for ${key}`);
     return { parts };
@@ -579,7 +612,7 @@ export class HandRenderer {
       const atlas = part.array === 'block' ? this.textures.block.texture : this.textures.item.texture;
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D_ARRAY, atlas);
-      this.drawGpu(part, 1, 0.1, [1, 1, 1, 1]);
+      this.drawGpu(part, 1, 0.1, part.tint ? [part.tint[0], part.tint[1], part.tint[2], 1] : [1, 1, 1, 1]);
     }
     this.stack.pop();
     this.stack.pop();

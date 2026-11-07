@@ -259,6 +259,9 @@ export class ItemIconAtlas {
     const quad = [
       [-0.5, 0.5, 0, 0], [0.5, 0.5, 1, 0], [0.5, -0.5, 1, 1], [-0.5, -0.5, 0, 1],
     ];
+    // items/*.json tint of the layer (short_grass, fern, vine, lily_pad ...): baked ARGB, -1/undefined = white
+    const tintArgb = layerInfo.tint !== undefined && layerInfo.tint !== -1 ? layerInfo.tint | 0 : 0xffffffff | 0;
+    const tr = (tintArgb >> 16) & 255, tg = (tintArgb >> 8) & 255, tb = tintArgb & 255;
     const buffer = new Uint8Array(4 * 24);
     const bdv = new DataView(buffer.buffer);
     quad.forEach(([x, y, u, v], i) => {
@@ -271,9 +274,9 @@ export class ItemIconAtlas {
       bdv.setUint16(o + 16, layer, true);
       bdv.setUint8(o + 18, 15);
       bdv.setUint8(o + 19, 15);
-      bdv.setUint8(o + 20, 255);
-      bdv.setUint8(o + 21, 255);
-      bdv.setUint8(o + 22, 255);
+      bdv.setUint8(o + 20, tr);
+      bdv.setUint8(o + 21, tg);
+      bdv.setUint8(o + 22, tb);
       bdv.setUint8(o + 23, 255);
     });
     const idx = new Uint32Array([0, 1, 2, 0, 2, 3]);

@@ -45,6 +45,7 @@ import { ParticleEngine, spawnBlockBreakParticles } from './particle/ParticleEng
 import { AmbientParticles } from './particle/AmbientParticles.js';
 import { SoundEngine } from './audio/SoundEngine.js';
 import { MobSounds } from './audio/MobSounds.js';
+import { runChatCommand, type CommandHost } from './ChatCommands.js';
 import { WorldSaveManager, type LoadedWorld } from './world/save/WorldSaveManager.js';
 import { Autosave } from './world/save/Autosave.js';
 import {
@@ -371,7 +372,11 @@ export class Game {
         onPlay: () => this.closeScreen(),
         onOptionChange: (key, value) => { (this.options as unknown as Record<string, unknown>)[key] = value; },
         onRespawn: () => this.respawnPlayer(),
-        onChatMessage: (text) => { console.log('[chat]', text); },
+        onChatMessage: (text) => {
+          console.log('[chat]', text);
+          const reply = runChatCommand(text, this.commandHost());
+          if (reply) this.screens.toastManager.addText(reply, '');
+        },
         onQuit: () => { this.screens.open('title'); },
       },
     });
@@ -1268,9 +1273,40 @@ export class Game {
     requestAnimationFrame(this.frame);
   };
 
+  private daylightCycle = true;
+
+  /** What the chat commands (/time, /weather, /tp ...) are allowed to touch. */
+  private commandHost(): CommandHost {
+    return {
+      getTime: () => this.level.time,
+      setTime: (t) => { this.level.time = t; },
+      setWeather: (kind) => {
+        this.setRain(-1); // hand control back to the weather simulation
+        this.level.forceWeather(kind !== 'clear', kind === 'thunder');
+      },
+      setGameMode: (m) => { this.options.gamemode = m; this.survival.gamemode = m; },
+      teleport: (x, y, z) => { this.player.pos.x = x; this.player.pos.y = y; this.player.pos.z = z; this.player.vel.x = 0; this.player.vel.y = 0; this.player.vel.z = 0; },
+      position: () => ({ x: this.player.pos.x, y: this.player.pos.y, z: this.player.pos.z }),
+      give: (item, count) => {
+        const def = this.survival.registry.byName(item);
+        if (!def) return false;
+        return this.survival.inventory.add(new ItemStack(def, count));
+      },
+      summon: (type, x, y, z) => this.entityManager.spawn(type, x, y, z) !== null,
+      killMobs: () => {
+        let n = 0;
+        for (const e of this.entityManager.getEntities()) {
+          if (e instanceof LivingEntity && !e.isRemoved() && e.getTypeName() !== 'player') { e.remove(); n++; }
+        }
+        return n;
+      },
+      setDaylightCycle: (on) => { this.daylightCycle = on; },
+    };
+  }
+
   private tick(): void {
     this.tickCount++;
-    this.level.tick(1); // one game tick (was 1/20, which made a day last 20x too long)
+    this.level.tick(1, this.daylightCycle); // one game tick (was 1/20, which made a day last 20x too long)
 
     // Autosave resumes as soon as the last menu closes (E / Esc / a GUI button all go through
     // ScreenManager, so watching the transition is more reliable than hooking every path).

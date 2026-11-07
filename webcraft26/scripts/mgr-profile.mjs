@@ -12,11 +12,13 @@ for (let i = 0; i < 240; i++) {
   if (await page.evaluate(() => !!window.__mc)) break;
   await page.waitForTimeout(500);
 }
-await page.evaluate(() => {
-  const m = window.__mc; m.options.gamemode = 'creative'; m.level.time = 6000;
-  const p = m.player.pos; p.x = 313.5; p.z = -109.5; p.y = 71; m.player.pitch = 8; m.player.yaw = 0;
-});
-await page.waitForTimeout(12000);
+if (!process.env.PROFILE_EARLY) {
+  await page.evaluate(() => {
+    const m = window.__mc; m.options.gamemode = 'creative'; m.level.time = 6000;
+    const p = m.player.pos; p.x = 313.5; p.z = -109.5; p.y = 71; m.player.pitch = 8; m.player.yaw = 0;
+  });
+  await page.waitForTimeout(12000);
+}
 const fps0 = await page.evaluate(() => window.__mc.fps);
 
 const cdp = await page.context().newCDPSession(page);

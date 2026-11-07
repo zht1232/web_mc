@@ -1,16 +1,13 @@
 // Throwaway benchmark: measures chunk pipeline throughput for a given worker count.
 // Usage: node scripts/bench-chunks.mjs <workers> <seconds>
 import { chromium } from 'playwright';
+import { launchOptions } from './lib/browser.mjs';
 
 const workers = process.argv[2] ?? '4';
 const seconds = Number(process.argv[3] ?? 15);
 const url = `http://127.0.0.1:5174/?workers=${workers}`;
 
-const browser = await chromium.launch({
-  headless: true,
-  args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-    '--disable-gpu-sandbox', '--no-sandbox', '--ignore-gpu-blocklist'],
-});
+const browser = await chromium.launch(launchOptions());
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 const logs = [];
 page.on('console', (m) => logs.push(m.text()));

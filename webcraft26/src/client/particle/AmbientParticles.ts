@@ -23,6 +23,8 @@ const STEP: Record<string, [number, number]> = {
 
 export class AmbientParticles {
   private readonly kinds: Uint8Array;
+  /** xorshift32 for the 8000 position samples per tick: the engine RNG is BigInt based and ~13% of the frame. */
+  private seed = 0x2545f491;
 
   constructor(private readonly mc: MinecraftData) {
     this.kinds = new Uint8Array(mc.stateCount);
@@ -56,11 +58,17 @@ export class AmbientParticles {
     }
   }
 
+  private nextInt(bound: number): number {
+    let x = this.seed;
+    x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
+    this.seed = x >>> 0;
+    return (this.seed >>> 8) % bound;
+  }
+
   private sample(level: ClientLevel, engine: ParticleEngine, xt: number, yt: number, zt: number, r: number): void {
-    const rng = engine.random;
-    const x = xt + rng.nextInt(r) - rng.nextInt(r);
-    const y = yt + rng.nextInt(r) - rng.nextInt(r);
-    const z = zt + rng.nextInt(r) - rng.nextInt(r);
+    const x = xt + this.nextInt(r) - this.nextInt(r);
+    const y = yt + this.nextInt(r) - this.nextInt(r);
+    const z = zt + this.nextInt(r) - this.nextInt(r);
     if (y < level.minY || y >= level.minY + level.height) return;
     if (!level.hasChunk(x >> 4, z >> 4)) return;
     const state = level.getBlockState(x, y, z);

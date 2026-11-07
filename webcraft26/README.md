@@ -1,119 +1,113 @@
-# Minecraft 26.2 WebGL2 复刻（M2）
+# Minecraft 26.2 浏览器复刻
 
-用本机官方 **Minecraft Java Edition 26.2（Chaos Cubed）** 客户端资源，在浏览器里运行的可走动、可建造、带光影与移动端的复刻客户端。
+用本机官方 **Minecraft Java Edition 26.2（Chaos Cubed）** 客户端资源，在浏览器里运行的复刻客户端：
+TypeScript + WebGL2 + Canvas2D GUI，可走动、建造、带光影和移动端触控。
 
-> 这是粉丝复刻，不是 Mojang 官方产品。`public/mc/` 下的官方贴图/模型/字体/音效只允许在本机私人使用，**不要提交仓库或公开部署**。
+> 这是粉丝复刻，不是 Mojang 官方产品。`public/mc/` 下的官方贴图/模型/字体/音效只允许在本机私人使用，
+> **不要提交公开仓库或公开部署**（详见文末「资源授权」）。
 
 ## 运行
 
-需要 Node.js 24+，WebGL2 浏览器。
+需要 Node.js 24+、支持 WebGL2 的浏览器。
 
-- 双击 `Start-WebCraft.bat`（首次会安装依赖、导入官方资源、启动 Vite）
-- 或：
-  ```bash
-  npm install
-  npm run assets   # 首次/更新官方 26.2 资源后：build-assets + build-mobs
-  npm run dev      # http://127.0.0.1:5174/
-  ```
+```bash
+npm install
+npm run assets   # 首次/更新官方 26.2 资源后：build-assets + build-states + build-mobs
+npm run dev      # http://127.0.0.1:5174/  （或双击 Start-WebCraft.bat）
+```
 
-资源读取路径：
+启动后是 **26.2 风格主菜单**（官方 logo / splash / 全景 / 按钮）：
 
-- 模型/贴图：`G:/ck-web26/vanilla/assets/minecraft`（官方 26.2 `client.jar` 解包）
-- 音效/字体外部资源：`C:/Users/zht/AppData/Roaming/.minecraft/assets`
-- 可用 `MC_ASSETS` / `MC_EXTERNAL` 覆盖。
+- **Singleplayer**：选择世界（IndexedDB 存档列表）→ Play；或 Create New World 新建。
+- **Options / Language / Accessibility** 等子界面来自原版 GUI 移植。
+- 暂停菜单的「Save and Quit to Title」会先存档再回标题。
 
-启动后先显示 **26.2 风格主菜单**（官方全景、标题、splash、按钮），单机进入后才是游戏。加 `?preview` 可跳过菜单直接进入（调试/截图用）。
+URL 参数：
 
-## 已实现
+| 参数 | 作用 |
+|---|---|
+| `?play` / `?preview` | 跳过主菜单直接进世界（截图/测试脚本用） |
+| `?touch=1` / `?touch=0` | 强制开/关触屏层（默认按 `pointer: coarse`） |
+| `?seed=<字符串>` | 启动种子（数字或任意字符串） |
+| `?world=<id>` | 打开指定存档（世界选择/新建后自动带） |
+| `?workers=N` | 区块生成 worker 数 |
 
-### 主界面与配置
-- 官方 26.2 全景 cubemap 主菜单、标题、splash、按钮/滑条。
-- 单人游戏（默认世界，种子 2602c0de）、创建世界表单、多人服务器列表/直连表单（见下方联机状态）。
-- 选项：画质 Auto/Low/Medium/High/Ultra、渲染距离、FOV、像素过滤、光影开关、触控开关、主音量；写入 localStorage，进入世界时应用。
-- Auto 画质会检测软件渲染器/移动设备；软件渲染默认关闭阴影与后期并降分辨率，避免把云电脑拖死。
-
-### 渲染 / 光影
-- 官方 16×16 材质、模型、GUI、字体、音效、动画帧；texture array + mipmap + 预乘 alpha。
-- 原版光照曲线、天光/方块光 15 级、平滑光照、面朝向明暗、夜晚天光、日月、星空、云、水顶 8/9、水下雾。
-- 太阳 Shadow Map（1024/2048/4096 按画质）、PCF 软阴影；叶子和植物 alpha 投影。
-- 后处理：Bloom、太阳光轴（Ultra）、调色/饱和度/暗角、水下色调；水面 Fresnel、天空反射和太阳高光。
-- 第一人称手臂 + 手持方块/模型、挥手/走路摆动；方块描边。
-- 原生 GUI 分辨率渲染（不再把 64px 图标硬缩到 16px）：库存方块图标按 GUI 像素密度 48–72px 光栅化。
-
-### 原版 UI
-- **创造物品栏使用官方 26.2 `tab_items.png` 背景、7+5 个官方 tab 精灵、滚动条、悬停 tooltip 和底部玩家热栏**。
-- 底部 **Survival Inventory** tab 使用官方 `tab_inventory.png`，含护甲区、预览区、27 格主库存、9 格热栏和官方关闭 X。
-- 拾取：点物品进入光标携带状态，再点底部热栏格子放入；滚轮/方向键滚动与切换分类。
-- 官方 HUD 热栏、生命心形、状态 HUD；3D 方块 GUI 图标使用原生分辨率渲染。
-- 主菜单、选项、创造/生存库存均为 canvas 像素 UI。
-
-### 移动端
-- Bedrock 风格触控：左摇杆、右半屏视角、跳跃/潜行/飞行/挖掘/放置/使用/背包/聊天/暂停；飞行按钮按状态显示。
-- 安全区适配、横竖屏、热栏点击选格、触控下关闭背包、移动端关闭按钮。
-- `?touch=1/0` 可强制开关触控。
-
-### 世界 / 玩法
-- 程序化湖岸世界：不规则湖泊、沙滩、草地、森林/白桦/云杉、花草、巨石。
-- 村庄（房屋、工坊、水井、瞭望塔、道路）、废弃传送门、营地、残墙/小屋等结构；结构跨区块生成。
-- 生物：猪、牛、僵尸、骷髅；游荡/逃跑/追击/近战/骷髅射箭、重力/碰撞/受伤/死亡；玩家生命、受击闪红、死亡重生。
-- 破坏/放置/取方块、创造飞行、音效、F3、N/M/T、V 过滤切换。
-
-### Paper 26.2 桥接（基础已完成，浏览器客户端尚未接上）
-- `bridge/paper-plugin`：Paper 26.2 插件，内置 loopback WebSocket JSON 协议，已用本地 Paper 26.2 build 129 API 编译并打包为 `WebCraftBridge-0.1.0.jar`。
-- 服务端权威世界：区块 palette+RLE 流、方块修改、聊天、浏览器 avatar（盔甲架，Java 玩家可见）、玩家/实体快照。
-- `bridge/PROTOCOL.md` 与 `bridge/test-client`；默认 `ws://127.0.0.1:8765/ws`，主菜单内置服务器地址已指向它。
-- **尚未**把插件安装到你的线上服务器（需要重启），**尚未**实现浏览器的区块→本地方块映射/联机世界渲染；当前主菜单点 Join 只会提示安装桥接插件。安装步骤见 `bridge/README.md`。没有擅自启动/重启/修改线上服务端。
+资源读取路径：模型/贴图 `G:/ck-web26/vanilla/assets/minecraft`（官方 26.2 `client.jar` 解包），
+音效/字体外部资源 `C:/Users/zht/AppData/Roaming/.minecraft/assets`，可用 `MC_ASSETS` / `MC_EXTERNAL` 覆盖。
 
 ## 操作
 
-桌面：
+**桌面**：WASD 移动，Space 跳跃/双击飞行，Shift 潜行/下降，Ctrl 疾跑，F 飞行，E 背包，T 聊天，
+Esc 暂停，F3 调试屏，**F6 光影开关**；左键挖/攻击、右键放/使用、中键取方块；滚轮/1-9 热栏。
 
-- WASD 移动，Space 跳跃/双击飞行，Shift 潜行/下降，Ctrl 疾跑，F 切换飞行
-- 左键破坏/攻击，右键放置/使用，中键取方块
-- 滚轮/1-9 热栏，E 打开物品栏，Esc 释放鼠标
-- F3 调试，N 正午，M 午夜，T 冻结时间，V 切换贴图过滤
+**触屏**（自动或 `?touch=1`）：左侧摇杆移动，右侧拖动视角；右下按钮 跳跃/潜行/挖掘/放置/使用/背包/聊天/暂停，
+飞行时出现上/下按钮，双击跳跃切换飞行，底部热栏点按选格。
 
-手机：左侧摇杆移动，右侧滑动视角；右下按钮跳跃/潜行/挖掘/放置/使用/背包/聊天/暂停；双击跳跃切换飞行；底部热栏可点选。
+**聊天命令**（T）：
 
-库存：创造物品栏点物品拾取，点底部热栏格放入；底部分类 tab 切换；Survival Inventory tab 查看官方生存库存布局。
+```
+/time set midnight|night|day|18000   /weather rain|thunder|clear
+/gamemode survival|creative          /tp ~ ~50 ~     /give torch 16
+/summon zombie ~4 ~ ~                /kill          /gamerule advance_time false
+```
 
-## 画质建议
+调试：`window.__mc` 是 `Game` 实例（`level.time`、`player`、`setShaders(bool)`、`setShaderQuality(...)`、`sounds.stats`）。
 
-- 桌面独显：High/Ultra；Ultra 才开太阳光轴，开销最大。
-- 集显/云电脑：Auto 会选 Low/Medium；也可手动 Low。Low 关闭阴影/后期并把内部渲染分辨率降到约 62%（鼠标/触控 UI 不受影响）。
-- 低画质仍可能出现“阶梯状”湖岸/地形，这是体素地形本身 + 低渲染距离的结果。
+## 当前实现（2026-11-08）
+
+- **渲染/光影**：官方 16×16 材质、模型、GUI、字体、音效；原版光照曲线 + 平滑光照 + 天光/方块光；
+  日月星云、雾、水下色调；太阳阴影（1024–4096）+ PCF；HDR + Bloom + 色调映射 + FXAA + 太阳光轴（F6 开关）；
+  水面顶点波（Fresnel/反射/高光）；第一人称手臂/手持方块/破坏裂纹；原生 GUI 分辨率渲染。
+- **夜景 1:1**：与真实 26.2 客户端参考截图逐区域平均色差约 ±3/255（光影关），月亮 25×28 px vs 原版 24×28。
+- **世界/玩法**：程序化湖岸世界（13×13 区块）、村庄/遗迹/营地、完整昼夜与天气状态机、
+  挖掘/放置/生存（血量/饥饿/掉落/重生）、自然刷怪、25 种可渲染生物（含 12 种本轮补齐的模型）。
+- **原版 GUI**：创造物品栏（官方 tab 精灵/滚动/悬停 tooltip）、Survival Inventory、暂停/选项/视频设置、
+  世界选择/创建世界、聊天屏、死亡屏、Toast。
+- **音频**：959 个原版音效事件（4341 个 ogg，`scripts/build-sounds.mjs` 可重现）、按 SoundType 的脚步/破坏/放置、
+  生物叫声/受伤/死亡、雨声循环/雷声。
+- **触屏**：Bedrock 风格整套控制层（本日从 M2 找回并适配新输入模型）。
+- **Paper 桥接**（`bridge/`）：服务端 WebSocket 插件与协议是历史资产，浏览器端**未接**（按用户要求没动）。
+
+## 验证脚本
+
+```bash
+npx tsc --noEmit                                  # 类型检查
+for t in scripts/test-*.mts; do npx tsx $t; done  # 18 套单测
+npx tsx scripts/test-mobs-render.mts              # 生物渲染 19 项
+node scripts/test-menu.mjs                        # 主菜单/世界选择 9 项
+node scripts/test-touch.mjs                       # 触屏 15 项
+node scripts/smoke.mjs                            # 浏览器冒烟 19 场景（默认 ?play）
+node scripts/mgr-shots.mjs <outDir> <steps.json>  # 多步骤截图
+node scripts/verify-timelines.mts                 # 原版昼夜时间线逐帧比对
+node scripts/build-sounds.mjs                     # 从启动器资源重新导入声音
+node scripts/ref-capture.mjs                      # 真实 26.2 客户端参考图
+```
 
 ## 还不是 1:1
 
-这套东西离“所有功能 1:1”仍有明显距离：
-
-- 浏览器联机客户端、真实 Paper 世界渲染/方块状态映射、真实玩家账号身份尚未完成；插件也未安装/重启验证。
-- 合成、箱子/熔炉/工作台容器交互、生存物品栈/掉落物、可用的物品（工具/食物/种子等）尚未完成；Survival Inventory 目前是布局视图，不是完整生存背包。
-- 生物只有 4 种，模型为近似 cuboid，无音效/掉落/A*、无 Java 实体全量。
-- 世界为有限 13×13 区块程序化世界，不是真实 Anvil 世界；结构是程序化近似，不是原版 NBT 模板。
-- 物品栏分类/tab 图标使用现有方块图标近似，部分分类为空；只有 85 个方块，楼梯/台阶放置朝向、流体流动等未完全原版。
-- 菜单“创建世界”的种子/名称尚未真正重建世界（默认世界种子固定）；多人菜单不联网。
-- 未做生存/饥饿/经验/附魔/红石/天气/粒子/掉落物/船只等。
+- 光影没有 SSAO / TAA / 水面反射折射 / 体积光云（只有 bloom/光轴/阴影/顶点水波）。
+- 合成台/熔炉/箱子只有界面布局，没有真实交互；饥饿效果、药水、附魔、红石、幼年生物变体未做。
+- 生物模型有已知近似（见 `REPORTS/overnight/mobs2.md` 第 5 节）；结构是程序化近似，不是原版 NBT 模板。
+- 世界为有限程序化世界，不是真实 Anvil 世界；Paper 联机未接。
+- 参考截图 `shots/ref/INDEX.md` 里的 FOV=70 记录是错的（实际 FOV=110，见 `REPORTS/HANDOFF.md` §3）。
 
 ## 目录
 
 ```
-src/menu.ts / menuAssets.ts   官方资源菜单、全景、选项
-src/menu.css
-src/main.ts                   启动、菜单→游戏、输入、移动端/生物接线
-src/renderer.ts               WebGL2、阴影、水、天空、第一人称、后处理调度
-src/postfx.ts                 Bloom/光轴/调色
-src/assets.ts                 官方资源、texture array、GUI/心形
-src/blocks.ts / mesher.ts     方块、模型、AO/平滑光照
-src/hud.ts                    原版 HUD、创造/生存库存、高分辨率图标
-src/blockIcons.ts             原生分辨率 3D 方块图标
-src/player.ts                 移动/碰撞/破坏/放置/生命
-src/mobs.ts / mobRenderer.ts  生物 AI + 渲染
-src/world.ts / structures.ts  世界/湖泊/植被/村庄/遗迹
-src/touch.ts / touch.css      Bedrock 触控层
-bridge/                       Paper 26.2 WebSocket 插件 + 协议 + 测试客户端
+src/client/Game.ts            启动、世界生命周期、输入、渲染循环、菜单接线
+src/client/gui/               原版 GUI 移植（ScreenManager、Title/SelectWorld/CreateWorld/Options/库存…）
+src/client/renderer/          WebGL2 渲染器：区块/实体/天空/云/天气/阴影/后处理/手持
+src/client/touch/             Bedrock 风格触屏层（TouchControls.ts + touch.css）
+src/client/world/             区块流式加载、出生点、存档（IndexedDB）
+src/client/audio|particle|interaction/  音效、粒子、放置交互
+src/vanilla/                  Minecraft 26.2 类库的 TypeScript 移植（world/entity/item/levelgen…)
+bridge/                       Paper 26.2 WebSocket 插件 + 协议 + 测试客户端（历史，未接）
+scripts/                      build-*（资源导入）、test-*（单测/回归）、smoke/shot/mgr-*（截图）
+REPORTS/HANDOFF.md            夜班（夜晚 1:1 + 光影）交付说明
+REPORTS/HANDOFF-2.md          本日接管记录（菜单/触屏回归 + 生物模型）
 ```
 
 ## 资源授权
 
-`public/mc/` 属于 Mojang/Microsoft。仅本机私人运行。公网发布时必须让访问者提供自己的官方客户端资源，或替换为授权/自制素材；不要提交该目录或部署到公网。
+`public/mc/` 属于 Mojang/Microsoft。仅本机私人运行。公网发布时必须让访问者提供自己的官方客户端资源，
+或替换为授权/自制素材；不要提交该目录或部署到公网。

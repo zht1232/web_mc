@@ -1,5 +1,7 @@
 # HANDOFF — 夜班交付说明（2026-11-08）
 
+> 后续进展见 `REPORTS/HANDOFF-2.md`（2026-11-08 白天：主菜单/触屏回归修复 + §8-1 生物模型）。
+
 项目：`G:\web_mc\webcraft26`，Minecraft Java **26.2** 的浏览器复刻（WebGL2 + TypeScript），本轮目标：
 **在浏览器里玩到「晚上几乎 1:1 的原版 MC」，并带 Complementary 风格光影；Paper 联机不做。**
 

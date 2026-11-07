@@ -11,3 +11,9 @@ desktop.ini
 
 # Local scratch logs (the archived copies live in REPORTS/test-logs/)
 /vite*.log
+
+# Generated screenshots / logs / dependencies of the web client (evidence goes to REPORTS/)
+/webcraft26/shots/
+/webcraft26/logs/
+/webcraft26/node_modules/
+

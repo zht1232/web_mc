@@ -1,0 +1,22 @@
+import { chromium } from 'playwright';
+import { launchOptions } from './lib/browser.mjs';
+import { pathToFileURL } from 'url';
+const src = process.argv[2], out = process.argv[3], scale = Number(process.argv[4] || 3);
+const b = await chromium.launch(launchOptions());
+const p = await b.newPage();
+await p.goto(pathToFileURL(src).href);
+const s = scale;
+await p.evaluate((s) => {
+  const img = document.querySelector('img');
+  const c = document.createElement('canvas');
+  c.id = 'x';
+  c.width = img.naturalWidth * s; c.height = img.naturalHeight * s;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  img.replaceWith(c);
+}, s);
+const el = await p.$('#x');
+await el.screenshot({ path: out });
+console.log('saved', out);
+await b.close();

@@ -199,6 +199,16 @@ function humanoidAnim(model: BakedModel, ctx: AnimContext): void {
   bobModelPart(leftArm, ctx.ageInTicks, -1.0);
 }
 
+/** Source: net.minecraft.client.model.player.PlayerModel (the plain HumanoidModel pose). */
+export const PlayerModel: BakedModel = withAnimator(bakeModel(humanoid(
+  64, 64,
+  B(-4, -8, -4, 8, 8, 8, 0, 0),
+  B(-4, 0, -2, 8, 12, 4, 16, 16),
+  B(-3, -2, -2, 4, 12, 4, 40, 16),
+  B(-2, 0, -2, 4, 12, 4, 0, 16),
+  0, 0, 2, 12, 5, 1.9,
+)), humanoidAnim);
+
 /** Source: net.minecraft.client.model.monster.zombie.ZombieModel / GaintZombie family. */
 export const ZombieModel: BakedModel = withAnimator(bakeModel(humanoid(
   64, 64,
@@ -224,10 +234,47 @@ export const ZombieModel: BakedModel = withAnimator(bakeModel(humanoid(
 });
 
 /** Source: net.minecraft.client.model.monster.skeleton.SkeletonModel.setupAnim + BOW_AND_ARROW arm pose. */
+// Bow tints: arm UV (40,16) texels average ~147/255 (0.576); tint compensates so the wood
+// lands on vanilla bow brown (~#6b4a29) and the string on near-white.
+const BOW_WOOD = [0.73, 0.5, 0.28] as const;
+const BOW_STRING = [1.6, 1.6, 1.5] as const;
 export const SkeletonModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32, [
   P('head', 0, 0, 0, [B(-4, -8, -4, 8, 8, 8, 0, 0)]),
   P('body', 0, 0, 0, [B(-4, 0, -2, 8, 12, 4, 16, 16)]),
-  P('right_arm', -5, 2, 0, [B(-1, -2, -1, 2, 12, 2, 40, 16)]),
+  // The skeleton is always rendered in BOW_AND_ARROW, so the bow travels with the right arm.
+  // Three-segment stave (grip + two 2-segment limbs curving toward the string) reads as a real
+  // bow at gameplay distance. All bow boxes sample the arm's UV region (40,16 — the only large
+  // fully-opaque area of skeleton.png; the previous straight stave sampled transparent texels
+  // and rendered near-black). String = 4 thin segments so each box's UV unwrap (2*(d+w) wide)
+  // still fits inside that opaque region. Both use per-part tint (ModelBox.append).
+  // In the aim pose (arm rx = -PI/2) the arm's local +z maps to world-up and local +y to the
+  // shooter side, so limbs rotate rx = -/+ to curve the tips back toward the string.
+  P('right_arm', -5, 2, 0, [B(-1, -2, -1, 2, 12, 2, 40, 16)], {}, [
+    {
+      name: 'bow', pose: { x: 0, y: 10, z: 1 },
+      boxes: [B(-0.5, -0.5, -1.5, 1, 1, 3, 40, 16)], tint: BOW_WOOD,
+      children: [
+        {
+          name: 'bow_limb_top1', pose: { x: 0, y: 0, z: 1.5, rx: -0.25 },
+          boxes: [B(-0.5, -0.5, 0, 1, 1, 2.5, 40, 16)], tint: BOW_WOOD,
+          children: [
+            { name: 'bow_limb_top2', pose: { x: 0, y: 0, z: 2.5, rx: -0.25 }, boxes: [B(-0.5, -0.5, 0, 1, 1, 2.5, 40, 16)], tint: BOW_WOOD },
+          ],
+        },
+        {
+          name: 'bow_limb_bot1', pose: { x: 0, y: 0, z: -1.5, rx: 0.25 },
+          boxes: [B(-0.5, -0.5, -2.5, 1, 1, 2.5, 40, 16)], tint: BOW_WOOD,
+          children: [
+            { name: 'bow_limb_bot2', pose: { x: 0, y: 0, z: -2.5, rx: 0.25 }, boxes: [B(-0.5, -0.5, -2.5, 1, 1, 2.5, 40, 16)], tint: BOW_WOOD },
+          ],
+        },
+        { name: 'bow_string_0', boxes: [B(-0.2, 1.7, -6.1, 0.4, 0.4, 3.05, 40, 16)], tint: BOW_STRING },
+        { name: 'bow_string_1', boxes: [B(-0.2, 1.7, -3.05, 0.4, 0.4, 3.05, 40, 16)], tint: BOW_STRING },
+        { name: 'bow_string_2', boxes: [B(-0.2, 1.7, 0, 0.4, 0.4, 3.05, 40, 16)], tint: BOW_STRING },
+        { name: 'bow_string_3', boxes: [B(-0.2, 1.7, 3.05, 0.4, 0.4, 3.05, 40, 16)], tint: BOW_STRING },
+      ],
+    },
+  ]),
   P('left_arm', 5, 2, 0, [B(-1, -2, -1, 2, 12, 2, 40, 16, true)]),
   P('right_leg', -2, 12, 0, [B(-1, 0, -1, 2, 12, 2, 0, 16)]),
   P('left_leg', 2, 12, 0, [B(-1, 0, -1, 2, 12, 2, 0, 16, true)]),

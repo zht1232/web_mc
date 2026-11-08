@@ -146,13 +146,35 @@ export class LightEngine {
     // below 15 (minY - 1 when the whole column is open sky); everything above it is exactly 15.
     const firstDark = this.firstDark;
     const levels = this.levelScratch.length >= 256 * h ? this.levelScratch : (this.levelScratch = new Uint8Array(256 * h));
+    // Open-sky shortcut: everything above the column's heightmap is exactly 15, so fill whole
+    // sections with one call instead of visiting every block. For a typical chunk that is ~15 of
+    // 24 sections per column and it is what makes chunk application fit into a frame.
+    const heightmap = chunk.surfaceHeight;
     for (let z = 0; z < 16; z++) {
       for (let x = 0; x < 16; x++) {
-        let level = MAX_LEVEL;
-        let dark = chunk.minY - 1;
         const col = z * 16 + x;
         const base = col * h - chunk.minY;
-        for (let y = baseY; y >= chunk.minY; y--) {
+        let top = baseY;
+        if (heightmap) {
+          const hm = heightmap[col];
+          // Sanity: the heightmap entry must be a non-air block, else the map is stale/unset and
+          // this column keeps the original full scan.
+          if (hm >= chunk.minY && hm < baseY && chunk.getBlockState(x, hm, z) !== 0) top = hm;
+        }
+        if (top < baseY) {
+          for (let y = baseY; y > top; y--) levels[base + y] = MAX_LEVEL;
+          for (let sy = (top >> 4) + 1; sy <= (baseY >> 4); sy++) {
+            const sec = chunk.getSection(sy);
+            if (sec) sec.getSkyLight().fill(MAX_LEVEL);
+          }
+          const secTop = ((top >> 4) << 4) + 15;
+          for (let y = Math.min(baseY, secTop); y > top; y--) {
+            chunk.getOrCreateSection(y >> 4).getSkyLight().set(x, y & 15, z, MAX_LEVEL);
+          }
+        }
+        let level = MAX_LEVEL;
+        let dark = chunk.minY - 1;
+        for (let y = top; y >= chunk.minY; y--) {
           const state = chunk.getBlockState(x, y, z);
           if (level > 0) {
             if (!mc.propagatesSky(state)) {

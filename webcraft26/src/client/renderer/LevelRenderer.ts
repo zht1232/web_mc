@@ -902,7 +902,7 @@ export class LevelRenderer {
       program.set1f('uAlphaTest', 0.1);
 
       for (const region of this.regions.values()) {
-        if (region.dirty || region.opaqueCount === 0) continue;
+        if (region.opaqueCount === 0) continue; // stale buffers still cast until rebuilt
         const cx1 = region.rx * REGION_CHUNKS;
         const cz1 = region.rz * REGION_CHUNKS;
         if (Math.abs(cx1 - camCX) > r + REGION_CHUNKS || Math.abs(cz1 - camCZ) > r + REGION_CHUNKS) continue;
@@ -952,12 +952,26 @@ export class LevelRenderer {
     // Depth-difference post effects need the same clip planes the projection was built with.
     this.post.setDepthRange(0.05, 1024);
 
-    // Rebuild dirty regions first (bounded per frame so streaming never stalls a frame long),
-    // then collect the visible ones. One region = 4x4 chunks = one draw call per layer.
+    // Rebuild dirty regions under a *time* budget (a full 4x4 region with dense sections is
+    // several MB of memcpy + upload; six of those in one frame was a 30 ms hitch while walking).
+    // Nearest first, and only regions inside the view: far ones wait until they are needed.
+    const rebuildStart = performance.now();
     const dirty: RegionGpu[] = [];
-    for (const region of this.regions.values()) if (region.dirty) dirty.push(region);
-    const budget = dirty.length > 12 ? 6 : 3;
-    for (let i = 0; i < Math.min(budget, dirty.length); i++) this.rebuildRegion(dirty[i]);
+    for (const region of this.regions.values()) {
+      if (!region.dirty) continue;
+      const dx = (region.rx * REGION_CHUNKS + REGION_CHUNKS / 2) * 16 - camera.x;
+      const dz = (region.rz * REGION_CHUNKS + REGION_CHUNKS / 2) * 16 - camera.z;
+      const dist2 = dx * dx + dz * dz;
+      if (dist2 > (this.renderDistance * 16 + 64) ** 2) continue;
+      (region as RegionGpu & { _d?: number })._d = dist2;
+      dirty.push(region);
+    }
+    dirty.sort((a, b) => (a as RegionGpu & { _d?: number })._d! - (b as RegionGpu & { _d?: number })._d!);
+    const rebuildBudgetMs = 2.2;
+    for (const region of dirty) {
+      this.rebuildRegion(region);
+      if (performance.now() - rebuildStart > rebuildBudgetMs) break;
+    }
 
     const opaque: RegionGpu[] = [];
     const translucent: RegionGpu[] = [];
@@ -967,7 +981,9 @@ export class LevelRenderer {
     const half = (REGION_CHUNKS * 16) / 2;
 
     for (const region of this.regions.values()) {
-      if (region.dirty) continue;
+      // A dirty region with buffers keeps drawing the previous mesh until its rebuild runs;
+      // skipping it would punch holes in the terrain while streaming.
+      if (region.dirty && region.opaqueCount === 0 && region.transCount === 0) continue;
       if (region.opaqueCount === 0 && region.transCount === 0) continue;
       const centreCX = region.rx * REGION_CHUNKS + REGION_CHUNKS / 2;
       const centreCZ = region.rz * REGION_CHUNKS + REGION_CHUNKS / 2;

@@ -214,6 +214,13 @@ export class GuiGraphics {
     this.ctx.globalAlpha = prev;
   }
 
+  /** Draws a raw canvas (e.g. the 3D entity preview) inside the current pose. */
+  drawCanvas(img: HTMLCanvasElement, x: number, y: number, w: number, h: number): void {
+    const prev = this.applyAlpha();
+    this.ctx.drawImage(img, this.tx(x), this.ty(y), w, h);
+    this.ctx.globalAlpha = prev;
+  }
+
   /** Draws a whole texture at its natural size. */
   blitFull(path: string, x: number, y: number, w?: number, h?: number): void {
     const img = this.textures.get(path);

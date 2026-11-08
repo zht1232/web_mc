@@ -204,6 +204,109 @@ export class EntityRenderDispatcher {
     }
   }
 
+  // ---------------------------------------------------------------- preview
+
+  private previewFbo: WebGLFramebuffer | null = null;
+  private previewTex: WebGLTexture | null = null;
+  private previewDepth: WebGLRenderbuffer | null = null;
+  private previewW = 0;
+  private previewH = 0;
+  private previewCanvas: HTMLCanvasElement | null = null;
+  private readonly previewView = new Float32Array(16);
+  private readonly previewProj = new Float32Array(16);
+  private readonly previewVp = new Float32Array(16);
+
+  /**
+   * Renders one entity into an offscreen target and returns it as a canvas, for the survival
+   * inventory's 3D player preview (vanilla InventoryScreen.renderEntityInInventoryFollowsMouse).
+   * The GUI is Canvas2D, so the rendered pixels are read back once per mouse move.
+   */
+  renderPreview(
+    player: { x: number; y: number; z: number },
+    level: { getSkyLight(x: number, y: number, z: number): number; getBlockLight(x: number, y: number, z: number): number },
+    size: number,
+    yawRad: number,
+  ): HTMLCanvasElement | null {
+    // The client Player is a physics object, not an Entity subclass; the renderers only need the
+    // render-state fields, so build the minimal record here.
+    const entity = playerStub(player, level);
+    const gl = this.gl;
+    const w = Math.max(8, Math.floor(size));
+    const h = Math.max(8, Math.floor(size * 1.35));
+    if (!this.previewFbo || this.previewW !== w || this.previewH !== h) {
+      if (this.previewFbo) gl.deleteFramebuffer(this.previewFbo);
+      if (this.previewTex) gl.deleteTexture(this.previewTex);
+      if (this.previewDepth) gl.deleteRenderbuffer(this.previewDepth);
+      this.previewTex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.previewTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      this.previewDepth = gl.createRenderbuffer()!;
+      gl.bindRenderbuffer(gl.RENDERBUFFER, this.previewDepth);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+      this.previewFbo = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.previewTex, 0);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.previewDepth);
+      const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      if (status !== gl.FRAMEBUFFER_COMPLETE) {
+        console.warn('[preview] framebuffer incomplete', status);
+        return null;
+      }
+      this.previewW = w;
+      this.previewH = h;
+    }
+
+    // Camera: orbit around the entity at ~35 deg, looking slightly down at chest height.
+    const cx = entity.x;
+    const cy = entity.y;
+    const cz = entity.z;
+    const targetY = cy + 0.88;
+    // The whole 1.8 block figure must fit: visible height = 2*d*tan(fov/2).
+    const dist = 3.95;
+    const camX = cx + Math.sin(yawRad) * dist;
+    const camZ = cz + Math.cos(yawRad) * dist;
+    const camY = targetY + 0.30;
+    lookAt(this.previewView, camX, camY, camZ, cx, targetY, cz);
+    perspective(this.previewProj, (30 * Math.PI) / 180, w / h, 0.05, 16);
+    mul4(this.previewVp, this.previewProj, this.previewView);
+
+    // Face the camera: body yaw points away from it (the model is rotated by 180 - bodyRot).
+    const stub = entity as unknown as { yBodyRot: number; yHeadRot: number };
+    entity.yaw = (yawRad * 180) / Math.PI;
+    stub.yBodyRot = entity.yaw;
+    stub.yHeadRot = entity.yaw;
+
+    const pixels = new Uint8Array(w * h * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFbo);
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 0);
+    gl.depthMask(true);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    try {
+      // Distance culling in render() uses `camera`; put it at the preview camera.
+      this.render([entity], this.previewVp, { x: camX, y: camY, z: camZ }, 0);
+      // Must read while the preview FBO is still bound.
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    } finally {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    const canvas = this.previewCanvas ?? (this.previewCanvas = document.createElement('canvas'));
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const img = ctx.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const src = (h - 1 - y) * w * 4;
+      img.data.set(pixels.subarray(src, src + w * 4), y * w * 4);
+    }
+    ctx.putImageData(img, 0, 0);
+    return canvas;
+  }
+
   render(entities: Iterable<Entity>, viewProj: Float32Array, camera: EntityCamera, partialTick: number): void {
     const gl = this.gl;
     this.batch.reset();
@@ -380,4 +483,67 @@ export class EntityRenderDispatcher {
     while (cap < floats) cap *= 2;
     this.combined = new Float32Array(cap);
   }
+}
+
+// ---- small matrix helpers for the inventory preview -------------------------
+
+function lookAt(out: Float32Array, ex: number, ey: number, ez: number, cx: number, cy: number, cz: number): void {
+  let fx = cx - ex, fy = cy - ey, fz = cz - ez;
+  const fl = Math.hypot(fx, fy, fz) || 1;
+  fx /= fl; fy /= fl; fz /= fl;
+  let sx = fy * 0 - fz * 1;
+  let sy = fz * 0 - fx * 0;
+  let sz = fx * 1 - fy * 0;
+  const sl = Math.hypot(sx, sy, sz) || 1;
+  sx /= sl; sy /= sl; sz /= sl;
+  const ux = sy * fz - sz * fy;
+  const uy = sz * fx - sx * fz;
+  const uz = sx * fy - sy * fx;
+  out[0] = sx; out[4] = sy; out[8] = sz; out[12] = -(sx * ex + sy * ey + sz * ez);
+  out[1] = ux; out[5] = uy; out[9] = uz; out[13] = -(ux * ex + uy * ey + uz * ez);
+  out[2] = -fx; out[6] = -fy; out[10] = -fz; out[14] = -(-fx * ex + -fy * ey + -fz * ez);
+  out[3] = 0; out[7] = 0; out[11] = 0; out[15] = 1;
+}
+
+function perspective(out: Float32Array, fovY: number, aspect: number, near: number, far: number): void {
+  const f = 1 / Math.tan(fovY / 2);
+  out.fill(0);
+  out[0] = f / aspect;
+  out[5] = f;
+  out[10] = (far + near) / (near - far);
+  out[11] = -1;
+  out[14] = (2 * far * near) / (near - far);
+}
+
+function mul4(out: Float32Array, a: Float32Array, b: Float32Array): void {
+  for (let c = 0; c < 4; c++) {
+    for (let r = 0; r < 4; r++) {
+      out[c * 4 + r] =
+        a[0 * 4 + r] * b[c * 4 + 0] +
+        a[1 * 4 + r] * b[c * 4 + 1] +
+        a[2 * 4 + r] * b[c * 4 + 2] +
+        a[3 * 4 + r] * b[c * 4 + 3];
+    }
+  }
+}
+
+/** Minimal Entity record for the inventory preview (fields read by EntityRenderer/MobRenderer). */
+function playerStub(
+  p: { x: number; y: number; z: number },
+  level: { getSkyLight(x: number, y: number, z: number): number; getBlockLight(x: number, y: number, z: number): number },
+): Entity {
+  const stub = {
+    x: p.x, y: p.y, z: p.z, xo: p.x, yo: p.y, zo: p.z,
+    yaw: 0, yRotO: 0, pitch: 0, xRotO: 0,
+    yHeadRot: 0, yHeadRotO: 0, yBodyRot: 0, yBodyRotO: 0,
+    scale: 1, onGround: true, dead: false, deathTime: 0, hurtTime: 0,
+    tickCount: 0, walkAnimPos: 0, walkAnimSpeed: 0, walkAnimSpeedOld: 0,
+    swingProgress: 0, isOnFire: () => false,
+    level,
+    position: () => ({ x: p.x, y: p.y, z: p.z }),
+    getEyeY: () => p.y + 1.62,
+    getTypeName: () => 'player',
+    isRemoved: () => false,
+  };
+  return stub as unknown as Entity;
 }

@@ -6,7 +6,7 @@
 
 import type { BakedModel } from './ModelBox.js';
 import {
-  ZombieModel, ZombieVillagerModel, SkeletonModel, CreeperModel, SpiderModel, EndermanModel,
+  ZombieModel, PlayerModel, ZombieVillagerModel, SkeletonModel, CreeperModel, SpiderModel, EndermanModel,
   SilverfishModel, SlimeModel, WitchModel,
   PigModel, CowModel, SheepModel, ChickenModel, WolfModel, FoxModel, FelineModel, ParrotModel,
   RabbitModel, BatModel, SquidModel, CodModel, SalmonModel,
@@ -21,6 +21,8 @@ export interface ModelEntry {
 
 export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   zombie: { model: ZombieModel, texture: 'zombie/zombie' },
+  // Survival-inventory preview only (no other players in this build).
+  player: { model: PlayerModel, texture: 'player/wide/steve' },
   skeleton: { model: SkeletonModel, texture: 'skeleton/skeleton' },
   creeper: { model: CreeperModel, texture: 'creeper/creeper' },
   spider: { model: SpiderModel, texture: 'spider/spider' },

@@ -23,7 +23,7 @@ import { chunkKey } from '../../vanilla/core/Geometry.js';
 /** height of the overworld column in sections (16 * 384 * 16 states per chunk) */
 const SECTION_COUNT = 24;
 /** never unpack more than this per drain(): one chunk is already ~1/3 of a 16 ms frame */
-const MAX_APPLY_PER_DRAIN = 2;
+const MAX_APPLY_PER_DRAIN = 1;
 /** how long init waits for a worker to fetch its data before declaring it dead */
 const READY_TIMEOUT_MS = 30_000;
 /** per-worker in-flight cap: keeps a worker busy without a long IPC backlog */

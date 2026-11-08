@@ -366,6 +366,11 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     for (let i = 0; i < parts.length; i++) {
       const verts = parts[i].verts;
       if (verts.length === 0) continue;
+      // Per-part tint (the skeleton's bow is brown while the body stays bone white).
+      const pt = parts[i].tint;
+      const pr = pt ? t0 * pt[0] : t0;
+      const pg = pt ? t1 * pt[1] : t1;
+      const pb = pt ? t2 * pt[2] : t2;
       const mo = i * 12;
       const m00 = mats[mo], m01 = mats[mo + 1], m02 = mats[mo + 2], m03 = mats[mo + 3];
       const m10 = mats[mo + 4], m11 = mats[mo + 5], m12 = mats[mo + 6], m13 = mats[mo + 7];
@@ -378,7 +383,7 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
           m10 * vx + m11 * vy + m12 * vz + m13,
           m20 * vx + m21 * vy + m22 * vz + m23,
           verts[k + 3], verts[k + 4],
-          verts[k + 5] * t0, verts[k + 5] * t1, verts[k + 5] * t2,
+          verts[k + 5] * pr, verts[k + 5] * pg, verts[k + 5] * pb,
           sky, block, ovR, ovA,
         );
       }

@@ -45,6 +45,8 @@ export interface PartDef {
   pose?: PartPose;
   boxes?: BoxDef[];
   children?: PartDef[];
+  /** Multiplies the sampled texture colour for this part only. */
+  tint?: readonly [number, number, number];
 }
 
 export interface ModelDef {
@@ -93,6 +95,8 @@ export interface BakedPart {
   rx: number; ry: number; rz: number;
   /** interleaved (x,y,z,u,v,shade) triangles in BLOCK units, local to this part */
   verts: Float32Array;
+  /** Optional multiplier on the sampled texture (used by the skeleton's bow). */
+  tint?: readonly [number, number, number];
 }
 
 /** Writes animation overrides into model.poses. Never allocates. */
@@ -188,6 +192,7 @@ function bakeBoxes(boxes: BoxDef[], texW: number, texH: number): Float32Array {
 // ---------------------------------------------------------------------------
 
 function bakePart(def: PartDef, parent: number, model: ModelDef, out: BakedPart[]): void {
+  // tint is attached after the part is pushed so nested parts keep their own colour
   const pose = def.pose;
   const index = out.length;
   out.push({
@@ -200,6 +205,7 @@ function bakePart(def: PartDef, parent: number, model: ModelDef, out: BakedPart[
     ry: pose?.ry ?? 0,
     rz: pose?.rz ?? 0,
     verts: def.boxes && def.boxes.length > 0 ? bakeBoxes(def.boxes, model.texW, model.texH) : EMPTY_VERTS,
+    tint: def.tint,
   });
   if (def.children) {
     for (let i = 0; i < def.children.length; i++) bakePart(def.children[i], index, model, out);

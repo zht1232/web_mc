@@ -83,8 +83,34 @@ export class InventoryScreen extends AbstractContainerScreen {
     this.recipeBook.render(g, rx, this.topPos, mx, my);
   }
 
-  /** 2D approximation of vanilla's mouse-following player model. */
+  private previewCache: { yaw: number; canvas: HTMLCanvasElement } | null = null;
+
+  /** Vanilla's mouse-following player model: a real 3D render when the game provides one. */
   private drawEntityPreview(g: GuiGraphics, x0: number, y0: number, x1: number, y1: number): void {
+    const render = this.env.deps.renderEntityPreview;
+    const cx = (x0 + x1) / 2;
+    const dx = this.xMouse - (this.leftPos + cx);
+    // EntityRenderState yaw from the mouse: atan2(dx, 40), clamped to +/- 40 degrees.
+    const yaw = Math.max(-0.7, Math.min(0.7, Math.atan2(dx, 40)));
+    const key = Math.round(yaw * 40) / 40;
+    if (render) {
+      if (!this.previewCache || this.previewCache.yaw !== key) {
+        const canvas = render(120, key);
+        if (canvas) this.previewCache = { yaw: key, canvas };
+      }
+      if (this.previewCache) {
+        const img = this.previewCache.canvas;
+        // Fill the vanilla 49x70 preview box with the offscreen render (its camera is tuned so
+        // the 1.8 block figure fits with a small margin).
+        g.drawCanvas(img, x0, y0, x1 - x0, y1 - y0);
+        return;
+      }
+    }
+    this.drawFallbackPreview(g, x0, y0, x1, y1);
+  }
+
+  /** 2D approximation used when no GL preview is wired (tests / headless). */
+  private drawFallbackPreview(g: GuiGraphics, x0: number, y0: number, x1: number, y1: number): void {
     const cx = Math.floor((x0 + x1) / 2);
     const lean = Math.max(-3, Math.min(3, Math.round((cx - (this.xMouse - this.leftPos)) / 20)));
     const x = cx + lean;

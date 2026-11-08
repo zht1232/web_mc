@@ -452,6 +452,8 @@ export class Game {
       options: this.options as unknown as GuiOptions,
       touchInput: this.touchDevice,
       container: this.containerAdapter(),
+      // 3D player preview for the survival inventory (FBO render + readback in the dispatcher).
+      renderEntityPreview: (size, yawRad) => this.entityRenderer.renderPreview(this.player.pos, this.level, size, yawRad),
       worlds: this.worldProvider(),
       callbacks: {
         onPlay: () => this.closeScreen(),
@@ -2022,7 +2024,7 @@ export class Game {
     this.ensureChunksAround();
     // Applying a generated chunk (palette decode + full relight) is ~10 ms of main thread, so
     // remember whether this frame already paid it and shrink the mesh budget accordingly.
-    this.chunksAppliedThisFrame = this.chunkProvider.drain(this.level, 3);
+    this.chunksAppliedThisFrame = this.chunkProvider.drain(this.level, 1);
     // ...and drop the chunks that fell out of the retention band behind us (vanilla
     // ClientChunkCache), so a long trip does not keep the whole visited world in memory
     this.unloadFarChunks();

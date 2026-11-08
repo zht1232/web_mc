@@ -23,6 +23,8 @@ interface State {
   hurt: number;
   alive: boolean;
   walk: number;
+  /** Creeper.getSwelling(): 0 -> >0 triggers entity.creeper.primed once (fuse hiss). */
+  swell: number;
 }
 
 export class MobSounds {
@@ -46,7 +48,11 @@ export class MobSounds {
       const near = dx * dx + dy * dy + dz * dz <= AUDIBLE_RADIUS_SQ;
       let st = this.states.get(e);
       if (!st) {
-        st = { ambient: -Math.floor(this.rand() * AMBIENT_INTERVAL), hurt: e.hurtTime, alive: e.isAlive(), walk: Math.floor(e.walkDist) };
+        st = {
+          ambient: -Math.floor(this.rand() * AMBIENT_INTERVAL), hurt: e.hurtTime,
+          alive: e.isAlive(), walk: Math.floor(e.walkDist),
+          swell: (e as unknown as { swell?: number }).swell ?? 0,
+        };
         this.states.set(e, st);
       }
       const type = e.getTypeName();
@@ -58,6 +64,12 @@ export class MobSounds {
           this.play(sounds, `entity.${type}.ambient`, e, 1);
         }
         if (alive && e.hurtTime > st.hurt) this.play(sounds, `entity.${type}.hurt`, e, 1);
+        // Creeper.inflate(): the fuse hiss plays once when swelling starts.
+        const swell = (e as unknown as { swell?: number }).swell ?? 0;
+        if (type === 'creeper' && swell > 0 && st.swell <= 0) {
+          this.play(sounds, 'entity.creeper.primed', e, 1);
+        }
+        st.swell = swell;
         if (st.alive && !alive) this.play(sounds, `entity.${type}.death`, e, 1);
         const walk = Math.floor(e.walkDist);
         if (alive && walk > st.walk && e.onGround) this.play(sounds, `entity.${type}.step`, e, 0.15);

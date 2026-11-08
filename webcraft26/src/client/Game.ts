@@ -1555,6 +1555,8 @@ export class Game {
    * Vanilla power 3 leaves a ~3 block radius; resistance/hardness are approximated.
    */
   private explode(x: number, y: number, z: number, power: number): void {
+    // Explosion.java: playSound(EntityType.GENERIC_EXPLODE, 4.0F, (1 + (random - random) * 0.2))
+    this.sounds.play('entity.generic.explode', x, y, z, 4, 0.9 + Math.random() * 0.2);
     const f = power * 2;
     const radius = Math.max(1, Math.floor(f));
     for (let dy = -radius; dy <= radius; dy++) {

@@ -77,11 +77,40 @@ uniform int uDebug;
 uniform int uUseShadows;
 uniform sampler2D uShadowMap;
 uniform mat4 uLightViewProj;
+// Second cascade (far). uCascadeCount == 1 keeps the single-map path for the icon pass.
+uniform sampler2D uShadowMap1;
+uniform mat4 uLightViewProj1;
+uniform float uCascadeCount;
+uniform float uCascadeSplit;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
 uniform float uShadowTexel;
 
 out vec4 fragColor;
+
+/**
+ * Manual depth compare with 5x5 PCF. The old 3x3 at 1.5 texel spacing left visible stair-steps
+ * on large flat surfaces ("banded" shadows); 5x5 at 1.0 texel plus the normal offset below is
+ * smooth at the same tap count per axis budget.
+ */
+float sampleShadow(sampler2D smap, mat4 lvp, vec3 wp, vec3 n, float ndl, float texel) {
+  float slope = clamp(1.0 - ndl, 0.0, 1.0);
+  vec4 sc = lvp * vec4(wp + n * (0.06 + 0.40 * slope), 1.0);
+  if (sc.w <= 0.0) return 1.0;
+  vec3 ndc = sc.xyz / sc.w;
+  vec2 suv = ndc.xy * 0.5 + 0.5;
+  if (suv.x < 0.005 || suv.x > 0.995 || suv.y < 0.005 || suv.y > 0.995) return 1.0;
+  float sdepth = ndc.z * 0.5 + 0.5;
+  float ref = sdepth - 0.00035;
+  float sum = 0.0;
+  for (int sx = -2; sx <= 2; sx++) {
+    for (int sy = -2; sy <= 2; sy++) {
+      float stored = texture(smap, suv + vec2(float(sx), float(sy)) * texel).r;
+      sum += ref <= stored ? 1.0 : 0.0;
+    }
+  }
+  return sum / 25.0;
+}
 
 void main() {
   // CUTOUT must sample mip 0: averaging RGBA mips mixes the black RGB of transparent texels
@@ -113,25 +142,13 @@ void main() {
     if (uDebug == 12) { fragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
     if (uDebug == 13) { fragColor = vec4(vec3(ndl), 1.0); return; }
     if (ndl > 0.0) {
-      // slope-scaled, world-space normal offset + a small constant depth bias
-      float slope = clamp(1.0 - ndl, 0.0, 1.0);
-      vec4 sc = uLightViewProj * vec4(vWorldPos + n * (0.05 + 0.25 * slope), 1.0);
-      vec3 ndc = sc.xyz / max(sc.w, 1e-5);
-      vec2 suv = ndc.xy * 0.5 + 0.5;
-      float sdepth = ndc.z * 0.5 + 0.5;
-      float lit = 1.0;
-      if (sc.w > 0.0 && suv.x > 0.004 && suv.x < 0.996 && suv.y > 0.004 && suv.y < 0.996) {
-        // 3x3 PCF, manual depth compare (see the sampler note above); 1.5 texel spacing gives a
-        // wider penumbra than the raw map resolution.
-        float ref = sdepth - 0.0006;
-        float sum = 0.0;
-        for (int sx = -1; sx <= 1; sx++) {
-          for (int sy = -1; sy <= 1; sy++) {
-            float stored = texture(uShadowMap, suv + vec2(sx, sy) * uShadowTexel * 1.5).r;
-            sum += ref <= stored ? 1.0 : 0.0;
-          }
-        }
-        lit = sum / 9.0;
+      float lit = sampleShadow(uShadowMap, uLightViewProj, vWorldPos, n, ndl, uShadowTexel);
+      if (uCascadeCount > 1.5) {
+        // Blend into the far cascade across the last 15% of the near extent so the switch is
+        // invisible; beyond the far extent the map fades out instead of ending in a hard edge.
+        float dist = length(vWorldPos.xz - uCameraPos.xz);
+        float farLit = sampleShadow(uShadowMap1, uLightViewProj1, vWorldPos, n, ndl, uShadowTexel);
+        lit = mix(lit, farLit, smoothstep(uCascadeSplit * 0.85, uCascadeSplit, dist));
       }
       if (uDebug == 11) { fragColor = vec4(vec3(lit), 1.0); return; }
       // deep shade / caves keep the lightmap value only, like the vanilla direct term.

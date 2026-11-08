@@ -93,6 +93,12 @@ export class ItemIconAtlas {
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
     this.program.set1i('uShadowMap', 3);
+    // The terrain program now declares a second cascade sampler; bind the same white texture and
+    // turn cascades off, otherwise the draw is invalid (sampler with no texture).
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
+    this.program.set1i('uShadowMap1', 3);
+    this.program.set1f('uCascadeCount', 0);
     this.program.set1i('uUseShadows', 0);
     this.program.set1f('uFogStart', 1e9);
     this.program.set1f('uFogEnd', 1e9 + 1);

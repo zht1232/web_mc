@@ -1,17 +1,17 @@
-// Sun/moon shadow map for the built-in shader pipeline (TASK-render Phase B.1).
+// Sun/moon shadow maps for the built-in shader pipeline.
 //
 // Reference: Complementary Shaders - Reimagined r5.9.3
 //   shaders/program/shadow.glsl            depth-only shadow pass
 //   shaders/lib/lighting/shadowSampling.glsl  PCF sampling + normal-offset bias
-// The Iris pack renders two cascaded maps into shadowtex0/1 through the Iris pipeline;
-// a WebGL2 back end only has one depth target, so this is a single orthographic map that
-// follows the camera, texel-snapped (no shimmer while walking) with the size driven by the
-// shader quality tier (1024 / 2048 / 4096, default 2048).
 //
-// The projection is deliberately built in world space (not from a translation matrix):
-// the light basis is derived from the sun direction, the camera position is projected onto
-// that basis and snapped to whole texels, so moving the camera by less than one texel leaves
-// the matrix bit-identical.
+// Two cascades (near extent 40, far extent 132) instead of one large map: a single 2048 map
+// covering the whole view distance gave ~0.5 block texels, which is what produced the blocky,
+// banded shadow edges. The near cascade is ~0.04 block/texel and both are texel-snapped, so
+// moving the camera does not make the edges crawl.
+//
+// The projection is built in world space: the light basis comes from the sun direction, the
+// camera position is projected onto that basis and snapped to whole texels, so a sub-texel
+// camera move leaves the matrix bit-identical.
 
 import { GlProgram, extractFrustum, type Frustum } from '../gl/Gl.js';
 import { SHADOW_FRAG, SHADOW_VERT } from './PostShaders.js';
@@ -20,27 +20,29 @@ export interface ShadowCamera {
   x: number; y: number; z: number;
 }
 
-export interface ShadowRenderItem {
-  cx: number; cz: number; sy: number;
+interface Cascade {
+  fbo: WebGLFramebuffer | null;
+  tex: WebGLTexture | null;
+  size: number;
+  extent: number;
+  view: Float32Array;
+  proj: Float32Array;
+  viewProj: Float32Array;
+  frustum: Frustum;
+  texel: number;
 }
+
+const CASCADE_EXTENTS = [40, 132] as const;
+/** Distance from the (snapped) centre to the light, in blocks. */
+const LIGHT_DISTANCE = 200;
+/** Ortho depth range. Must be > LIGHT_DISTANCE so the centre is inside [near, far]. */
+const DEPTH = 420;
 
 export class ShadowMap {
   private readonly program: GlProgram;
-  private fbo: WebGLFramebuffer | null = null;
-  private tex: WebGLTexture | null = null;
-  private sizeValue = 0;
-
-  private readonly view = new Float32Array(16);
-  private readonly proj = new Float32Array(16);
-  private readonly viewProj = new Float32Array(16);
-  readonly frustum: Frustum = { planes: new Float32Array(24) };
-
-  /** Extent of the square ortho box around the camera, in blocks. */
-  extent = 72;
-  /** Distance from the (snapped) centre to the light, in blocks. */
-  lightDistance = 140;
-  /** Ortho depth range. Must be > lightDistance so the centre is inside [near, far]. */
-  depth = 320;
+  private readonly cascades: Cascade[] = [];
+  /** Far cascade is rendered at half resolution: its texels are large anyway. */
+  private baseSize = 0;
 
   constructor(private readonly gl: WebGL2RenderingContext, size = 2048) {
     this.program = new GlProgram(gl, SHADOW_VERT, SHADOW_FRAG, 'shadow');
@@ -48,47 +50,65 @@ export class ShadowMap {
   }
 
   get programHandle(): GlProgram { return this.program; }
-  get size(): number { return this.sizeValue; }
-  get texture(): WebGLTexture | null { return this.tex; }
-  get lightViewProjection(): Float32Array { return this.viewProj; }
+  get count(): number { return this.cascades.length; }
+  get size(): number { return this.baseSize; }
+
+  /** Backwards-compatible aliases for the near cascade. */
+  get texture(): WebGLTexture | null { return this.cascades[0]?.tex ?? null; }
+  get lightViewProjection(): Float32Array { return this.cascades[0]?.viewProj ?? new Float32Array(16); }
+
+  cascadeTexture(index: number): WebGLTexture | null { return this.cascades[index]?.tex ?? null; }
+  cascadeMatrix(index: number): Float32Array { return this.cascades[index]?.viewProj ?? new Float32Array(16); }
+  cascadeTexel(index: number): number { return this.cascades[index]?.texel ?? 0.001; }
 
   setSize(size: number): void {
     const s = Math.max(256, Math.floor(size));
-    if (s === this.sizeValue) return;
+    if (s === this.baseSize && this.cascades.length === CASCADE_EXTENTS.length) return;
+    this.baseSize = s;
     const gl = this.gl;
-    if (this.fbo) gl.deleteFramebuffer(this.fbo);
-    if (this.tex) gl.deleteTexture(this.tex);
-    this.sizeValue = s;
+    // (Re)create every cascade; the far one uses half the resolution.
+    for (const c of this.cascades) {
+      if (c.fbo) gl.deleteFramebuffer(c.fbo);
+      if (c.tex) gl.deleteTexture(c.tex);
+    }
+    this.cascades.length = 0;
 
-    this.tex = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, this.tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, s, s, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
-    // Sampled as a plain sampler2D (manual compare in the terrain shader): that keeps the
-    // terrain program free of a sampler2DShadow sampler, which other passes that reuse
-    // TERRAIN_FRAG (gui/ItemIconAtlas) would otherwise have to back with a depth texture.
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.NONE);
+    CASCADE_EXTENTS.forEach((extent, i) => {
+      const res = i === 0 ? s : Math.max(512, Math.floor(s / 2));
+      const tex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, res, res, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+      // Plain sampler2D with a manual compare in the terrain shader: sampler2DShadow would force
+      // every other user of TERRAIN_FRAG (gui/ItemIconAtlas) to back that unit with a depth texture.
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.NONE);
 
-    this.fbo = gl.createFramebuffer()!;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, this.tex, 0);
-    gl.drawBuffers([gl.NONE]);
-    gl.readBuffer(gl.NONE);
-    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-    if (status !== gl.FRAMEBUFFER_COMPLETE) console.warn('[shadow] framebuffer incomplete', status);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      const fbo = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, tex, 0);
+      gl.drawBuffers([gl.NONE]);
+      gl.readBuffer(gl.NONE);
+      const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      if (status !== gl.FRAMEBUFFER_COMPLETE) console.warn('[shadow] framebuffer incomplete', i, status);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      this.cascades.push({
+        fbo, tex, size: res, extent,
+        view: new Float32Array(16), proj: new Float32Array(16), viewProj: new Float32Array(16),
+        frustum: { planes: new Float32Array(24) },
+        texel: (2 * extent) / res,
+      });
+    });
   }
 
-  /** Recomputes the light matrix for this frame and returns the sun direction used. */
+  /** Recomputes every cascade matrix for this frame. */
   update(camera: ShadowCamera, toSun: readonly [number, number, number]): void {
     const len = Math.hypot(toSun[0], toSun[1], toSun[2]) || 1;
     const lx = toSun[0] / len, ly = toSun[1] / len, lz = toSun[2] / len;
-    // Light view direction = from the sun towards the scene.
     const fx = -lx, fy = -ly, fz = -lz;
-    // right = normalize(cross(forward, worldUp)); fall back to +Z when the sun is overhead.
     const upX = Math.abs(fy) > 0.99 ? 0 : 0;
     const upY = Math.abs(fy) > 0.99 ? 0 : 1;
     const upZ = Math.abs(fy) > 0.99 ? 1 : 0;
@@ -101,57 +121,60 @@ export class ShadowMap {
     const uy = sz * fx - sx * fz;
     const uz = sx * fy - sy * fx;
 
-    // Texel snapping: project the camera centre on the light basis, quantise, then use the
-    // quantised centre. A sub-texel camera move therefore produces the same matrix.
-    const texel = (2 * this.extent) / this.sizeValue;
-    const projX = camera.x * sx + camera.y * sy + camera.z * sz;
-    const projY = camera.x * ux + camera.y * uy + camera.z * uz;
-    const snapX = Math.floor(projX / texel) * texel;
-    const snapY = Math.floor(projY / texel) * texel;
-    const cx = camera.x + sx * (snapX - projX) + ux * (snapY - projY);
-    const cy = camera.y + sy * (snapX - projX) + uy * (snapY - projY);
-    const cz = camera.z + sz * (snapX - projX) + uz * (snapY - projY);
+    for (const c of this.cascades) {
+      // Texel snapping on the light basis.
+      const texel = (2 * c.extent) / c.size;
+      const projX = camera.x * sx + camera.y * sy + camera.z * sz;
+      const projY = camera.x * ux + camera.y * uy + camera.z * uz;
+      const snapX = Math.floor(projX / texel) * texel;
+      const snapY = Math.floor(projY / texel) * texel;
+      const cx = camera.x + sx * (snapX - projX) + ux * (snapY - projY);
+      const cy = camera.y + sy * (snapX - projX) + uy * (snapY - projY);
+      const cz = camera.z + sz * (snapX - projX) + uz * (snapY - projY);
 
-    const eyeX = cx + lx * this.lightDistance;
-    const eyeY = cy + ly * this.lightDistance;
-    const eyeZ = cz + lz * this.lightDistance;
+      const eyeX = cx + lx * LIGHT_DISTANCE;
+      const eyeY = cy + ly * LIGHT_DISTANCE;
+      const eyeZ = cz + lz * LIGHT_DISTANCE;
 
-    // look-at view matrix, columns = (right, up, -forward)
-    this.view[0] = sx; this.view[4] = sy; this.view[8] = sz; this.view[12] = -(sx * eyeX + sy * eyeY + sz * eyeZ);
-    this.view[1] = ux; this.view[5] = uy; this.view[9] = uz; this.view[13] = -(ux * eyeX + uy * eyeY + uz * eyeZ);
-    this.view[2] = -fx; this.view[6] = -fy; this.view[10] = -fz; this.view[14] = -(-fx * eyeX + -fy * eyeY + -fz * eyeZ);
-    this.view[3] = 0; this.view[7] = 0; this.view[11] = 0; this.view[15] = 1;
+      c.view[0] = sx; c.view[4] = sy; c.view[8] = sz; c.view[12] = -(sx * eyeX + sy * eyeY + sz * eyeZ);
+      c.view[1] = ux; c.view[5] = uy; c.view[9] = uz; c.view[13] = -(ux * eyeX + uy * eyeY + uz * eyeZ);
+      c.view[2] = -fx; c.view[6] = -fy; c.view[10] = -fz; c.view[14] = -(-fx * eyeX + -fy * eyeY + -fz * eyeZ);
+      c.view[3] = 0; c.view[7] = 0; c.view[11] = 0; c.view[15] = 1;
 
-    // Orthographic projection, z mapped to [-1, 1] (the shader converts to [0, 1] for compare).
-    const l = -this.extent, r = this.extent, b = -this.extent, t = this.extent;
-    const n = 1, f = this.depth;
-    this.proj[0] = 2 / (r - l);
-    this.proj[5] = 2 / (t - b);
-    this.proj[10] = -2 / (f - n);
-    this.proj[12] = -(r + l) / (r - l);
-    this.proj[13] = -(t + b) / (t - b);
-    this.proj[14] = -(f + n) / (f - n);
-    this.proj[15] = 1;
+      const l = -c.extent, r = c.extent, b = -c.extent, t = c.extent;
+      const n = 1, f = DEPTH;
+      c.proj[0] = 2 / (r - l);
+      c.proj[5] = 2 / (t - b);
+      c.proj[10] = -2 / (f - n);
+      c.proj[12] = -(r + l) / (r - l);
+      c.proj[13] = -(t + b) / (t - b);
+      c.proj[14] = -(f + n) / (f - n);
+      c.proj[15] = 1;
 
-    // viewProj = proj * view
-    for (let c = 0; c < 4; c++) {
-      for (let row = 0; row < 4; row++) {
-        this.viewProj[c * 4 + row] =
-          this.proj[0 * 4 + row] * this.view[c * 4 + 0] +
-          this.proj[1 * 4 + row] * this.view[c * 4 + 1] +
-          this.proj[2 * 4 + row] * this.view[c * 4 + 2] +
-          this.proj[3 * 4 + row] * this.view[c * 4 + 3];
+      for (let col = 0; col < 4; col++) {
+        for (let row = 0; row < 4; row++) {
+          c.viewProj[col * 4 + row] =
+            c.proj[0 * 4 + row] * c.view[col * 4 + 0] +
+            c.proj[1 * 4 + row] * c.view[col * 4 + 1] +
+            c.proj[2 * 4 + row] * c.view[col * 4 + 2] +
+            c.proj[3 * 4 + row] * c.view[col * 4 + 3];
+        }
       }
+      const updated = extractFrustum(c.viewProj);
+      c.frustum.planes.set(updated.planes);
     }
-    const updated = extractFrustum(this.viewProj);
-    this.frustum.planes.set(updated.planes);
   }
 
-  /** Binds the shadow target, clears depth and sets up the depth-only state. */
-  begin(): void {
+  frustumOf(index: number): Frustum { return this.cascades[index].frustum; }
+  extentOf(index: number): number { return this.cascades[index].extent; }
+
+  /** Binds cascade `index`'s target, clears depth and sets up the depth-only state. */
+  begin(index = 0): void {
     const gl = this.gl;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
-    gl.viewport(0, 0, this.sizeValue, this.sizeValue);
+    const c = this.cascades[index];
+    if (!c) return;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, c.fbo);
+    gl.viewport(0, 0, c.size, c.size);
     gl.drawBuffers([gl.NONE]);
     gl.readBuffer(gl.NONE);
     gl.depthMask(true);
@@ -162,7 +185,7 @@ export class ShadowMap {
     gl.cullFace(gl.BACK);
     gl.disable(gl.BLEND);
     this.program.use();
-    this.program.setMat4('uLightViewProj', this.viewProj);
+    this.program.setMat4('uLightViewProj', c.viewProj);
     this.program.set1f('uAlphaTest', 0.1);
   }
 
@@ -179,9 +202,11 @@ export class ShadowMap {
 
   dispose(): void {
     const gl = this.gl;
-    if (this.fbo) gl.deleteFramebuffer(this.fbo);
-    if (this.tex) gl.deleteTexture(this.tex);
-    this.fbo = null;
-    this.tex = null;
+    for (const c of this.cascades) {
+      if (c.fbo) gl.deleteFramebuffer(c.fbo);
+      if (c.tex) gl.deleteTexture(c.tex);
+      c.fbo = null;
+      c.tex = null;
+    }
   }
 }

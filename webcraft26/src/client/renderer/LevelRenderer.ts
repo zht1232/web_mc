@@ -876,61 +876,61 @@ export class LevelRenderer {
   }
 
   /**
-   * Depth-only shadow pass (TASK-render Phase B.1). Only SOLID+CUTOUT casters are drawn, so
-   * water never blocks sunlight, and sections are culled against the *light* frustum rather
-   * than the camera frustum.
+   * Depth-only shadow pass: one draw per region per cascade (near extent 40, far 132). Water never
+   * casts, and regions whose top is below their local surface cannot receive visible sunlight.
    */
   private renderShadowPass(camera: Camera, level: ClientLevel): void {
     const gl = this.gl;
-    // Casters beyond ~the ortho extent cannot land inside the map; underground sections
-    // (top below the chunk's lowest surface column) never receive/cast visible sunlight.
-    const r = Math.min(this.renderDistance, 5);
     const camCX = Math.floor(camera.x) >> 4;
     const camCZ = Math.floor(camera.z) >> 4;
 
     this.shadow.setSize(this.post.shadowSize);
     this.shadow.update(camera, this.lightDir);
-    this.shadow.begin();
 
     const program = this.shadow.programHandle;
-    gl.activeTexture(gl.TEXTURE3);
-    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
-    program.set1i('uAtlas', 3);
-    program.set1f('uAlphaTest', 0.1);
-
     const minSurface = new Map<number, number>();
     let shadowSections = 0;
     let shadowDraws = 0;
-    // Regions below their local surface cannot cast visible sunlight; everything else is one
-    // draw per 4x4 chunk region instead of one per 16^3 section.
-    for (const region of this.regions.values()) {
-      if (region.dirty || region.opaqueCount === 0) continue;
-      const cx1 = region.rx * REGION_CHUNKS;
-      const cz1 = region.rz * REGION_CHUNKS;
-      if (Math.abs(cx1 - camCX) > r + REGION_CHUNKS || Math.abs(cz1 - camCZ) > r + REGION_CHUNKS) continue;
-      const minX = cx1 << 4, minZ = cz1 << 4;
-      if (!boxInFrustum(this.shadow.frustum, minX, region.minY, minZ,
-        minX + REGION_CHUNKS * 16, region.maxY, minZ + REGION_CHUNKS * 16)) continue;
-      let surface = 32767;
-      for (let dz = 0; dz < REGION_CHUNKS; dz++) {
-        for (let dx = 0; dx < REGION_CHUNKS; dx++) {
-          const ck = chunkKey(cx1 + dx, cz1 + dz);
-          let s2 = minSurface.get(ck);
-          if (s2 === undefined) {
-            const chunk = level.getChunk(cx1 + dx, cz1 + dz);
-            s2 = chunk ? chunk.surfaceHeight.reduce((a, b) => Math.min(a, b), 32767) : level.minY;
-            minSurface.set(ck, s2);
+
+    for (let ci = 0; ci < this.shadow.count; ci++) {
+      const extentBlocks = this.shadow.extentOf(ci);
+      const r = Math.min(this.renderDistance, Math.ceil(extentBlocks / 16) + 1);
+      this.shadow.begin(ci);
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
+      program.set1i('uAtlas', 3);
+      program.set1f('uAlphaTest', 0.1);
+
+      for (const region of this.regions.values()) {
+        if (region.dirty || region.opaqueCount === 0) continue;
+        const cx1 = region.rx * REGION_CHUNKS;
+        const cz1 = region.rz * REGION_CHUNKS;
+        if (Math.abs(cx1 - camCX) > r + REGION_CHUNKS || Math.abs(cz1 - camCZ) > r + REGION_CHUNKS) continue;
+        const minX = cx1 << 4, minZ = cz1 << 4;
+        if (!boxInFrustum(this.shadow.frustumOf(ci), minX, region.minY, minZ,
+          minX + REGION_CHUNKS * 16, region.maxY, minZ + REGION_CHUNKS * 16)) continue;
+        let surface = 32767;
+        for (let dz = 0; dz < REGION_CHUNKS; dz++) {
+          for (let dx = 0; dx < REGION_CHUNKS; dx++) {
+            const ck = chunkKey(cx1 + dx, cz1 + dz);
+            let s2 = minSurface.get(ck);
+            if (s2 === undefined) {
+              const chunk = level.getChunk(cx1 + dx, cz1 + dz);
+              s2 = chunk ? chunk.surfaceHeight.reduce((a, b) => Math.min(a, b), 32767) : level.minY;
+              minSurface.set(ck, s2);
+            }
+            surface = Math.min(surface, s2);
           }
-          surface = Math.min(surface, s2);
         }
+        if (region.maxY <= surface) continue;
+        shadowSections++;
+        program.set3f('uChunkOrigin', minX, 0, minZ);
+        gl.bindVertexArray(region.opaqueVao);
+        gl.drawElements(gl.TRIANGLES, region.opaqueCount, gl.UNSIGNED_INT, 0);
+        shadowDraws++;
       }
-      if (region.maxY <= surface) continue;
-      shadowSections++;
-      program.set3f('uChunkOrigin', minX, 0, minZ);
-      gl.bindVertexArray(region.opaqueVao);
-      gl.drawElements(gl.TRIANGLES, region.opaqueCount, gl.UNSIGNED_INT, 0);
-      shadowDraws++;
     }
+
     this.shadowStats.sections = shadowSections;
     this.shadowStats.draws = shadowDraws;
     this.shadowStats.size = this.shadow.size;
@@ -1054,10 +1054,13 @@ export class LevelRenderer {
     // Direct sun / moon term is only enabled when a shadow map was rendered this frame; with
     // uUseShadows = 0 the fragment shader keeps the exact vanilla lightmap result.
     this.terrain.set1i('uUseShadows', this.shadowsActive ? 1 : 0);
-    this.terrain.setMat4('uLightViewProj', this.shadow.lightViewProjection);
+    this.terrain.setMat4('uLightViewProj', this.shadow.cascadeMatrix(0));
+    this.terrain.setMat4('uLightViewProj1', this.shadow.cascadeMatrix(1));
+    this.terrain.set1f('uCascadeCount', this.shadow.count);
+    this.terrain.set1f('uCascadeSplit', this.shadow.extentOf(0));
     this.terrain.set3f('uSunDir', this.lightDir[0], this.lightDir[1], this.lightDir[2]);
     this.terrain.set3f('uSunColor', this.sunColor[0], this.sunColor[1], this.sunColor[2]);
-    this.terrain.set1f('uShadowTexel', 1 / this.shadow.size);
+    this.terrain.set1f('uShadowTexel', this.shadow.cascadeTexel(0));
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
@@ -1067,8 +1070,12 @@ export class LevelRenderer {
     this.terrain.set1i('uLightmap', 1);
     // Shadow map on unit 3 (needs COMPARE_REF_TO_TEXTURE sampling).
     gl.activeTexture(gl.TEXTURE3);
-    gl.bindTexture(gl.TEXTURE_2D, this.shadow.texture);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadow.cascadeTexture(0));
     this.terrain.set1i('uShadowMap', 3);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadow.cascadeTexture(1));
+    this.terrain.set1i('uShadowMap1', 4);
+    gl.activeTexture(gl.TEXTURE3);
     gl.activeTexture(gl.TEXTURE0);
 
     gl.enable(gl.DEPTH_TEST);
@@ -1099,10 +1106,13 @@ export class LevelRenderer {
     // uDebug / uUseShadows are int uniforms: uniform1f on them raises GL_INVALID_OPERATION.
     this.terrain.set1i('uDebug', this.debugMode);
     this.terrain.set1i('uUseShadows', this.shadowsActive ? 1 : 0);
-    this.terrain.setMat4('uLightViewProj', this.shadow.lightViewProjection);
+    this.terrain.setMat4('uLightViewProj', this.shadow.cascadeMatrix(0));
+    this.terrain.setMat4('uLightViewProj1', this.shadow.cascadeMatrix(1));
+    this.terrain.set1f('uCascadeCount', this.shadow.count);
+    this.terrain.set1f('uCascadeSplit', this.shadow.extentOf(0));
     this.terrain.set3f('uSunDir', this.lightDir[0], this.lightDir[1], this.lightDir[2]);
     this.terrain.set3f('uSunColor', this.sunColor[0], this.sunColor[1], this.sunColor[2]);
-    this.terrain.set1f('uShadowTexel', 1 / this.shadow.size);
+    this.terrain.set1f('uShadowTexel', this.shadow.cascadeTexel(0));
     this.terrain.set2i('uWaterLayers', waves ? waterStill : -1, waves ? waterFlow : -1);
     this.terrain.set1f('uWaveTime', performance.now() / 1000);
     gl.activeTexture(gl.TEXTURE0);
@@ -1112,8 +1122,12 @@ export class LevelRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.textures.lightmap);
     this.terrain.set1i('uLightmap', 1);
     gl.activeTexture(gl.TEXTURE3);
-    gl.bindTexture(gl.TEXTURE_2D, this.shadow.texture);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadow.cascadeTexture(0));
     this.terrain.set1i('uShadowMap', 3);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadow.cascadeTexture(1));
+    this.terrain.set1i('uShadowMap1', 4);
+    gl.activeTexture(gl.TEXTURE3);
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     gl.disable(gl.CULL_FACE);

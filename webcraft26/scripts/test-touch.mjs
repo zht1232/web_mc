@@ -113,10 +113,11 @@ try {
   const hotbarPoint = await ev((slot) => {
     const m = window.__mc;
     const scale = m.guiScale;
-    const w = window.innerWidth / scale;
-    const h = window.innerHeight / scale;
+    const dpr = window.devicePixelRatio;
+    const w = (window.innerWidth * dpr) / scale;
+    const h = (window.innerHeight * dpr) / scale;
     const left = Math.floor(w / 2) - 91;
-    return { x: (left + 1 + slot * 20 + 10) * scale, y: (h - 11) * scale };
+    return { x: ((left + 1 + slot * 20 + 10) * scale) / dpr, y: ((h - 11) * scale) / dpr };
   }, slotTarget);
   // Real touch event: the hotbar selector only reacts to pointerType touch/pen.
   await page.touchscreen.tap(hotbarPoint.x, hotbarPoint.y);
@@ -182,8 +183,8 @@ try {
   if (!returnRect) {
     check('found the Return to Game button', false);
   } else {
-    const scale = await ev(() => window.__mc.screens.guiScale);
-    await page.mouse.click((returnRect.x + returnRect.w / 2) * scale, (returnRect.y + returnRect.h / 2) * scale);
+    const { scale, dpr } = await ev(() => ({ scale: window.__mc.screens.guiScale, dpr: window.devicePixelRatio }));
+    await page.mouse.click((returnRect.x + returnRect.w / 2) * scale / dpr, (returnRect.y + returnRect.h / 2) * scale / dpr);
     await waitFor('back in game', () => window.__mc.screens.current === null, 10000);
     await sleep(400);
     check('overlay returns after closing the menu', (await ev(() => document.querySelector('.tc-root').dataset.visible)) === 'true');

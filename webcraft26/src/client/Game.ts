@@ -12,6 +12,7 @@ import { LevelRenderer, type Camera } from './renderer/LevelRenderer.js';
 import { LevelChunk as Chunk } from '../vanilla/world/level/chunk/LevelChunk.js';
 import { buildLightmap, computeSkyState, DAY_PERIOD, type SkyState } from './EnvironmentLighting.js';
 import { FontRenderer } from './gui/FontRenderer.js';
+import { calcGuiScale, guiScaledSize } from './gui/GuiScale.js';
 import {
   GuiTextures, Hud, HUD_SPRITES, layoutDebugScreen,
   type DebugEntryOutput, type HudItemSlot, type HudState, type HudSurvivalExtensions,
@@ -32,6 +33,7 @@ import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher
 import { ENTITY_TYPES } from '../vanilla/world/entity/EntityType.js';
 import { ScreenManager } from './gui/ScreenManager.js';
 import { TitleScreen } from './gui/screens/TitleScreen.js';
+import { CreativeModeInventoryScreen } from './gui/screens/inventory/CreativeModeInventoryScreen.js';
 import type {
   ContainerMenuLike, CreateWorldOptions, GuiOptions, ScreenRef, WorldListProvider,
 } from './gui/Types.js';
@@ -480,6 +482,9 @@ export class Game {
 
   /** Leaves the title screen and hands control back to the player. */
   private startPlaying(): void {
+    // DeathScreen -> Title Screen -> Play leaves the same world at 0 HP (damage() refuses to
+    // trigger onDeath again), so a dead player must respawn instead of standing there forever.
+    if (this.survival.isDead || this.survival.health <= 0) this.respawnPlayer();
     this.titleMode = false;
     this.worldActive = true;
     this.screens.close();
@@ -596,10 +601,12 @@ export class Game {
   /** Hit-test the vanilla 182x22 hotbar (Hud.renderHotbar) against a CSS-pixel pointer position. */
   private touchHotbarSlot(clientX: number, clientY: number): number {
     const scale = this.guiScale;
-    const guiX = clientX / scale;
-    const guiY = clientY / scale;
-    const w = window.innerWidth / scale;
-    const h = window.innerHeight / scale;
+    const dpr = this.glCanvas.width / Math.max(1, window.innerWidth);
+    const guiX = (clientX * dpr) / scale;
+    const guiY = (clientY * dpr) / scale;
+    const size = guiScaledSize(this.glCanvas.width, this.glCanvas.height, scale);
+    const w = size.width;
+    const h = size.height;
     if (guiY < h - 22 || guiY > h) return -1;
     const left = Math.floor(w / 2) - 91;
     const i = Math.floor((guiX - (left + 1)) / 20);
@@ -790,21 +797,56 @@ export class Game {
    */
   private containerAdapter(): ContainerMenuLike {
     const menu = (): AbstractContainerMenu => this.survival.activeMenu ?? this.survival.openInventory();
+    // CreativeModeInventoryScreen owns a virtual 9x5 tab grid (indices 0..44) plus the real
+    // player hotbar (45..53); it is not backed by an AbstractContainerMenu.
+    const creativeGrid: { itemId: number; count: number }[] = Array.from(
+      { length: 45 }, () => ({ itemId: -1, count: 0 }),
+    );
+    let creativeCarried: { itemId: number; count: number } | null = null;
+    const isCreative = (): boolean => this.screens?.current instanceof CreativeModeInventoryScreen;
+    const plain = (stack: ItemStack): { itemId: number; count: number } =>
+      ({ itemId: stack.item ? stack.item.id : -1, count: stack.getCount() });
     return {
-      getSlotCount: () => menu().slots.length,
+      getSlotCount: () => (isCreative() ? 54 : menu().slots.length),
       getItem: (index) => {
+        if (isCreative()) {
+          if (index >= 0 && index < 45) return creativeGrid[index];
+          if (index >= 45 && index < 54) return plain(this.survival.inventory.getItem(index - 45));
+        }
         const slot = menu().slots[index];
         const stack = slot ? slot.getItem() : ItemStack.EMPTY;
-        return { itemId: stack && stack.item ? stack.item.id : -1, count: stack ? stack.getCount() : 0 };
+        return plain(stack);
       },
       click: (index, button, _shift, action) => {
+        if (isCreative()) {
+          if (index >= 0 && index < 45) {
+            const stack = creativeGrid[index];
+            if (stack.itemId >= 0) creativeCarried = { itemId: stack.itemId, count: button === 1 ? 1 : 64 };
+            return;
+          }
+          if (index >= 45 && index < 54) {
+            const slot = index - 45;
+            if (creativeCarried && creativeCarried.itemId >= 0) {
+              const item = this.survival.registry.get(creativeCarried.itemId);
+              if (item) this.survival.inventory.setItem(slot, new ItemStack(item, creativeCarried.count));
+            } else {
+              const stack = this.survival.inventory.getItem(slot);
+              if (stack.item) creativeCarried = { itemId: stack.item.id, count: 64 };
+            }
+            return;
+          }
+        }
         menu().clicked(index, button, ACTION_TO_INPUT[action] ?? ContainerInput.PICKUP, this.survival.asMenuPlayer());
       },
-      getCarried: () => {
+      setItem: (index, stack) => {
+        if (isCreative() && index >= 0 && index < 45) creativeGrid[index] = { itemId: stack.itemId, count: stack.count };
+      },
+      getCarried: () => (isCreative() ? creativeCarried : (() => {
         const stack = menu().getCarried();
         return stack && stack.item ? { itemId: stack.item.id, count: stack.getCount() } : null;
-      },
+      })()),
       setCarried: (stack) => {
+        if (isCreative()) { creativeCarried = stack; return; }
         const item = stack && stack.itemId >= 0 ? this.survival.registry.get(stack.itemId) : undefined;
         menu().setCarried(item && stack ? new ItemStack(item, stack.count) : ItemStack.EMPTY);
       },
@@ -895,6 +937,7 @@ export class Game {
         }
       }
       this.survival.inventory.setSelectedSlot(view.selectedItemSlot);
+      this.survival.restoreFromSave(view);
     }
 
     const data = loaded.level.getCompoundOrEmpty('Data');
@@ -1550,6 +1593,7 @@ export class Game {
   }
 
   private pickBlock(): void {
+    if (this.options.gamemode !== 'creative') return;
     const hit = this.raycast();
     if (!hit) return;
     const state = this.level.getBlockState(hit.x, hit.y, hit.z);
@@ -1849,7 +1893,7 @@ export class Game {
     const removed = this.level.unloadFarChunks(pcx, pcz, retain);
     if (removed.length === 0) return;
     for (const c of removed) this.entityManager.unloadChunk(c.x, c.z);
-    this.renderer.prune(this.player.pos.x, this.player.pos.z);
+    this.renderer.prune(this.player.pos.x, this.player.pos.z, this.level);
   }
 
   private resize(): void {
@@ -1870,11 +1914,8 @@ export class Game {
   }
 
   get guiScale(): number {
-    if (this.options.guiScale > 0) return this.options.guiScale;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = window.innerWidth * dpr;
-    const h = window.innerHeight * dpr;
-    return Math.max(1, Math.floor(Math.min(w / 320, h / 240)));
+    const forced = this.options.guiScale > 0 ? this.options.guiScale : 0;
+    return calcGuiScale(this.glCanvas.width, this.glCanvas.height, forced, false);
   }
 
   private render(partial: number): void {
@@ -2019,12 +2060,14 @@ export class Game {
   private renderHud(): void {
     const ctx = this.guiCtx;
     const scale = this.guiScale;
-    const dpr = this.glCanvas.width / window.innerWidth;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.guiCanvas.width, this.guiCanvas.height);
-    ctx.scale(dpr * scale, dpr * scale);
-    const w = window.innerWidth / scale;
-    const h = window.innerHeight / scale;
+    // Window#setGuiScale: logical units are framebuffer pixels / scale, so the transform is
+    // exactly `scale` (not dpr * scale).
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    const size = guiScaledSize(this.guiCanvas.width, this.guiCanvas.height, scale);
+    const w = size.width;
+    const h = size.height;
 
     // survival.airSupply / maxAirSupply / armorValue exist since the survival package landed; the
     // optional cast only covers fields that may still be missing (absorption / status effects).

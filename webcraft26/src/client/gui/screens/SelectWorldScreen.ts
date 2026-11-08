@@ -46,9 +46,17 @@ export class SelectWorldScreen extends Screen {
       itemHeight: ENTRY_HEIGHT,
       renderItem: (g, w, _i, x, y, ww, hh, hovered, selected) => {
         g.fill(x, y, x + ww, y + hh, selected ? 0x80ffffff : hovered ? 0x40ffffff : 0x20000000);
-        g.drawString(w.name, x + 30, y + 7, 0xffffffff, true);
+        // plainSubstrByWidth: long world names must not run over the icon / scrollbar.
+        const fit = (text: string, maxWidth: number): string => {
+          if (g.textWidth(text) <= maxWidth) return text;
+          let cut = text;
+          while (cut.length > 0 && g.textWidth(`${cut}...`) > maxWidth) cut = cut.slice(0, -1);
+          return `${cut}...`;
+        };
+        g.drawString(fit(w.name, ww - 38), x + 30, y + 7, 0xffffffff, true);
         const mode = w.gameMode ?? 'survival';
-        g.drawString(`${this.t('selectWorld.gameMode')}: ${mode}  ${w.version ?? '26.2'}`, x + 30, y + 19, 0xffa0a0a0, false);
+        const detail = `${this.t('selectWorld.gameMode')}: ${mode}  ${w.version ?? '26.2'}`;
+        g.drawString(fit(detail, ww - 38), x + 30, y + 19, 0xffa0a0a0, false);
         // A 24x24 world icon placeholder (the save-list agent can supply one).
         g.fill(x + 3, y + 3, x + 27, y + 27, 0xff3b5f2b);
         g.outline(x + 3, y + 3, 24, 24, 0xff000000);

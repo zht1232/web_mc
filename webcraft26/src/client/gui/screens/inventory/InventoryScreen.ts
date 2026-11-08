@@ -51,13 +51,18 @@ export class InventoryScreen extends AbstractContainerScreen {
 
   protected build(): void {
     super.build();
+    // RecipeBookComponent.updateScreenPosition: the whole container moves right while the book
+    // is open so the 147px panel has room on the left.
+    if (this.recipeBook.isVisible() && this.width >= this.imageWidth + 200) {
+      this.leftPos = 177 + Math.floor((this.width - this.imageWidth - 200) / 2);
+    }
     // AbstractRecipeBookScreen#getRecipeBookButtonPosition
     const bx = this.leftPos + 104;
     const by = Math.floor(this.height / 2) - 22;
     // ImageButton with the recipe_book/button sprites (a green book), not a text button
     const b = new Button(bx, by, 20, 18, '', () => {
       this.recipeBook.toggle();
-      this.env.toast(this.recipeBook.isVisible() ? 'Recipe Book' : '');
+      this.resize(this.width, this.height);
     }, { enabled: 'recipe_book/button', disabled: 'recipe_book/button', highlighted: 'recipe_book/button_highlighted' });
     this.addRenderableWidget(b);
   }

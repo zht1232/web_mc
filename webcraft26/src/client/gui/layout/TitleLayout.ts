@@ -138,9 +138,9 @@ export function computeTitleScreenLayout(width: number, height: number, copyrigh
     copyright,
     logo,
     edition,
-    // SplashRenderer: x = width / 2 + 90, y = height / 4 + 48 - 6
-    splashX: half(width) + 90,
-    splashY: firstRowY - 6,
+    // SplashRenderer: width / 2 + 123, absolute y=69 (SplashRenderer.java:17-18,32)
+    splashX: half(width) + 123,
+    splashY: 69,
     // graphics.text(font, versionString, 2, this.height - 10, ...)
     versionX: 2,
     versionY: height - 10,

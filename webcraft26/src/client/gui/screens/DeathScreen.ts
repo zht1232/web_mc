@@ -50,7 +50,7 @@ export class DeathScreen extends Screen {
     // we render it through a canvas transform (still using the vanilla glyphs).
     const ctx = g.ctx;
     ctx.save();
-    ctx.translate(cx / 2, 30);
+    ctx.translate(cx, 30);
     ctx.scale(2, 2);
     g.drawCenteredString(this.title, 0, 0, 0xffff0000, true);
     ctx.restore();

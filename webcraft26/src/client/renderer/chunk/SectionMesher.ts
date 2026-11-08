@@ -40,7 +40,7 @@ import type { DecodedModel, DecodedQuad, ModelSource } from '../model/ModelSourc
 /** Biome tint provider, called only for quads that carry a tint index (or for water). */
 export interface TintSource {
   /** tint index -> rgb multiplier (each 0..1) for a world column, e.g. grass/foliage/water */
-  tint(stateId: number, tintIndex: number, x: number, z: number): [number, number, number];
+  tint(stateId: number, tintIndex: number, x: number, y: number, z: number): [number, number, number];
 }
 
 export interface MeshInput {
@@ -606,12 +606,12 @@ class SectionMesher {
 
   // ---- tint ------------------------------------------------------------
 
-  private tintComponent(state: number, tintIndex: number, x: number, z: number, channel: number): number {
+  private tintComponent(state: number, tintIndex: number, x: number, y: number, z: number, channel: number): number {
     // vanilla ModelBlockRenderer.getTintColor caches per tint index for the current block
     if (tintIndex < 16) {
       const bit = 1 << tintIndex;
       if ((this.tintMask & bit) === 0) {
-        const rgb = this.input.tints.tint(state, tintIndex, x, z);
+        const rgb = this.input.tints.tint(state, tintIndex, x, y, z);
         this.tintRgb[tintIndex * 3] = clamp255(Math.round(rgb[0] * 255));
         this.tintRgb[tintIndex * 3 + 1] = clamp255(Math.round(rgb[1] * 255));
         this.tintRgb[tintIndex * 3 + 2] = clamp255(Math.round(rgb[2] * 255));
@@ -619,7 +619,7 @@ class SectionMesher {
       }
       return this.tintRgb[tintIndex * 3 + channel];
     }
-    const rgb = this.input.tints.tint(state, tintIndex, x, z);
+    const rgb = this.input.tints.tint(state, tintIndex, x, y, z);
     return clamp255(Math.round(rgb[channel] * 255));
   }
 
@@ -790,9 +790,9 @@ class SectionMesher {
       let tg = 255;
       let tb = 255;
       if (quad.tint >= 0) {
-        tr = this.tintComponent(state, quad.tint, ox, oz, 0);
-        tg = this.tintComponent(state, quad.tint, ox, oz, 1);
-        tb = this.tintComponent(state, quad.tint, ox, oz, 2);
+        tr = this.tintComponent(state, quad.tint, ox, oy, oz, 0);
+        tg = this.tintComponent(state, quad.tint, ox, oy, oz, 1);
+        tb = this.tintComponent(state, quad.tint, ox, oy, oz, 2);
       }
 
       // NB: lighting/AO sample the world, while the vertices are section local; the
@@ -1235,7 +1235,7 @@ class SectionMesher {
     let tg = 255;
     let tb = 255;
     if (!lava) {
-      const rgb = this.input.tints.tint(state, 0, x, z);
+      const rgb = this.input.tints.tint(state, 0, x, this.input.originY + y, z);
       tr = clamp255(Math.round(rgb[0] * 255));
       tg = clamp255(Math.round(rgb[1] * 255));
       tb = clamp255(Math.round(rgb[2] * 255));

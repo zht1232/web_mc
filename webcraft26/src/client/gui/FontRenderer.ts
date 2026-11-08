@@ -31,7 +31,8 @@ export class FontRenderer {
           if (a > 0) maxX = Math.max(maxX, x);
         }
       }
-      this.glyphWidths[c] = Math.min(8, maxX + 2);
+      // BitmapProvider: advance = actual ink width (maxX + 1) + 1px spacing.
+      this.glyphWidths[c] = maxX + 2;
     }
     // the vanilla space is 4px
     this.glyphWidths[32] = 4;
@@ -45,8 +46,8 @@ export class FontRenderer {
 
   width(text: string): number {
     let w = 0;
-    for (const ch of text) w += this.charWidth(ch) + 1;
-    return w - 1;
+    for (const ch of text) w += this.charWidth(ch);
+    return w;
   }
 
   /**
@@ -72,12 +73,12 @@ export class FontRenderer {
     let cx = x;
     for (const ch of text) {
       const code = ch.charCodeAt(0);
-      if (code === 32) { cx += this.glyphWidths[32] + 1; continue; }
+      if (code === 32) { cx += this.glyphWidths[32]; continue; }
       if (code < 32 || code > 126) { cx += 6; continue; }
       const sx = (code & 15) * 8;
       const sy = (code >> 4) * 8;
       ctx.drawImage(mask, sx, sy, 8, 8, cx, y, 8, 8);
-      cx += this.glyphWidths[code] + 1;
+      cx += this.glyphWidths[code];
     }
   }
 

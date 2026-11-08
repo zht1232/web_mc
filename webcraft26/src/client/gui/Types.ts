@@ -93,6 +93,8 @@ export interface ContainerMenuLike {
   click(index: number, button: number, shift: boolean, action: 'PICKUP' | 'QUICK_MOVE' | 'SPLIT' | 'THROW' | 'CLONE' | 'SWAP'): void;
   getCarried(): ItemStack | null;
   setCarried(stack: ItemStack | null): void;
+  /** Creative inventory writes its virtual tab grid through this (optional for real menus). */
+  setItem?(index: number, stack: ItemStack): void;
 }
 
 /** Constructor dependency bundle. All main-loop data is injected here, never imported from Game. */

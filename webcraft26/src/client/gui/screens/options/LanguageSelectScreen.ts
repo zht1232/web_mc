@@ -43,7 +43,7 @@ export class LanguageSelectScreen extends OptionsSubScreen {
     const left = Math.floor(this.width / 2) - 155;
     const top = 32;
     const width = 310;
-    const height = this.height - 78;
+    const height = this.height - 88;
     this.list = new ScrollPanel<LangEntry>(left, top, width, height, this.t('options.languageTitle'), {
       itemHeight: 22,
       renderItem: (g, item, _index, x, y, w, h, hovered, selected) => {

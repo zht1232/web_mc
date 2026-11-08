@@ -31,14 +31,14 @@ export class OptionsScreen extends Screen {
     const cx = Math.floor(this.width / 2);
     const deps = this.env.deps;
 
-    // Sub-header: FOV slider at (w/2 - 155, h/6 - 12) and the online button.
-    const subY = Math.floor(this.height / 6) - 12;
+    // HeaderAndFooterLayout(61, 33): title 12, then a 20px sub-header row at y=29 with 8px spacing.
+    const subY = 29;
     const fov = getOptionNumber(deps, 'fov', 70);
     this.addRenderableWidget(new Slider(cx - 155, subY, 150, BUTTON_DEFAULT_HEIGHT,
       this.t('options.fov'), (fov - 30) / 80,
       (_name, v) => `${this.t('options.fov')}: ${Math.round(30 + v * 80)}`,
       (v) => setOption(deps, 'fov', Math.round(30 + v * 80))));
-    this.addRenderableWidget(new Button(cx + 5, subY + 24, 150, BUTTON_DEFAULT_HEIGHT,
+    this.addRenderableWidget(new Button(cx + 5, subY, 150, BUTTON_DEFAULT_HEIGHT,
       this.t(this.inWorldMenu ? 'selectWorld.gameRules' : 'options.online'),
       () => this.toast(this.t('options.online'))));
 
@@ -55,7 +55,10 @@ export class OptionsScreen extends Screen {
       'options.telemetry': null,
       'options.credits_and_attribution': null,
     };
-    const startY = Math.max(48, subY + 24 + OPTIONS_BUTTON_HEIGHT + 12);
+    const rows = Math.ceil(OPTIONS_BUTTON_KEYS.length / GRID_COLUMNS);
+    const gridHeight = rows * (OPTIONS_BUTTON_HEIGHT + OPTIONS_GRID_PADDING * 2);
+    // HeaderAndFooterLayout.arrangeElements: header 61 + 30, clamped above the footer.
+    const startY = Math.max(0, Math.min(61 + 30, this.height - 33 - gridHeight));
     for (let i = 0; i < OPTIONS_BUTTON_KEYS.length; i++) {
       const key = OPTIONS_BUTTON_KEYS[i];
       const col = i % GRID_COLUMNS;

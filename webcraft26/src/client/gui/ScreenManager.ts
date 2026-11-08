@@ -22,7 +22,7 @@
 import type { ScreenDeps, ScreenEnv, ScreenRef, MouseAction } from './Types.js';
 import { GuiGraphics } from './GuiGraphics.js';
 import { GuiSpriteAtlas, CORE_SPRITES } from './GuiSpriteAtlas.js';
-import { calcGuiScale } from './GuiScale.js';
+import { calcGuiScale, guiScaledSize } from './GuiScale.js';
 import { I18n, DEFAULT_I18N } from './Language.js';
 import { ToastManager } from './components/ToastManager.js';
 import { Screen } from './screens/Screen.js';
@@ -192,11 +192,14 @@ export class ScreenManager {
     return calcGuiScale(fw, fh, forced, false);
   }
 
-  /** Window#setGuiScale / Game.ts renderHud logical size (cssW / scale). */
+  /** Window#setGuiScale: GUI logical size is ceil(framebuffer / scale). */
   private ensureLogicalSize(): void {
     const scale = this.guiScale || 1;
-    this.logicalW = this.cssW > 0 ? this.cssW / scale : GuiScalePlaceholder;
-    this.logicalH = this.cssH > 0 ? this.cssH / scale : GuiScalePlaceholder;
+    const fw = this.canvas.width || Math.floor(this.cssW * this.dpr());
+    const fh = this.canvas.height || Math.floor(this.cssH * this.dpr());
+    const size = guiScaledSize(fw, fh, scale);
+    this.logicalW = this.cssW > 0 ? size.width : GuiScalePlaceholder;
+    this.logicalH = this.cssH > 0 ? size.height : GuiScalePlaceholder;
   }
 
   resize(w: number, h: number): void {
@@ -215,7 +218,6 @@ export class ScreenManager {
 
     this.ensureLogicalSize();
     const scale = this.guiScale || 1;
-    const dpr = this.dpr();
     const W = this.canvas.width;
     const H = this.canvas.height;
 
@@ -231,7 +233,7 @@ export class ScreenManager {
       this.ctx.setTransform(1, 0, 0, 1, 0, 0);
       this.ctx.clearRect(0, 0, W, H);
     }
-    this.ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+    this.ctx.setTransform(scale, 0, 0, scale, 0, 0);
 
     const g = new GuiGraphics(this.ctx, {
       font: this.deps.font,
@@ -275,8 +277,9 @@ export class ScreenManager {
   /** mx/my are CSS pixels relative to the GUI canvas. */
   onMouse(mx: number, my: number, button: number, action: MouseAction, wheelDelta = 0): boolean {
     const scale = this.guiScale || 1;
-    this.mouseX = mx / scale;
-    this.mouseY = my / scale;
+    const dpr = this.dpr();
+    this.mouseX = (mx * dpr) / scale;
+    this.mouseY = (my * dpr) / scale;
     if (!this._current) return false;
     return this._current.mouseEvent(this.mouseX, this.mouseY, button, action, wheelDelta);
   }

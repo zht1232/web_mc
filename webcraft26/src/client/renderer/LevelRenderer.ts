@@ -198,16 +198,13 @@ export class LevelRenderer {
 
   private tintSource(level: ClientLevel): TintSource {
     return {
-      tint: (stateId, tintIndex, x, z) => {
+      tint: (stateId, tintIndex, x, y, z) => {
         if (tintIndex < 0) return [1, 1, 1];
-        const biome = level.getBiome(x, 64, z);
-        // vanilla grass uses tint index 0/1 depending on the model; foliage uses 0
-        const isWater = this.mc.isLiquid(stateId);
-        if (isWater) return this.biomeColors.waterColor(biome);
+        const biome = level.getBiome(x, y, z);
         const block = this.mc.blockOf(stateId).name;
-        if (block.includes('leaves') || block === 'vine' || block === 'lily_pad') return this.biomeColors.foliageColor(biome);
-        if (tintIndex === 0) return this.biomeColors.grassColor(biome);
-        return this.biomeColors.foliageColor(biome);
+        // BlockColors.createDefault(): leaves/grass/water/redstone/stems all have explicit
+        // tint sources; blocks without one must stay white (cherry/pale_oak leaves, lava, ...).
+        return this.biomeColors.blockTint(block, biome, tintIndex, x, z, y);
       },
     };
   }
@@ -437,7 +434,9 @@ export class LevelRenderer {
             states[idx] = 0; sky[idx] = 15; block[idx] = 0;
             continue;
           }
-          const li = ((ly) << 8) | ((x & 15) << 4) | (z & 15);
+          // LevelChunk.index(x,y,z) = (y<<8) | (z<<4) | x; swapping x/z here transposes every
+          // section, so neighbouring chunks no longer line up (SectionCopy.java:66).
+          const li = ((ly) << 8) | ((z & 15) << 4) | (x & 15);
           states[idx] = section.states.get(li);
           sky[idx] = section.skyLight ? section.skyLight.getIndex(li) : 15;
           block[idx] = section.blockLight ? section.blockLight.getIndex(li) : 0;
@@ -452,12 +451,20 @@ export class LevelRenderer {
   }
 
   /** Drops GPU buffers for sections outside the view. */
-  prune(camX: number, camZ: number): void {
+  prune(camX: number, camZ: number, level?: ClientLevel): void {
     const cx = Math.floor(camX) >> 4;
     const cz = Math.floor(camZ) >> 4;
     const limit = this.renderDistance + 3;
+    const marked = new Set<number>();
     for (const [key, section] of this.sections) {
       if (Math.abs(section.cx - cx) > limit || Math.abs(section.cz - cz) > limit) {
+        // Pinned/modified chunks keep their LevelChunk but lose the GPU mesh here; without a
+        // dirty flag update() never rebuilds them when the player comes back.
+        if (level && !marked.has(key)) {
+          marked.add(key);
+          const chunk = level.getChunk(section.cx, section.cz);
+          if (chunk) chunk.dirty = true;
+        }
         for (let layer = 0; layer < LAYERS; layer++) {
           if (section.vaos[layer]) this.gl.deleteVertexArray(section.vaos[layer]);
         }
@@ -812,10 +819,10 @@ export class LevelRenderer {
     gl.cullFace(gl.BACK);
     gl.disable(gl.BLEND);
 
-    // solid + cutout
+    // solid + cutout (vanilla CUTOUT_TERRAIN alpha threshold is 0.5; solid keeps the default 0.1)
     for (const section of opaque) {
       this.drawSection(section, RenderLayer.SOLID, 0.1);
-      this.drawSection(section, RenderLayer.CUTOUT, 0.1);
+      this.drawSection(section, RenderLayer.CUTOUT, 0.5);
     }
 
     // translucent, back to front, no depth write
@@ -825,7 +832,7 @@ export class LevelRenderer {
     gl.depthMask(false);
     this.terrain.set1f('uTranslucent', 1);
     for (const section of translucent) {
-      this.drawSection(section, RenderLayer.TRANSLUCENT, 0.02);
+      this.drawSection(section, RenderLayer.TRANSLUCENT, 0.1);
     }
     gl.depthMask(true);
     gl.disable(gl.BLEND);

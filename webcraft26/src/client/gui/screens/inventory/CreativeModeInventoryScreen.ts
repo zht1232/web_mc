@@ -77,6 +77,8 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     if (index < 0 || index >= this.tabs.length) return;
     this.selectedTab = index;
     this.scrollOffs = 0;
+    // CreativeModeInventoryScreen: the search box only exists on the Search tab.
+    if (this.searchBox) this.searchBox.visible = index === TAB_SEARCH;
     this.refreshItems();
   }
 
@@ -120,6 +122,7 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
       .setBordered(false)
       .setMaxLength(50);
     this.searchBox.setResponder(() => this.refreshItems());
+    this.searchBox.visible = this.selectedTab === TAB_SEARCH;
     this.addRenderableWidget(this.searchBox);
     this.refreshItems();
   }
@@ -138,7 +141,9 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     for (let i = 0; i < this.tabs.length; i++) {
       const isTop = i < 7;
       const pos = i % 7;
-      const x = this.imageWidth - TAB_X_BASE * (7 - pos) + 1;
+      // CreativeModeInventoryScreen#getTabX: left tabs start at 27*pos, right-aligned tabs
+      // (columns 5/6) hug the panel edge.
+      const x = this.tabX(i);
       const y = isTop ? -TAB_TOP_OFFSET : this.imageHeight - 4;
       const selected = i === this.selectedTab;
       const sprite = `container/creative_inventory/tab_${isTop ? 'top' : 'bottom'}_${selected ? 'selected' : 'unselected'}_${pos + 1}`;
@@ -148,7 +153,7 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
         g.outline(x, y, CREATIVE_TAB_WIDTH, CREATIVE_TAB_HEIGHT, 0xff000000);
       }
       const icon = this.itemIndex(this.tabs[i].icon);
-      if (icon >= 0) g.renderItem(icon, x + 5, y + 8, 16);
+      if (icon >= 0) g.renderItem(icon, x + 5, y + 8 + (isTop ? 1 : -1), 16);
     }
 
     // Scroller at (175, 18) over a 12px wide track.
@@ -169,11 +174,15 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     return Math.max(0, rows - CREATIVE_NUM_ROWS);
   }
 
+  private tabX(index: number): number {
+    const pos = index % 7;
+    return pos >= 5 ? this.imageWidth - TAB_X_BASE * (7 - pos) + 1 : TAB_X_BASE * pos;
+  }
+
   private tabHit(mx: number, my: number): number {
     for (let i = 0; i < this.tabs.length; i++) {
       const isTop = i < 7;
-      const pos = i % 7;
-      const x = this.leftPos + this.imageWidth - TAB_X_BASE * (7 - pos) + 1;
+      const x = this.leftPos + this.tabX(i);
       const y = this.topPos + (isTop ? -TAB_TOP_OFFSET : this.imageHeight - 4);
       if (mx >= x && mx < x + CREATIVE_TAB_WIDTH && my >= y && my < y + CREATIVE_TAB_HEIGHT) return i;
     }

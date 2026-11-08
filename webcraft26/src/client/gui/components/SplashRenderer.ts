@@ -5,8 +5,7 @@
 
 import type { GuiGraphics } from '../GuiGraphics.js';
 
-const SPLASH_ANGLE = -8 * (Math.PI / 180);
-const SPLASH_BASE_SCALE = 1.8;
+const SPLASH_ANGLE = -Math.PI / 9;
 const SPLASH_COLOR = 0xffffff00;
 
 export class SplashRenderer {
@@ -31,19 +30,19 @@ export class SplashRenderer {
 
   render(g: GuiGraphics, x: number, y: number, alpha = 1): void {
     if (!this.splash) return;
-    // Mth.sin(timer * 0.1F) * 0.1F pulse around the 1.8 base scale.
-    const scale = SPLASH_BASE_SCALE * (1 + Math.sin(this.time * 0.0004) * 0.1);
+    const textWidth = g.textWidth(this.splash);
+    // SplashRenderer.extractRenderState: 1.8 - |sin(millis%1000 / 1000 * 2pi)| * 0.1,
+    // scaled by 100 / (textWidth + 32) so long splashes shrink instead of covering the menu.
+    const phase = 1.8 - Math.abs(Math.sin((performance.now() % 1000) / 1000 * Math.PI * 2)) * 0.1;
+    const textScale = (phase * 100) / (textWidth + 32);
     const ctx = g.ctx;
     const a = g.getAlpha();
     ctx.save();
     ctx.globalAlpha = a * alpha;
     ctx.translate(x, y);
     ctx.rotate(SPLASH_ANGLE);
-    ctx.scale(scale, scale);
-    // FontRenderer draws from a top-left corner; offset back into GUI space.
-    const w = g.textWidth(this.splash);
-    g.ctx.globalAlpha = a * alpha;
-    g.drawString(this.splash, -Math.floor(w / 2), -4, SPLASH_COLOR, true);
+    ctx.scale(textScale, textScale);
+    g.drawString(this.splash, -Math.floor(textWidth / 2), -8, SPLASH_COLOR, true);
     ctx.restore();
     g.setAlpha(a);
   }

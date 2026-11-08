@@ -121,6 +121,26 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   /** Set once when health reaches 0; cleared by respawn(). */
   private dead = false;
 
+  /** PlayerData.applyToPlayer for the survival-owned fields (health/food/XP). */
+  restoreFromSave(view: {
+    health?: number; foodLevel?: number; foodSaturationLevel?: number;
+    xpLevel?: number; xpP?: number; xpTotal?: number;
+  }): void {
+    const health = Number(view.health);
+    if (Number.isFinite(health) && health > 0) this.hp = Math.min(this.maxHp, health);
+    const food = Number(view.foodLevel);
+    if (Number.isFinite(food)) this.food.setFoodLevel(food);
+    const saturation = Number(view.foodSaturationLevel);
+    if (Number.isFinite(saturation)) this.food.setSaturation(saturation);
+    const level = Number(view.xpLevel);
+    if (Number.isFinite(level) && level >= 0) this.experienceLevel = Math.floor(level);
+    const progress = Number(view.xpP);
+    if (Number.isFinite(progress)) this.experienceProgress = Math.max(0, Math.min(progress, 0.999999));
+    const total = Number(view.xpTotal);
+    if (Number.isFinite(total) && total >= 0) this.totalXp = Math.floor(total);
+    this.dead = false;
+  }
+
   /** Called by the main game when health first reaches 0 (death screen + loot). */
   onDeath?: () => void;
 

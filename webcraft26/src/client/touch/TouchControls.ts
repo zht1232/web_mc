@@ -382,8 +382,12 @@ export class TouchControls {
     if (this.disposed) return;
     const w = Math.max(1, window.innerWidth);
     const h = Math.max(1, window.innerHeight);
-    const hudScale = Math.max(2, Math.min(4, Math.floor(Math.min(w / 320, h / 240))));
-    this.el.style.setProperty('--tc-hotbar', `${Math.round(22 * hudScale)}px`);
+    // The HUD's hotbar is 22 GUI px; one GUI px is `scale / dpr` CSS px. Use the live Game
+    // scale when available instead of guessing from CSS dimensions.
+    const mc = (globalThis as unknown as { __mc?: { guiScale?: number } }).__mc;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const scale = mc?.guiScale ?? Math.max(2, Math.min(4, Math.floor(Math.min(w * dpr / 320, h * dpr / 240))));
+    this.el.style.setProperty('--tc-hotbar', `${Math.round((22 * scale) / dpr)}px`);
   }
 
   /* ------------------------------------------------------------------ buttons */

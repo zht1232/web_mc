@@ -84,7 +84,12 @@ uniform float uShadowTexel;
 out vec4 fragColor;
 
 void main() {
-  vec4 tex = texture(uAtlas, vec3(vUV, float(vLayer)));
+  // CUTOUT must sample mip 0: averaging RGBA mips mixes the black RGB of transparent texels
+  // into leaves/plants (alpha stays above the 0.5 cutout), turning them into dark, solid blobs.
+  // Vanilla uses sampleNearest/RGSS for cutout terrain; LOD 0 is the equivalent fix here.
+  vec4 tex = uAlphaTest >= 0.25
+    ? textureLod(uAtlas, vec3(vUV, float(vLayer)), 0.0)
+    : texture(uAtlas, vec3(vUV, float(vLayer)));
   if (uDebug == 1) { fragColor = vec4(vColor.rgb, 1.0); return; }
   if (uDebug == 2) { fragColor = vec4(vUV, float(vLayer) / 64.0, 1.0); return; }
   if (uDebug == 3) { fragColor = vec4(tex.rgb, 1.0); return; }

@@ -55,7 +55,7 @@ export class ControlsScreen extends OptionsSubScreen {
     const left = Math.floor(this.width / 2) - 155;
     const top = 32;
     const width = 310;
-    const height = this.height - 70;
+    const height = this.height - 88;
     this.list = new ScrollPanel<KeyBind>(left, top, width, height, this.t('options.controlsTitle'), {
       itemHeight: 20,
       renderItem: (g, item, index, x, y, w, h, hovered, selected) => {

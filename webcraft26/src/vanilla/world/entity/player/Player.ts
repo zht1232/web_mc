@@ -196,6 +196,32 @@ export class Player {
       this.pos = this.pos.add(0, 0, moveZ);
     }
 
+    // Entity.move step-up: a 0.6 block step (stairs/slabs/snow) must not require a jump.
+    const blockedHorizontally = moveX !== dx || moveZ !== dz;
+    if (blockedHorizontally && !this.flying && this.onGround) {
+      const stepHeight = 0.6;
+      const raised = this.pos.add(0, stepHeight, 0);
+      const raisedBox = this.boundingBox(raised);
+      const raisedBlockers = collectCollisionBoxes(level, raisedBox.inflateAll(0.01));
+      if (!raisedBlockers.some((b) => b.intersects(raisedBox))) {
+        const around = collectCollisionBoxes(level, raisedBox.expandTowards(dx, 0, dz).inflateAll(0.5));
+        let sx = dx;
+        let sz = dz;
+        for (const b of around) sx = clipX(b, raisedBox, sx);
+        const movedX = raisedBox.move(sx, 0, 0);
+        for (const b of around) sz = clipZ(b, movedX, sz);
+        if (Math.abs(sx) > 1e-5 || Math.abs(sz) > 1e-5) {
+          this.pos = raised.add(sx, 0, sz);
+          const dropBoxes = collectCollisionBoxes(level,
+            this.boundingBox().expandTowards(0, -stepHeight, 0).inflateAll(0.5));
+          let sy = -stepHeight;
+          for (const b of dropBoxes) sy = clipY(b, this.boundingBox(), sy);
+          this.pos = this.pos.add(0, sy, 0);
+          this.onGround = true;
+        }
+      }
+    }
+
     const collidedY = moveY !== dy;
     this.onGround = dy < 0 && collidedY;
     if (collidedY) this.vel = new Vec3(this.vel.x, 0, this.vel.z);

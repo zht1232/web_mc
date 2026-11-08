@@ -161,6 +161,7 @@ export class ScreenManager {
   close(): void {
     this._current = null;
     this.stack.length = 0;
+    this.deps.callbacks.onScreenClosed?.();
   }
 
   /** Pop to the previous screen; used by option sub-pages / world-selection. */

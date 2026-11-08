@@ -75,6 +75,8 @@ export interface ScreenCallbacks {
   onQuit?(): void;
   onRespawn?(): void;
   onChatMessage?(text: string): void;
+  /** A screen was closed (Esc, E, Back to Game, ...). */
+  onScreenClosed?(): void;
   onInventorySlotClick?(slot: number, button: number, shift: boolean): void;
   onClose?(): void;
 }

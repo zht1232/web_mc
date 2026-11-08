@@ -43,10 +43,6 @@ export class PauseScreen extends Screen {
     y += BUTTON_DEFAULT_HEIGHT + PAUSE_BUTTON_PADDING;
 
     addHalf(this.t('menu.options'), () => this.open('options'), 0);
-    addHalf(this.t('menu.shareToLan'), () => this.toast('Open to LAN'), 1);
-    y += BUTTON_DEFAULT_HEIGHT + PAUSE_BUTTON_PADDING;
-
-    addHalf(this.t('menu.playerReporting'), () => this.toast('Player Reporting'), 0);
     addHalf(this.t('menu.multiplayerOptions.button'), () => this.toast('Multiplayer Options'), 1);
     y += BUTTON_DEFAULT_HEIGHT + PAUSE_BUTTON_PADDING * 2;
 

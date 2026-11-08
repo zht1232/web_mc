@@ -209,6 +209,8 @@ export class Game {
   private worldActive = true;
   /** True while the title screen owns the game (pauses the world + autosave). */
   private titleMode = false;
+  /** Singleplayer pause: the pause screen freezes the world until it is closed. */
+  private pausedByMenu = false;
   /** Set by the touch layer: pointer lock must be skipped on touch devices. */
   private touchEnabled = false;
   /** Bedrock-style touch overlay (ported from M2); created on touch hardware or with ?touch=1. */
@@ -433,6 +435,16 @@ export class Game {
             return;
           }
           this.openTitle();
+        },
+        onScreenClosed: () => {
+          // Singleplayer pause freezes the level (vanilla MinecraftServer.isPaused); the close
+          // callback is the only path that also covers Esc / E / Back to Game.
+          if (this.pausedByMenu && !this.titleMode) {
+            this.pausedByMenu = false;
+            this.worldActive = true;
+            this.autosave?.resume();
+            if (!this.touchEnabled && !this.mouseLocked) void this.guiCanvas.requestPointerLock();
+          }
         },
       },
     });
@@ -1093,8 +1105,12 @@ export class Game {
     this.screens.open(screen);
     this.keys.clear();
     if (document.pointerLockElement) document.exitPointerLock();
-    // vanilla pauses autosave on the pause menu and flushes immediately
-    if (screen === 'pause') void this.autosave?.pause();
+    // vanilla singleplayer pauses the integrated server while the pause menu is open
+    if (screen === 'pause') {
+      this.pausedByMenu = true;
+      this.worldActive = false;
+      void this.autosave?.pause();
+    }
   }
 
   /** Closes the current screen and hands control (and the mouse) back to the player. */
@@ -1186,15 +1202,66 @@ export class Game {
     if (this.attackCooldown > 0) return;
     this.attackCooldown = 4;
     this.player.swingHand();
+
+    // Player attack: ray vs entity boxes first (vanilla Player.attack). The block hit is the
+    // occlusion limit, so a mob behind a wall cannot be hit.
+    const blockHit = this.raycast();
+    const eye = this.cameraEye();
+    const blockDistance = blockHit
+      ? Math.hypot(blockHit.point.x - eye.x, blockHit.point.y - eye.y, blockHit.point.z - eye.z)
+      : Infinity;
+    const target = this.findEntityTarget(Math.min(3.5, blockDistance + 0.25));
+    if (target) {
+      const held = this.survival.getSelectedStack();
+      const name = held.item?.name ?? '';
+      const damage = name.endsWith('_sword') ? 4 : name.endsWith('_axe') ? 6
+        : name.endsWith('_pickaxe') ? 3 : name.endsWith('_shovel') ? 2.5 : 1;
+      target.hurt(damage, this.entityManager.getPlayerTarget());
+      return;
+    }
+
     // Creative breaks instantly and drops nothing; survival only *starts* mining — the progress
     // and the drop are handled by BlockBreaking in tick().
     if (this.options.gamemode !== 'creative') return;
-    const hit = this.raycast();
-    if (!hit) return;
+    if (!blockHit) return;
+    const hit = blockHit;
     const broken = this.level.getBlockState(hit.x, hit.y, hit.z);
     this.level.setBlockState(hit.x, hit.y, hit.z, 0);
     this.updateNeighbors(hit.x, hit.y, hit.z);
     if (broken !== 0) this.breakEffects(broken, hit.x, hit.y, hit.z);
+  }
+
+  /** Slab ray/AABB test for the attack reach; returns the closest living entity. */
+  private findEntityTarget(maxDistance: number): LivingEntity | null {
+    const eye = this.cameraEye();
+    const dir = this.lookVector();
+    let best: LivingEntity | null = null;
+    let bestT = maxDistance;
+    for (const entity of this.entityManager.getEntities()) {
+      if (!(entity instanceof LivingEntity) || !entity.isAlive()) continue;
+      const box = entity.getBoundingBox().inflateAll(0.1);
+      let tmin = 1e-5;
+      let tmax = bestT;
+      let miss = false;
+      for (const [origin, delta, lo, hi] of [
+        [eye.x, dir.x, box.minX, box.maxX],
+        [eye.y, dir.y, box.minY, box.maxY],
+        [eye.z, dir.z, box.minZ, box.maxZ],
+      ] as const) {
+        if (Math.abs(delta) < 1e-8) {
+          if (origin < lo || origin > hi) { miss = true; break; }
+          continue;
+        }
+        let t1 = (lo - origin) / delta;
+        let t2 = (hi - origin) / delta;
+        if (t1 > t2) [t1, t2] = [t2, t1];
+        tmin = Math.max(tmin, t1);
+        tmax = Math.min(tmax, t2);
+        if (tmin > tmax) { miss = true; break; }
+      }
+      if (!miss && tmin < bestT) { best = entity; bestT = tmin; }
+    }
+    return best;
   }
 
   /** Advances the survival mining progress for the aimed block (vanilla Player.tick loop). */
@@ -1498,6 +1565,16 @@ export class Game {
    */
   private useItem(): void {
     if (this.useCooldown > 0) return;
+    // Food / consumables: right click eats without requiring a block target.
+    const held = this.survival.getSelectedStack();
+    const food = held.item?.food;
+    if (food && (this.survival.hunger < 20 || food.canAlwaysEat)) {
+      this.survival.food.eatProperties(food.nutrition, food.saturation);
+      if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+      this.player.swingHand();
+      this.useCooldown = 32;
+      return;
+    }
     this.useCooldown = 4;
     this.player.swingHand();
     const hit = this.raycast();
@@ -1509,9 +1586,9 @@ export class Game {
       this.openBlockContainer(targetBlock, hit.x, hit.y, hit.z);
       return;
     }
-    const held = this.survival.getSelectedStack();
-    if (!held || held.isEmpty() || !held.item || !held.item.block) return;
-    const item = held.item;
+    const heldBlock = this.survival.getSelectedStack();
+    if (!heldBlock || heldBlock.isEmpty() || !heldBlock.item || !heldBlock.item.block) return;
+    const item = heldBlock.item;
     const ctx: PlacementContext = {
       x: hit.x, y: hit.y, z: hit.z,
       face: hit.face,

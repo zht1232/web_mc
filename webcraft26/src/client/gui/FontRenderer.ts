@@ -40,7 +40,7 @@ export class FontRenderer {
 
   charWidth(ch: string): number {
     const c = ch.charCodeAt(0);
-    if (c < 32 || c > 126) return 6;
+    if (c < 32 || c > 126) return 8;
     return this.glyphWidths[c];
   }
 
@@ -74,7 +74,19 @@ export class FontRenderer {
     for (const ch of text) {
       const code = ch.charCodeAt(0);
       if (code === 32) { cx += this.glyphWidths[32]; continue; }
-      if (code < 32 || code > 126) { cx += 6; continue; }
+      if (code < 32) continue;
+      if (code > 126) {
+        // No unifont page is shipped; fall back to the browser font so CJK/Cyrillic language
+        // names and chat are not blank. Keep the cell width aligned with charWidth().
+        ctx.save();
+        ctx.font = '8px "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = color;
+        ctx.fillText(ch, cx, y);
+        ctx.restore();
+        cx += 8;
+        continue;
+      }
       const sx = (code & 15) * 8;
       const sy = (code >> 4) * 8;
       ctx.drawImage(mask, sx, sy, 8, 8, cx, y, 8, 8);

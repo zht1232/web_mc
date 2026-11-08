@@ -57,16 +57,16 @@ export class ControlsScreen extends OptionsSubScreen {
     const width = 310;
     const height = this.height - 88;
     this.list = new ScrollPanel<KeyBind>(left, top, width, height, this.t('options.controlsTitle'), {
-      itemHeight: 20,
+      itemHeight: 28,
       renderItem: (g, item, index, x, y, w, h, hovered, selected) => {
-        if (index === 0 || this.binds[index - 1].category !== item.category) {
-          g.drawString(this.t(item.category), x + 4, y - 10, 0xffa0a0a0, true);
-        }
-        g.fill(x, y, x + w, y + h, hovered ? 0x40ffffff : selected ? 0x40ffffff : 0x00000000);
-        g.drawString(this.t(item.name), x + 6, y + 6, 0xffffffff, true);
+        const showCategory = index === 0 || this.binds[index - 1].category !== item.category;
+        if (showCategory) g.drawString(this.t(item.category), x + 4, y + 1, 0xffa0a0a0, true);
+        const rowY = showCategory ? y + 10 : y + 2;
+        g.fill(x, rowY, x + w, rowY + 18, hovered ? 0x40ffffff : selected ? 0x40ffffff : 0x00000000);
+        g.drawString(this.t(item.name), x + 6, rowY + 5, 0xffffffff, true);
         const kx = x + w - g.textWidth(item.key) - 8;
-        g.fill(kx - 4, y + 1, x + w - 2, y + h - 1, hovered ? 0x80ffffff : 0x40000000);
-        g.drawString(item.key, kx, y + 6, hovered ? 0xffffffa0 : 0xffffffff, true);
+        g.fill(kx - 4, rowY + 1, x + w - 2, rowY + 17, hovered ? 0x80ffffff : 0x40000000);
+        g.drawString(item.key, kx, rowY + 5, hovered ? 0xffffffa0 : 0xffffffff, true);
       },
       onSelect: (item) => this.toast(`${item.name}: ${item.key}`),
     });

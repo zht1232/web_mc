@@ -110,7 +110,8 @@ export class Player {
     let inputZ = input.forward;
     const len = Math.hypot(inputX, inputZ);
     if (len > 1) { inputX /= len; inputZ /= len; }
-    const desiredX = (inputX * cos - inputZ * sin) * targetSpeed;
+    // camera forward = (sin yaw, cos yaw), camera right = (-cos yaw, sin yaw)
+    const desiredX = (inputZ * sin - inputX * cos) * targetSpeed;
     const desiredZ = (inputZ * cos + inputX * sin) * targetSpeed;
 
     const damping = this.flying ? 0.91 : this.onGround ? GROUND_FRICTION : AIR_FRICTION;

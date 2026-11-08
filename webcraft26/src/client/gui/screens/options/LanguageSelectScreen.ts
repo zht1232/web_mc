@@ -45,13 +45,13 @@ export class LanguageSelectScreen extends OptionsSubScreen {
     const width = 310;
     const height = this.height - 88;
     this.list = new ScrollPanel<LangEntry>(left, top, width, height, this.t('options.languageTitle'), {
-      itemHeight: 22,
+      itemHeight: 24,
       renderItem: (g, item, _index, x, y, w, h, hovered, selected) => {
         g.fill(x + 2, y + 1, x + w / 2 - 2, y + h - 1, selected ? 0x8000ff00 : hovered ? 0x60ffffff : 0x40000000);
-        g.drawString(item.name, x + 8, y + 7, 0xffffffff, true);
+        g.drawString(item.name, x + 8, y + 4, 0xffffffff, true);
         g.drawString(item.region, x + 12, y + 15, 0xffa0a0a0, false);
         g.fill(x + w / 2 + 2, y + 1, x + w - 2, y + h - 1, selected ? 0x8000ff00 : hovered ? 0x60ffffff : 0x40000000);
-        g.drawString(item.code, x + w / 2 + 8, y + 7, 0xffffffff, true);
+        g.drawString(item.code, x + w / 2 + 8, y + 4, 0xffffffff, true);
         g.drawString(item.bilingual ? 'Bilingual' : '', x + w / 2 + 12, y + 15, 0xffa0a0a0, false);
       },
       onSelect: (item) => {

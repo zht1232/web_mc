@@ -102,8 +102,8 @@ export class PostProcessor {
   private frameCount = 0;
   private lastGlError = 0;
 
-  /** TM_EXPOSURE = 1.00 (lib/common.glsl:279). There is no auto exposure in the pack. */
-  exposure = 1.0;
+  /** TM_EXPOSURE = 1.40: the pack assumes an HDR scene; our display-referred albedo is darker. */
+  exposure = 1.4;
   /** BLOOM_STRENGTH = 0.12 (lib/common.glsl:146), mixed - not added - in composite5.glsl:142. */
   bloomStrength = 0.12;
   /**

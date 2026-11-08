@@ -78,7 +78,9 @@ export interface GameOptions {
 }
 
 const DEFAULT_OPTIONS: GameOptions = {
-  renderDistance: 8,
+  // 12 chunks (192 blocks) matches the reference screenshots much better than the old 8;
+  // touch devices are capped to 10 in the constructor to keep memory in check.
+  renderDistance: 12,
   guiScale: 0,
   fov: 70,
   // Vanilla Options.java:883-898 gamma option default is 0.5 ("options.gamma.default").
@@ -231,6 +233,16 @@ export class Game {
   onStatus?: (text: string, progress: number) => void;
 
   constructor(container: HTMLElement, seedOverride?: number | string, workers?: number) {
+    // Mobile GPUs cannot hold the desktop chunk/SSAO footprint; keep a farther view than the old
+    // 8-chunk default but drop the high-tier post chain that was causing WebGL context loss.
+    const touchDevice = typeof window !== 'undefined' && (
+      window.matchMedia?.('(pointer: coarse)')?.matches
+      || new URLSearchParams(window.location.search).get('touch') === '1'
+    );
+    if (touchDevice) {
+      this.options.renderDistance = Math.min(this.options.renderDistance, 10);
+      this.options.shaderQuality = 'medium';
+    }
     this.glCanvas = document.createElement('canvas');
     this.glCanvas.className = 'game-canvas';
     this.guiCanvas = document.createElement('canvas');
@@ -420,7 +432,17 @@ export class Game {
         onPlay: () => this.closeScreen(),
         onLoadWorld: (id) => { void this.enterWorld(String(id)); },
         onCreateWorld: (options) => { void this.createAndEnterWorld(options as CreateWorldOptions); },
-        onOptionChange: (key, value) => { (this.options as unknown as Record<string, unknown>)[key] = value; },
+        onOptionChange: (key, value) => {
+          (this.options as unknown as Record<string, unknown>)[key] = value;
+          // VideoSettings changes must reach the live renderer, not just the options object.
+          if (key === 'renderDistance') {
+            this.renderer.renderDistance = Math.max(2, Math.min(32, Math.round(Number(value) || 12)));
+          } else if (key === 'shaderQuality') {
+            this.renderer.shaderQuality = String(value);
+          } else if (key === 'shadersEnabled' || key === 'shaders') {
+            this.renderer.shadersEnabled = Boolean(value);
+          }
+        },
         onRespawn: () => this.respawnPlayer(),
         onChatMessage: (text) => {
           console.log('[chat]', text);
@@ -443,7 +465,6 @@ export class Game {
             this.pausedByMenu = false;
             this.worldActive = true;
             this.autosave?.resume();
-            if (!this.touchEnabled && !this.mouseLocked) void this.guiCanvas.requestPointerLock();
           }
         },
       },
@@ -1023,7 +1044,7 @@ export class Game {
         return;
       }
       if (!this.mouseLocked) return;
-      this.player.yaw += e.movementX * 0.15;
+      this.player.yaw -= e.movementX * 0.15;
       this.player.pitch = Math.max(-90, Math.min(90, this.player.pitch + e.movementY * 0.15));
     });
     document.addEventListener('wheel', (e) => {
@@ -1785,7 +1806,8 @@ export class Game {
     if (touch) {
       const look = touch.consumeLook();
       if (look.dx || look.dy) {
-        this.player.yaw += look.dx * 0.15;
+        // Camera right is (-cos(yaw), sin(yaw)): decreasing yaw turns toward screen-right.
+        this.player.yaw -= look.dx * 0.15;
         this.player.pitch = Math.max(-90, Math.min(90, this.player.pitch + look.dy * 0.15));
       }
       if (touch.consumeJumpPressed()) {

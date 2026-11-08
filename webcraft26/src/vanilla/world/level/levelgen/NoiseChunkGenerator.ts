@@ -44,6 +44,7 @@ import {
 import { parseSurfaceRule, RuleJson, RuleNode, SurfaceSystem } from './surface/SurfaceRules.js';
 import { FluidPicker, FluidStatus } from './aquifer/Aquifer.js';
 import { FeatureGenerator } from './feature/FeatureGenerator.js';
+import { VillageGenerator } from './structure/VillageGenerator.js';
 
 const MASK64 = (1n << 64n) - 1n;
 
@@ -209,6 +210,12 @@ export class NoiseChunkGenerator {
   /** feature decoration pipeline; null when disabled for tests */
   private readonly featureGenerator: FeatureGenerator | null;
 
+  /** structure step (villages); null when disabled for tests */
+  private readonly villageGenerator: VillageGenerator;
+
+  /** world seed, needed by the structure placement RNGs */
+  private readonly worldSeed: bigint;
+
   /** tiny memo for getBiome() (exact position, no hashing) */
   private lastBiomeX = Number.NaN;
   private lastBiomeY = Number.NaN;
@@ -218,10 +225,14 @@ export class NoiseChunkGenerator {
   constructor(mc: MinecraftData, data: WorldgenData, seed: bigint, preset = 'overworld', features = true) {
     this.mc = mc;
     this.data = data;
+    this.worldSeed = seed;
     const key = preset.includes(':') ? preset : `minecraft:${preset}`;
     const settings = data.noiseSettings[preset] ?? data.noiseSettings[key];
     if (!settings) throw new Error(`unknown noise preset ${preset}`);
     this.settings = settings;
+    this.villageGenerator = features
+      ? new VillageGenerator(mc, settings.sea_level, settings.noise.min_y, settings.noise.min_y + settings.noise.height)
+      : null as unknown as VillageGenerator;
 
     this.minY = settings.noise.min_y;
     this.height = settings.noise.height;
@@ -375,6 +386,13 @@ export class NoiseChunkGenerator {
     this.fillBiomes(chunk);
     this.surface.buildSurface(chunk, wgHeight, noiseChunk, this.surfaceRule, access);
 
+    // Structures (vanilla order: structure step runs after the surface rules, before feature
+    // decoration). Pieces spanning chunk borders are re-materialised per chunk from the same
+    // seeded layout, writing only this chunk's footprint.
+    if (this.villageGenerator) {
+      this.villageGenerator.generateInto(this.worldSeed, chunk, access, (x, z) => this.computeExactSurfaceHeight(x, z), (x, y, z) => this.biomeName(this.getBiome(x, y, z)));
+    }
+
     // Feature decoration (trees, grass, flowers, ore, springs, snow). It runs after the surface
     // rules and before the final recalcHeightmaps; FeatureGenerator primes the heightmaps itself.
     if (this.featureGenerator) {
@@ -494,9 +512,34 @@ export class NoiseChunkGenerator {
   getSurfaceHeight(x: number, z: number): number {
     const cached = this.heightCache.get(this.chunkKey(x >> 4, z >> 4));
     if (cached) return cached[((z & 15) << 4) | (x & 15)];
+    return this.getPreliminarySurfaceHeight(x, z);
+  }
+
+  /**
+   * Deterministic surface height estimate (RandomState.preliminarySurfaceLevel). Independent of
+   * which chunks have been generated so far — the structure step anchors pieces with this so
+   * every chunk materialises the SAME piece heights for a village.
+   */
+  getPreliminarySurfaceHeight(x: number, z: number): number {
     return Math.floor(this.preliminarySurfaceLevel.compute({
       blockX: x, blockY: 0, blockZ: z,
     }));
+  }
+
+  /**
+   * EXACT deterministic surface height: walks the final density function top-down for the first
+   * solid block (what doFill would place). Independent of chunk generation order, so the
+   * structure step anchors pieces identically from any chunk — and unlike the preliminary
+   * estimate it matches the real terrain (the estimate was up to ~8 blocks off on slopes,
+   * which buried village pieces). Costs one density walk per column; VillageGenerator memoises.
+   */
+  computeExactSurfaceHeight(x: number, z: number): number {
+    const ctx = { blockX: x, blockY: 0, blockZ: z };
+    for (let y = this.minY + this.height - 1; y >= this.minY; y--) {
+      ctx.blockY = y;
+      if (this.finalDensity.compute(ctx) > 0) return y;
+    }
+    return this.minY - 1;
   }
 
   /** Biome name for an id (0..65); handy for the renderer/debug overlay. */

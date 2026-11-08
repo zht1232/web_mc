@@ -212,3 +212,39 @@ test-containers.mjs ALL PASS · test-ambience.mjs ALL PASS · test-menu.mjs ALL 
 6. **标题屏**：全景仍是均值渐变（不是真的立方体贴图）；多人/Friends/无障碍按钮只弹 toast。
 7. **存档**：仍会在用户选存档前预加载最近一个世界；创建世界仍用 location reload。
 8. 素材授权：`public/mc/**`（含 `lang/zh_cn.json`）是 Mojang 资源，**不要提交/公开**；本轮 commit 只含 `src/`。
+
+---
+
+# 8. 第三轮（2026-11-08 晚，WorkBuddy，按用户 15:10 反馈）
+
+## 8.1 修了什么（每条都有复现/测量）
+
+| 反馈 | 根因 | 修法 / 证据 |
+|---|---|---|
+| 放下物品后指针上还悬浮物品 | `mouseEvent` 只在 `down` 时按 PICKUP 拿起，松开在**另一个**格子时既不放下也不取消（`containerDragButton` 仍是 -1），栈一直挂在指针上 | 记录 `pressedSlot`，`up` 时若落在别的格子就执行一次 PICKUP；`cancelDrag()` 一并清 pressedSlot（GUI 单测 90/90 覆盖） |
+| 主界面背景没了 / 后面背景一直闪 | `PanoramaRenderer` 把 6 张 1024² 全景图当"1×1 占位图"，只采样一个颜色做**移动的渐变**再加 blur(4px)；渐变 stop 每帧移动 → 抖动；整体又压了 31% 黑 → 看起来是空的 | 真图按 4 个侧面画成缓慢平移（2°/s）的横条，去掉 blur，压暗降到 16% |
+| 启动时不要预加载存档 | `initSave()` 无条件 restore 最近存档/首次还 create 一个 "World"，所以列表里总有玩家没建过的世界，且启动要预生成 25 区块 | 仅 `?play`/`?world=` 才加载；标题启动只打开 IndexedDB 给列表提供 provider。**启动 2s、0 区块** |
+| 启动界面要 Mojang 的 | 自绘渐变 + "Minecraft 26.2 browser client" | `main.ts` 改成 `mojangstudios.png` 居中 + 底部 3px 进度条 |
+| 帧率太低（~1500 draws/帧） | 每 16³ section 1–3 次 draw；更致命的是**网格队列**：每次进世界会排 ~10000 个 section，每个 1.5–2ms，主线程 15 秒都在建网格（`update()` 13.1ms/帧） | ① 4×4 区块 region 合批：顶点上传时一次性 rebase 到 region 原点，之后 region 重建只是 memcpy；draw calls **1332 → 43**。② 队列裁剪：跳过「比相机和区块地表都低 32 格」的 section + 每帧最多 3 个；`update()` 空闲 **0.1ms**、行走 6ms。③ region 暂存缓冲复用（GC 抖动）、区块应用与建网格错帧。稳定后 **60 FPS / p50 16.7ms / p90 18.4ms**（之前 p50 25ms / p90 54ms） |
+| 移动/视角卡顿 | 同上（每帧 13ms 主线程建网格 + 11ms 区块应用） | 由上面两项解决；另把 TAA 历史在重生/传送时清掉（原来会拖影） |
+| 破坏粒子没光照、和方块不匹配 | ① 粒子在方块**内部**采样光照，方块格存的是 0 → 全黑；② BLOCK 粒子用整张贴图缩小 | 采样 6 个邻居取最亮（暴露面），lightmap 曲线 `l/(4-3l)`；贴图改用 1/4 象限 |
+| 存档要求能本地化 | 只有 IndexedDB，清缓存就没了 | 世界列表加「导出存档 / 导入存档」（WorldSaveManager 本来就有 archive codec），导出 `.mcworld` 文件 |
+| 阴影闪烁 | 阴影图缓存只按「相机移动 2 格」失效，但矩阵是 texel 对齐的 → 矩阵新、深度图旧，边缘爬行 | 缓存改按**对齐后的光矩阵**失效 |
+
+## 8.2 没做完（按用户优先级）
+
+1. **光影系统按 OpusMC 重做**：级联阴影（现在 1 张 2048、extent 72）、SSR 水面、体积光/云都没做。
+   本轮只修了阴影缓存的闪烁；带状光/黄昏过渡仍是旧实现。
+2. **群系/植被/建筑按原版生成**：地形仍是阶梯台地，树冠是细高柱，浮空树没修。这块要重写
+   `SurfaceRules` 的插值 + feature 的 heightmap 对齐 + 树冠层数，工作量最大。
+3. 实体：骷髅持弓/箭模型、苦力怕音效、3D Steve 未做。
+4. 行走时仍有 p90≈30ms 的尖峰：区块 apply（palette + 全量 relight）单块 ~10ms，下一步应把它
+   移进 worker 或改成增量光照。
+
+## 8.3 验证
+
+```
+npx tsc --noEmit                    0 errors
+test-gui 90/90 · test-hud 123/123 · test-containers ALL PASS · test-menu ALL PASS · smoke 19/19 gl=0
+```
+帧时间实测（1280×720，rd12）：稳定后 p50 16.7ms / p90 18.4ms / 60FPS；draws 43/帧。

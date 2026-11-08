@@ -63,6 +63,8 @@ Esc 暂停，F3 调试屏，**F6 光影开关**；左键挖/攻击、右键放/�
   挖掘/放置/生存（血量/饥饿/掉落/重生）、自然刷怪、25 种可渲染生物（含 12 种本轮补齐的模型）。
 - **原版 GUI**：创造物品栏（官方 tab 精灵/滚动/悬停 tooltip）、Survival Inventory、暂停/选项/视频设置、
   世界选择/创建世界、聊天屏、死亡屏、Toast。
+- **容器真实交互**（right click 打开）：合成台 3×3 合成（真实配方）、箱子 27 格存取（会话内持久）、
+  熔炉熔炼（燃料表 + 烹饪进度，GUI 打开时推进，火焰/箭头动画联动）。
 - **音频**：959 个原版音效事件（4341 个 ogg，`scripts/build-sounds.mjs` 可重现）、按 SoundType 的脚步/破坏/放置、
   生物叫声/受伤/死亡、雨声循环/雷声。
 - **触屏**：Bedrock 风格整套控制层（本日从 M2 找回并适配新输入模型）。
@@ -77,6 +79,7 @@ npx tsx scripts/test-mobs-render.mts              # 生物渲染 19 项
 npx tsx scripts/test-glmath.mts                   # 矩阵工具 6 项
 node scripts/test-ao.mjs                          # SSAO 6 项
 node scripts/test-taa.mjs                         # TAA 8 项
+node scripts/test-containers.mjs                  # 容器交互 19 项
 node scripts/test-menu.mjs                        # 主菜单/世界选择 9 项
 node scripts/test-touch.mjs                       # 触屏 15 项
 node scripts/smoke.mjs                            # 浏览器冒烟 19 场景（默认 ?play）
@@ -89,7 +92,8 @@ node scripts/ref-capture.mjs                      # 真实 26.2 客户端参考�
 ## 还不是 1:1
 
 - 光影没有水面反射/折射、体积光/云（SSAO 与 TAA 已在 high/ultra 档提供）。
-- 合成台/熔炉/箱子只有界面布局，没有真实交互；饥饿效果、药水、附魔、红石、幼年生物变体未做。
+- 容器已可实际使用，但没有方块实体系统：熔炉只在 GUI 打开时熔炼、箱子/熔炉内容不写入存档、箱子固定 3 行；
+  饥饿效果、药水、附魔、红石、幼年生物变体未做。
 - 生物模型有已知近似（见 `REPORTS/overnight/mobs2.md` 第 5 节）；结构是程序化近似，不是原版 NBT 模板。
 - 世界为有限程序化世界，不是真实 Anvil 世界；Paper 联机未接。
 - 参考截图 `shots/ref/INDEX.md` 里的 FOV=70 记录是错的（实际 FOV=110，见 `REPORTS/HANDOFF.md` §3）。

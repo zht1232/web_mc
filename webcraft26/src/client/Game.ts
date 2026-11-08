@@ -1051,6 +1051,7 @@ export class Game {
   /** Closes the current screen and hands control (and the mouse) back to the player. */
   private closeScreen(): void {
     this.screens.close();
+    this.survival?.closeMenu();
     this.keys.clear();
     this.autosave?.resume();
     if (!this.mouseLocked && !this.touchEnabled) void this.guiCanvas.requestPointerLock();
@@ -1376,6 +1377,52 @@ export class Game {
     this.autosave?.resume();
   }
 
+  /** Per-block container instances: chest/furnace contents survive closing the GUI this session. */
+  private readonly blockContainers = new Map<string, AbstractContainerMenu>();
+
+  /**
+   * Opens the vanilla container GUI for a right-clicked block. The menu itself comes from the
+   * vanilla menu ports in SurvivalState (CraftingMenu / ChestMenu / FurnaceMenu); chest and furnace
+   * instances are cached per block position so their contents are kept while the session lives
+   * (this client has no block-entity ticker, so a furnace only cooks while its GUI is open).
+   */
+  private openBlockContainer(blockName: string, x: number, y: number, z: number): void {
+    if (blockName === 'crafting_table') {
+      this.survival.openCraftingTable();
+      this.openScreen('crafting');
+      return;
+    }
+    const isFurnace = blockName === 'furnace';
+    // The cache key includes the block type: the same position may hold a chest at one moment and
+    // a furnace later (tests/sandbox both do this), and the menu classes are not interchangeable.
+    const key = `${blockName}@${x},${y},${z}`;
+    let menu = this.blockContainers.get(key);
+    if (!menu) {
+      menu = isFurnace ? this.survival.openFurnace() : this.survival.openChest(3);
+      this.blockContainers.set(key, menu);
+    } else {
+      this.survival.activeMenu = menu;
+    }
+    this.openScreen(isFurnace ? 'furnace' : 'chest');
+  }
+
+  /** Furnace menus advance one 20 Hz step per game tick (block-entity tick stand-in). */
+  private tickActiveMenu(): void {
+    const menu = this.survival.activeMenu as unknown as
+      { tick?: () => void; getBurnProgress?: () => number } | null;
+    if (menu && typeof menu.tick === 'function' && typeof menu.getBurnProgress === 'function') menu.tick();
+  }
+
+  /** Mirrors the active furnace menu's cooking state into the open FurnaceScreen. */
+  private syncFurnaceScreen(): void {
+    const screen = this.screens.current as unknown as { burnProgress?: number; litProgress?: number } | null;
+    const menu = this.survival.activeMenu as unknown as
+      { getBurnProgress?: () => number; getLitProgress?: () => number } | null;
+    if (!screen || !menu || typeof menu.getBurnProgress !== 'function' || typeof menu.getLitProgress !== 'function') return;
+    screen.burnProgress = menu.getBurnProgress();
+    screen.litProgress = menu.getLitProgress();
+  }
+
   /**
    * Right-click placement (vanilla PlayerGameMode.useItemOn -> BlockItem.place).
    * The rule table itself lives in interaction/Placement.ts (port of BlockItem.place +
@@ -1388,6 +1435,13 @@ export class Game {
     this.player.swingHand();
     const hit = this.raycast();
     if (!hit) return;
+    // Vanilla PlayerGameMode.useItemOn: an interactive block consumes the right click before item
+    // placement (unless the player is sneaking, which keeps the old "place against it" behaviour).
+    const targetBlock = this.mc.blockOf(this.level.getBlockState(hit.x, hit.y, hit.z)).name;
+    if (!this.player.sneaking && isContainerBlock(targetBlock)) {
+      this.openBlockContainer(targetBlock, hit.x, hit.y, hit.z);
+      return;
+    }
     const held = this.survival.getSelectedStack();
     if (!held || held.isEmpty() || !held.item || !held.item.block) return;
     const item = held.item;
@@ -1646,6 +1700,9 @@ export class Game {
     };
     this.survival.tick(moved);
     this.survival.tickEnvironment(inLava, this.player.inWater, this.playerFireTicks > 0);
+    // Container GUIs: open furnace menus cook one tick and mirror their progress into the screen.
+    this.tickActiveMenu();
+    this.syncFurnaceScreen();
 
     // mining progress (BlockBreaking); replaces the hand-written breakProgress loop
     this.updateMining();
@@ -2105,6 +2162,12 @@ export class Game {
     const { left, right } = layoutDebugScreen(entries);
     return { debugLeft: left, debugRight: right };
   }
+}
+
+/** Blocks that open a container GUI on right click (PlayerGameMode.useItemOn). */
+function isContainerBlock(blockName: string): boolean {
+  return blockName === 'crafting_table' || blockName === 'chest'
+    || blockName === 'trapped_chest' || blockName === 'furnace';
 }
 
 /**

@@ -86,7 +86,7 @@ node scripts/smoke.mjs                   # 19/19 PASS（默认 URL 已带 ?play�
 ## 4. 还没做 / 下一步（按价值）
 
 1. **§8-2 光影进阶**：水面反射/折射、SSAO、TAA、体积光/云（现在只有 bloom/光轴/阴影/顶点水波）。
-2. §8-4 洞穴环境音、合成台/熔炉/箱子真实交互（目前只有布局）。
+2. §8-4 剩余部分：洞穴环境音（容器真实交互已在 §4c 交付）。
 3. 生存循环：饥饿效果、药水、附魔、红石；生物幼年变体与更多 §8 近似修正（见 `mobs2.md` 第 5 节）。
 4. 夜晚对拍复核（M2 的 `shots/ref/INDEX.md` FOV 记录仍是错的，要么改 INDEX，要么重拍）。
 5. Paper 桥接仍未接浏览器（按用户要求没动）。
@@ -111,6 +111,21 @@ gl.clear(DEPTH_BUFFER_BIT)（hand package 照抄了这个行为），所以后�
 - **仍未做**：水面反射/折射（需要二次场景渲染 + 裁剪面）、体积光/云；TAA 没有 per-object motion vector
   （移动生物靠邻域裁剪抑制拖影，未做完美）。
 
+
+## 4c. §8-4 进度（2026-11-08，容器真实交互已交付）
+
+- **右键打开**：crafting_table / chest / 	rapped_chest / urnace 走原版 useItemOn 优先级
+  （潜行时退回放置行为）；打开前先由 SurvivalState 建好对应的原版 Menu（CraftingMenu / ChestMenu / FurnaceMenu）。
+- **合成台**：真实 3×3 合成（46 槽），点击/快速移动都走原版 AbstractContainerMenu；测试里把 2 块橡木木板竖着放进网格
+  → 结果槽出现 4 根木棍（配方查询、结果槽、取走都验证过）。
+- **箱子**：ChestMenu 27 + 36 槽；同一坐标的菜单实例在会话内缓存（Game.blockContainers），
+  移入物品 → 关 GUI → 再右键打开，内容还在（测试断言 16 块木板保留）。
+- **熔炉**：FurnaceMenu 真实熔炼（FuelValues 燃料表 + smelting 配方 + 烹饪进度），GUI 打开时每 tick 推进；
+  FurnaceScreen 的火焰/箭头进度由菜单实时注入。测试里 raw_iron + oak_log 最终产出 iron_ingot。
+- **已知限制（诚实）**：客户端没有方块实体系统——熔炉只在 GUI 打开时熔炼；箱子/熔炉内容不写入存档；
+  箱子固定 3 行（未按 blockstate 变体）；没有漏斗/发射器等自动化。
+- **验证**：scripts/test-containers.mjs（19 项断言，ALL PASS）；证据图
+  REPORTS/overnight/evidence/container-{crafting,chest,furnace}.png。
 
 ## 5. 并行 session 事故记录
 

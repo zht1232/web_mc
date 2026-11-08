@@ -65,6 +65,7 @@ Esc 暂停，F3 调试屏，**F6 光影开关**；左键挖/攻击、右键放/�
   世界选择/创建世界、聊天屏、死亡屏、Toast。
 - **容器真实交互**（right click 打开）：合成台 3×3 合成（真实配方）、箱子 27 格存取（会话内持久）、
   熔炉熔炼（燃料表 + 烹饪进度，GUI 打开时推进，火焰/箭头动画联动）。
+- **洞穴环境音**：地下黑暗处随机播放 `ambient.cave`（带冷却）。
 - **音频**：959 个原版音效事件（4341 个 ogg，`scripts/build-sounds.mjs` 可重现）、按 SoundType 的脚步/破坏/放置、
   生物叫声/受伤/死亡、雨声循环/雷声。
 - **触屏**：Bedrock 风格整套控制层（本日从 M2 找回并适配新输入模型）。
@@ -80,6 +81,7 @@ npx tsx scripts/test-glmath.mts                   # 矩阵工具 6 项
 node scripts/test-ao.mjs                          # SSAO 6 项
 node scripts/test-taa.mjs                         # TAA 8 项
 node scripts/test-containers.mjs                  # 容器交互 19 项
+node scripts/test-ambience.mjs                    # 洞穴环境音 6 项
 node scripts/test-menu.mjs                        # 主菜单/世界选择 9 项
 node scripts/test-touch.mjs                       # 触屏 15 项
 node scripts/smoke.mjs                            # 浏览器冒烟 19 场景（默认 ?play）

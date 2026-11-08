@@ -135,6 +135,12 @@ export class Game {
   private lastHurtTicks = 0;
   private wasDead = false;
   private rainLoopTimer = 0;
+  /**
+   * Simplified vanilla AmbientSoundHandler: rare 'ambient.cave' while the player stands in darkness
+   * underground. Chance per tick and the cooldown are public so the ambience test can force them.
+   */
+  caveSoundChance = 1 / 600;
+  private caveSoundTimer = 0;
   /** First-person arm / held item / screen effects (hand package). */
   handRenderer!: HandRenderer;
   /** Block breaking decal (hand package). */
@@ -1365,6 +1371,24 @@ export class Game {
     }
   }
 
+  /**
+   * Cave ambience (HANDOFF §8-4, simplified AmbientSoundHandler): while the player is underground
+   * in darkness (sky light 0 below sea level + 20), occasionally play 'ambient.cave' at the player.
+   * Vanilla rolls mood once per tick with a long cooldown; the cooldown here is 60-180 s.
+   */
+  private tickCaveAmbience(): void {
+    if (this.caveSoundTimer > 0) { this.caveSoundTimer--; return; }
+    const px = Math.floor(this.player.pos.x);
+    const py = Math.floor(this.player.eyeY);
+    const pz = Math.floor(this.player.pos.z);
+    if (py > this.level.seaLevel + 20) return;                 // not underground enough
+    if (this.level.getSkyLight(px, py, pz) > 0) return;        // lit by the sky: not a cave
+    if (Math.random() > this.caveSoundChance) return;
+    this.sounds.play('ambient.cave', this.player.pos.x, this.player.pos.y, this.player.pos.z, 0.7,
+      0.8 + Math.random() * 0.4);
+    this.caveSoundTimer = 1200 + Math.floor(Math.random() * 2400);
+  }
+
   /** Player.respawn (DeathScreen "Respawn" button / callbacks.onRespawn). */
   private respawnPlayer(): void {
     this.survival.respawn();
@@ -1720,6 +1744,7 @@ export class Game {
     this.weatherRenderer.tick(cam, this.levelLike, 1);
     this.sounds.tick(cam, this.levelLike);
     this.tickAudioEvents();
+    this.tickCaveAmbience();
 
     // keep the ring of chunks around the player loaded; generation happens on the workers and
     // finished chunks are applied here under a time budget

@@ -76,8 +76,13 @@ URL 参数：
 ```bash
 cd G:\web_mc\webcraft26
 npx tsc --noEmit                         # 0 errors
-for t in scripts/test-*.mts; do npx tsx $t; done   # 18/18 套 exit 0
+for t in scripts/test-*.mts; do npx tsx $t; done   # 19/19 套 exit 0
 npx tsx scripts/test-mobs-render.mts     # 19/19 PASS
+npx tsx scripts/test-glmath.mts          # 6/6 PASS
+node scripts/test-ao.mjs                 # SSAO 6/6 PASS
+node scripts/test-taa.mjs                # TAA 8/8 PASS
+node scripts/test-containers.mjs         # 容器交互 19/19 PASS
+node scripts/test-ambience.mjs           # 洞穴环境音 6/6 PASS
 node scripts/test-menu.mjs               # 9/9 PASS
 node scripts/test-touch.mjs              # 15/15 PASS
 node scripts/smoke.mjs                   # 19/19 PASS（默认 URL 已带 ?play）
@@ -112,30 +117,41 @@ gl.clear(DEPTH_BUFFER_BIT)（hand package 照抄了这个行为），所以后�
   （移动生物靠邻域裁剪抑制拖影，未做完美）。
 
 
-## 4c. §8-4 进度（2026-11-08，容器真实交互已交付）
+## 4c. §8-4 进度（容器真实交互 + 洞穴环境音，已交付）
 
-- **右键打开**：crafting_table / chest / 	rapped_chest / urnace 走原版 useItemOn 优先级
-  （潜行时退回放置行为）；打开前先由 SurvivalState 建好对应的原版 Menu（CraftingMenu / ChestMenu / FurnaceMenu）。
-- **合成台**：真实 3×3 合成（46 槽），点击/快速移动都走原版 AbstractContainerMenu；测试里把 2 块橡木木板竖着放进网格
-  → 结果槽出现 4 根木棍（配方查询、结果槽、取走都验证过）。
-- **箱子**：ChestMenu 27 + 36 槽；同一坐标的菜单实例在会话内缓存（Game.blockContainers），
+- **右键打开**：`crafting_table` / `chest` / `trapped_chest` / `furnace` 走原版 `useItemOn` 优先级
+  （潜行时退回放置行为）；打开前先由 `SurvivalState` 建好对应的原版 Menu（CraftingMenu / ChestMenu / FurnaceMenu）。
+- **合成台**：真实 3×3 合成（46 槽），点击/快速移动都走原版 `AbstractContainerMenu`；测试里把 2 块橡木木板
+  竖着放进网格 → 结果槽出现 4 根木棍（配方查询、结果槽、取走都验证过）。
+- **箱子**：`ChestMenu` 27 + 36 槽；同一坐标的菜单实例在会话内缓存（`Game.blockContainers`），
   移入物品 → 关 GUI → 再右键打开，内容还在（测试断言 16 块木板保留）。
-- **熔炉**：FurnaceMenu 真实熔炼（FuelValues 燃料表 + smelting 配方 + 烹饪进度），GUI 打开时每 tick 推进；
-  FurnaceScreen 的火焰/箭头进度由菜单实时注入。测试里 raw_iron + oak_log 最终产出 iron_ingot。
+- **熔炉**：`FurnaceMenu` 真实熔炼（FuelValues 燃料表 + smelting 配方 + 烹饪进度），GUI 打开时每 tick 推进；
+  `FurnaceScreen` 的火焰/箭头进度由菜单实时注入。测试里 raw_iron + oak_log 最终产出 iron_ingot。
+- **洞穴环境音**：简化版 AmbientSoundHandler——玩家在地下（sky light 0 且低于海平面+20）时，
+  每 tick 按 1/600 概率触发 `ambient.cave`（60–180 秒冷却、音量/音调随机）；地面上白天不触发。
+  测试可调 `game.caveSoundChance` 强制触发验证。
 - **已知限制（诚实）**：客户端没有方块实体系统——熔炉只在 GUI 打开时熔炼；箱子/熔炉内容不写入存档；
   箱子固定 3 行（未按 blockstate 变体）；没有漏斗/发射器等自动化。
-- **验证**：scripts/test-containers.mjs（19 项断言，ALL PASS）；证据图
-  REPORTS/overnight/evidence/container-{crafting,chest,furnace}.png。
+- **验证**：`scripts/test-containers.mjs`（19 项断言，ALL PASS）、`scripts/test-ambience.mjs`（6 项，ALL PASS）；
+  证据图 `REPORTS/overnight/evidence/container-{crafting,chest,furnace}.png` 与 `ambience-cave.png`。
 
 ## 5. 并行 session 事故记录
 
-- 05:53 Claude 额度断；之后 06:44–07:10 期间 4~5 个夜班 DSH session 被自动唤醒（`session-01e9597d`、
-  `2031c31b`、`77f222da`、`b1577168` 等），各自起 vite / headless Chromium、改同一工作区文件。
-- 已由用户归档；本日改动里已剔除它们的产物（见 §2.4）。以后要再启用它们，先看 `G:\tmp\night-sessions-*.patch`。
-- 另：5174 端口被它们抢过两次、dev server 被杀过两次；现在 5174 由本 session 的 dev server 占用。
+- 05:53 Claude 额度断；之后 06:44–07:10 期间 4~5 个夜班 DSH session 被自动唤醒，各自起 vite / headless Chromium、
+  改同一工作区文件。已由用户归档；本日改动里已剔除它们的产物（见 §2.4）。
+- **08:40 起又有一个夜班 session（session-b1577168）恢复运行**：它先提交了本 session 未提交的洞穴环境音改动
+  （commit `656ac285`），并在 **08:40:16 把整个 fork push 到 `origin/main`**；之后继续改 GUI 缩放 / 创造物品栏
+  （`FontRenderer`、`ScreenManager`、`Types`、`SplashRenderer`、`TitleLayout`、`OptionsScreen`、`DeathScreen`、
+  `CreativeModeInventoryScreen`、`SectionMesher`、`LevelRenderer`、`Game.ts`），目前**未提交**。
+  本 session 没有动它的改动，全部工作区快照在 `G:\tmp\workspace-foreign-*.patch`（含它的 WIP 和本 session 的文档修正前状态）。
+- 另：5174 端口被它们抢过多次、dev server 被杀过多次；现在 5174 由并行 session 的 vite 占用（`--host 0.0.0.0`）。
 
 ## 6. 仓库状态
 
-- `main` 本地领先 `origin/main` **23 个 commit**（夜班 21 + 本日 2），**未 push**。
-- 工作区未提交：`dist/`（构建产物）、`public/mc/particles.json`、`shots/`、`logs/`（后两者为生成物）。
-- 仓库仍跟踪 `public/mc/**`（Mojang 素材，仅限本机私用）与 `dist/**`（5000+ 文件）：公开远端前必须先决定是否移出版本库。
+- ⚠️ `main` 已在 **2026-11-08 08:40:16 被并行 session push 到 `origin/main`（github.com/zht1232/web_mc）**：
+  夜班 21 个 commit + 本日 7 个 commit（菜单/触屏、§8-1 生物、SSAO/TAA、容器、洞穴环境音）都已在远端。
+  这个 push 不是本 session 做的（本 session 的约束是「不 push」），且仓库历史里跟踪着 `public/mc/**` 官方素材
+  （9412 个文件）与 `dist/**`（5000+ 文件）；若要公开仓库，务必先确认素材授权并决定是否清理历史。
+- 本 session 之后的文档修正 commit 只留在本地（不 push）。
+- 工作区未提交：并行 session 的 GUI 缩放 / 创造物品栏改动（见 §5）、`dist/`、`public/mc/particles.json`、`shots/`、`logs/`。
+- 公开远端前必须先决定是否把 `public/mc/**` 与 `dist/**` 移出版本库。

@@ -155,3 +155,60 @@ gl.clear(DEPTH_BUFFER_BIT)（hand package 照抄了这个行为），所以后�
 - 本 session 之后的文档修正 commit 只留在本地（不 push）。
 - 工作区未提交：并行 session 的 GUI 缩放 / 创造物品栏改动（见 §5）、`dist/`、`public/mc/particles.json`、`shots/`、`logs/`。
 - 公开远端前必须先决定是否把 `public/mc/**` 与 `dist/**` 移出版本库。
+
+---
+
+# 7. 第二轮接手（2026-11-08 下午，WorkBuddy）
+
+## 7.1 读了什么
+
+- Qoder 最新 session `9db94ea3`（11 MB JSONL）：7 条直接用户消息 + 4 段压缩摘要 + 21 个任务项的
+  `~/.qoder/tasks/9db94ea3…/*.json`（41 条反馈的权威清单）。
+- `REPORTS/HANDOFF.md` / `HANDOFF-2.md` / `overnight/*.md` / `session-reports/**`。
+- 结论：上一轮把「地形 x/z 转置、字体 advance、dpr/guiScale、tint/alpha」修了，但 #10–#18、#21 的绝大多数
+  反馈仍是 pending/in_progress；Qoder 额度在 04:43 断在「容器 UI 交互测试」子 agent 上。
+
+## 7.2 本轮修复（按用户反馈归组）
+
+| 用户反馈 | 根因 | 修法 |
+|---|---|---|
+| 所有界面 English、语言调节不可选 | `zh_cn.json` 是 11:19 才创建的，**vite 启动时的静态文件表已固定**，请求被 SPA fallback 成 index.html（HTTP 200 + text/html），`setLanguage` 解析失败退化成 en；且 `setLanguage` 是 fire-and-forget，标题屏早已用英文构建 | 重启 dev server；`await setLanguage` 后才建 ScreenManager；语言列表只列真正带 lang 文件的语言 |
+| 选项里仍混英文（Music & Sounds/Controls/Language/Chat） | 用了自造的 `options.*Title` 键，zh_cn 里没有 | 改用 26.2 真键 `options.sounds/video/controls/language/chat`；删掉自造键 |
+| 视频设置 "Graphics: Fancy / Shader Quality: HIGH / Auto / chunks" 中英混杂 | 值文本硬编码英文 | 走 `options.graphics.*`、`options.guiScale.auto`、`options.chunks`，并给自造的 shader 选项补中英词条 |
+| 创造栏「黑色线条而非原版按钮」、滑块下多一个错位按钮 | 只预载了 `tab_*_1` 精灵，2..7 取不到 → 退化成灰矩形；滚动条自己画了 track；右下角无条件画了一个销毁槽 | 预载全部 28 个 tab 精灵；只画滑块（vanilla 112px 轨道）；销毁槽只在「生存物品栏」页签且坐标 (173,112) |
+| 物品栏方块有灰色裂痕、上下底像反了、草方块顶发白 | 图标以 48×48 烘焙后用 nearest 缩到 16（丢掉 2/3 像素）；`quad.tint` 完全没用 | 图标改为 16×16 烘焙（和 vanilla GuiItemAtlas 一致）；tintIndex≥0 的面上草/树叶默认色 |
+| 字体之间有分割裂痕/错位 | `drawFormatted` 里 advance 多加 1px（`width()` 没加），量宽度和画字不一致 | 去掉多余 +1 |
+| 物品栏格子交互几乎不能用 | Shift+左键在「手上有物品」时先走了 PICKUP（把手上物品塞进格子/互换），双击收集的条件写反了 | Shift 优先走 QUICK_MOVE；双击改为 PICKUP_ALL（手上有同种物品时） |
+| 破坏方块粒子不遵循光照、和方块不统一 | 粒子着色器完全没有光照项；BLOCK 粒子用的是整张方块贴图缩小 | 粒子接入 `level.getBrightness` + lightmap 曲线；BLOCK 粒子改用贴图 1/4 象限（TerrainParticle） |
+| 水面下实体像浮在空中 | 渲染顺序是 水 → 实体，实体画在水面之上 | `renderer.render(..., beforeTranslucent)`：实体/粒子/破坏裂纹插到水面之前，水面最后画 |
+| 仙人掌旁边不能有方块 | `cactus` 特性只查了下面是不是沙子，直接往上长 | 按 `CactusBlock#canSurvive`：逐层校验自身是空气 + 四邻无碰撞方块，不行就降高度 |
+| 常驻 "N FPS" 不是原版 | HUD 右上角常驻帧数 | 只在 F3 里显示（vanilla 行为） |
+| 聊天栏没有实际功能 | 指令反馈走 toast（右上角），聊天栏没有常驻记录 | 新增 100 行聊天记录 + 底部 10 秒淡出 HUD；指令反馈进聊天栏；指令文案汉化 |
+| 帧率低/卡顿 | 实测 **~1500 drawElements/帧**（每 16³ section 1–3 次），JS 侧 render 只占 1 ms → 瓶颈是绘制调用 | SOLID+CUTOUT 合并为一次绘制（1332/帧）；shadow pass 只画合并后的 solid |
+
+GL 注意点：合并后水面 pass 重设 uniform 时，`uDebug`/`uUseShadows` 是 **int**，用 `set1f` 会触发
+GL_INVALID_OPERATION（容器测试的 "no GL errors" 抓到过）。已改 `set1i`。
+
+## 7.3 验证
+
+```
+npx tsc --noEmit                         0 errors
+test-gui.mts 90/90 · test-hud.mts 123/123 · test-survival.mts PASS · test-mobs-render PASS · test-glmath PASS
+test-containers.mjs ALL PASS · test-ambience.mjs ALL PASS · test-menu.mjs ALL PASS · test-touch.mjs ALL PASS
+```
+
+截图：`shots/screens/*.png`（标题/选项/视频/语言/暂停/背包/创造/工作台/箱子/熔炉/聊天/F3）、
+`shots/diag/`（图标放大、热栏、世界、手机竖屏）。
+
+## 7.4 还没做（诚实清单）
+
+1. **帧率**：合并后仍是 ~1330 draws/帧。根治要把 section 几何合批到 region/vertex arena（OpusMC 做法），
+   本轮没做；p90 仍有 ~36 ms 卡顿。
+2. **地形观感**：阶梯状台地、树冠形状（细高柱）、浮空树、群系过渡都还没按原版重做。
+3. **实体**：骷髅不持弓、箭只是木棍、背朝射箭；苦力怕爆炸音效；物品栏 2D Steve（需要离屏 3D 渲染）。
+4. **光照**：红石粉亮度、破坏后光照更新延迟、阴影闪烁/带状光、黄昏过渡、雾边界闪烁未逐项验证。
+5. **创造栏/生存栏**：物品计数是原版全尺寸（26.2 源码如此），但截图观感偏大，未再调；生存栏配方书、
+   触屏容器拖拽未实测。
+6. **标题屏**：全景仍是均值渐变（不是真的立方体贴图）；多人/Friends/无障碍按钮只弹 toast。
+7. **存档**：仍会在用户选存档前预加载最近一个世界；创建世界仍用 location reload。
+8. 素材授权：`public/mc/**`（含 `lang/zh_cn.json`）是 Mojang 资源，**不要提交/公开**；本轮 commit 只含 `src/`。

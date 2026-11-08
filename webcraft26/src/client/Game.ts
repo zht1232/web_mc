@@ -171,6 +171,8 @@ export class Game {
   private lastFrame = 0;
   private accum = 0;
   private frames = 0;
+  /** Recent chat/system lines, newest last (vanilla keeps 100). */
+  private readonly chatLines: { text: string; time: number }[] = [];
   private fpsTimer = 0;
   private fps = 0;
   private tickCount = 0;
@@ -469,7 +471,8 @@ export class Game {
         onChatMessage: (text) => {
           console.log('[chat]', text);
           const reply = runChatCommand(text, this.commandHost());
-          if (reply) this.screens.toastManager.addText(reply, '');
+          if (reply) this.addChatLine(reply);
+          else this.addChatLine(text);
         },
         onQuit: () => {
           // TitleScreen's Quit button: a browser tab cannot quit; PauseScreen's "Save and Quit to
@@ -1839,6 +1842,14 @@ export class Game {
 
   private daylightCycle = true;
 
+  /** Adds one line to the chat HUD (also used by /commands and system messages). */
+  addChatLine(text: string): void {
+    const parts = text.split(String.fromCharCode(10));
+    for (const part of parts) this.chatLines.push({ text: part, time: performance.now() });
+    const overflow = this.chatLines.length - 100;
+    if (overflow > 0) this.chatLines.splice(0, overflow);
+  }
+
   /** What the chat commands (/time, /weather, /tp ...) are allowed to touch. */
   private commandHost(): CommandHost {
     return {
@@ -2194,37 +2205,41 @@ export class Game {
     );
     this.cloudRenderer.render(this.renderer.viewProjection, camera, this.level.time, this.levelLike);
 
-    this.renderer.render(this.level, camera, skyState, partial);
+    // Vanilla order: solid/cutout terrain -> entities -> particles -> block breaking ->
+    // translucent water. Water is drawn last so it tints and hides submerged entities
+    // instead of being painted underneath them.
+    this.renderer.render(this.level, camera, skyState, partial, () => {
 
-    // entities: viewProjection is refreshed by renderer.render() above
-    // (mobs package) hand the entity pass the shared lightmap + fog so mobs are
-    // lit/fogged exactly like the terrain they stand on.
-    this.entityRenderer.setEnvironment(this.textures.lightmap, skyState, this.renderer.renderDistance);
-    this.entityRenderer.render(
-      this.entityManager.getEntities(),
-      this.renderer.viewProjection,
-      { x: camera.x, y: camera.y, z: camera.z },
-      partial,
-    );
+      // entities: viewProjection is refreshed by renderer.render() above
+      // (mobs package) hand the entity pass the shared lightmap + fog so mobs are
+      // lit/fogged exactly like the terrain they stand on.
+      this.entityRenderer.setEnvironment(this.textures.lightmap, skyState, this.renderer.renderDistance);
+      this.entityRenderer.render(
+        this.entityManager.getEntities(),
+        this.renderer.viewProjection,
+        { x: camera.x, y: camera.y, z: camera.z },
+        partial,
+      );
 
-    // particles after the entities, weather over everything (vanilla order)
-    this.particles.render(this.renderer.viewProjection, partial);
+      // particles after the entities, weather over everything (vanilla order)
+      this.particles.render(this.renderer.viewProjection, partial);
 
-    // Block breaking decal (net.minecraft.client.renderer.LevelRenderer#submitBlockDestroyAnimation):
-    // progress comes from SurvivalState.breaking (08-regression issue 4) and the stage is
-    // floor(progress * 10). `breakingDemo` is the screenshot harness override.
-    const hit = this.raycast();
-    if (hit) {
-      const progress = this.breakingDemo > 0
-        ? this.breakingDemo
-        : (this.mining && (this.mouseLocked || this.touchEnabled) ? this.survival.breaking.progress : 0);
-      if (progress > 0) {
-        const state = this.level.getBlockState(hit.x, hit.y, hit.z);
-        if (state !== 0) {
-          this.breakingOverlay.render(this.level, camera, this.renderer.viewProjection, hit, state, progress);
+      // Block breaking decal (net.minecraft.client.renderer.LevelRenderer#submitBlockDestroyAnimation):
+      // progress comes from SurvivalState.breaking (08-regression issue 4) and the stage is
+      // floor(progress * 10). `breakingDemo` is the screenshot harness override.
+      const hit = this.raycast();
+      if (hit) {
+        const progress = this.breakingDemo > 0
+          ? this.breakingDemo
+          : (this.mining && (this.mouseLocked || this.touchEnabled) ? this.survival.breaking.progress : 0);
+        if (progress > 0) {
+          const state = this.level.getBlockState(hit.x, hit.y, hit.z);
+          if (state !== 0) {
+            this.breakingOverlay.render(this.level, camera, this.renderer.viewProjection, hit, state, progress);
+          }
         }
       }
-    }
+    });
 
     // Weather uses the particle pipeline: lightmap-sampled light coords + environmental fog.
     this.weatherRenderer.lightmap = this.textures.lightmap;
@@ -2234,8 +2249,10 @@ export class Game {
       color: skyState.fogColor,
     });
 
-    if (hit && (this.mouseLocked || this.touchEnabled)) {
-      const state = this.level.getBlockState(hit.x, hit.y, hit.z);
+    const outlineHit = this.raycast();
+    if (outlineHit && (this.mouseLocked || this.touchEnabled)) {
+      const state = this.level.getBlockState(outlineHit.x, outlineHit.y, outlineHit.z);
+      const hit = outlineHit;
       // LevelRenderer#submitHitOutline: ARGB.black(102) => rgba(0, 0, 0, 0.4), and the *whole*
       // outline VoxelShape is drawn (every box, not just the first one).
       for (const b of this.mc.outline(state)) {
@@ -2320,6 +2337,32 @@ export class Game {
     this.hud.render(ctx, state, w, h, (c, item, x, y, size) => {
       this.icons.draw(c, item, x, y, size);
     });
+    this.renderChatLog(ctx, w, h);
+  }
+
+  /**
+   * ChatHud.render: the last lines sit above the hotbar with a 20% black backdrop and fade out
+   * after 10s. Command feedback used to go to a toast in the corner, which is not where vanilla
+   * players look.
+   */
+  private renderChatLog(ctx: CanvasRenderingContext2D, _w: number, h: number): void {
+    const now = performance.now();
+    const fresh = this.chatLines.filter((l) => now - l.time < 10000);
+    if (fresh.length === 0) return;
+    const newest = fresh[fresh.length - 1];
+    const alpha = Math.min(1, Math.max(0, (10000 - (now - newest.time)) / 500));
+    let y = h - 46;
+    for (let i = fresh.length - 1; i >= 0 && y > 8; i--) {
+      const line = fresh[i];
+      const lineAlpha = Math.min(alpha, Math.min(1, Math.max(0, (10000 - (now - line.time)) / 500)));
+      const width = this.font.width(line.text);
+      ctx.globalAlpha = lineAlpha * 0.35;
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(1, y - 1, width + 2, 9);
+      ctx.globalAlpha = 1;
+      this.font.draw(ctx, line.text, 2, y, '#ffffff', true, lineAlpha);
+      y -= 9;
+    }
   }
 
   /**

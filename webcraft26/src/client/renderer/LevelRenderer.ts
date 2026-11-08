@@ -775,7 +775,13 @@ export class LevelRenderer {
     this.post.bindSceneTarget();
   }
 
-  render(level: ClientLevel, camera: Camera, sky: SkyState, partialTicks: number): void {
+  /**
+   * Draws the level. `beforeTranslucent` runs after solid/cutout terrain but before the water
+   * layer, which is where vanilla renders entities: water must tint and hide submerged entities
+   * instead of being painted underneath them (that made mobs look like they floated on the
+   * surface).
+   */
+  render(level: ClientLevel, camera: Camera, sky: SkyState, partialTicks: number, beforeTranslucent?: () => void): void {
     const gl = this.gl;
     this.updateMatrices(camera);
     // Depth-difference post effects need the same clip planes the projection was built with.
@@ -894,7 +900,40 @@ export class LevelRenderer {
       this.drawSection(section, RenderLayer.SOLID, 0.5);
     }
 
-    // translucent, back to front, no depth write
+    // Entities / particles / block-breaking go here (vanilla order).
+    beforeTranslucent?.();
+
+    // translucent, back to front, no depth write. The callback above may have changed the
+    // program, VAO and blend state, so everything this pass needs is re-bound.
+    this.terrain.use();
+    this.terrain.setMat4('uViewProj', this.viewProj);
+    this.terrain.set3f('uFogColor', fog.color[0], fog.color[1], fog.color[2]);
+    this.terrain.set1f('uFogEnvStart', fog.environmentalStart);
+    this.terrain.set1f('uFogEnvEnd', fog.environmentalEnd);
+    this.terrain.set1f('uFogRdStart', fog.renderDistanceStart);
+    this.terrain.set1f('uFogRdEnd', fog.renderDistanceEnd);
+    this.terrain.set1f('uFogEnabled', 1);
+    this.terrain.set3f('uCameraPos', camera.x, camera.y, camera.z);
+    // uDebug / uUseShadows are int uniforms: uniform1f on them raises GL_INVALID_OPERATION.
+    this.terrain.set1i('uDebug', this.debugMode);
+    this.terrain.set1i('uUseShadows', this.shadowsActive ? 1 : 0);
+    this.terrain.setMat4('uLightViewProj', this.shadow.lightViewProjection);
+    this.terrain.set3f('uSunDir', this.lightDir[0], this.lightDir[1], this.lightDir[2]);
+    this.terrain.set3f('uSunColor', this.sunColor[0], this.sunColor[1], this.sunColor[2]);
+    this.terrain.set1f('uShadowTexel', 1 / this.shadow.size);
+    this.terrain.set2i('uWaterLayers', waves ? waterStill : -1, waves ? waterFlow : -1);
+    this.terrain.set1f('uWaveTime', performance.now() / 1000);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
+    this.terrain.set1i('uAtlas', 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.lightmap);
+    this.terrain.set1i('uLightmap', 1);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadow.texture);
+    this.terrain.set1i('uShadowMap', 3);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
     gl.disable(gl.CULL_FACE);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);

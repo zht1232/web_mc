@@ -56,7 +56,7 @@ Esc 暂停，F3 调试屏，**F6 光影开关**；左键挖/攻击、右键放/�
 ## 当前实现（2026-11-08）
 
 - **渲染/光影**：官方 16×16 材质、模型、GUI、字体、音效；原版光照曲线 + 平滑光照 + 天光/方块光；
-  日月星云、雾、水下色调；太阳阴影（1024–4096）+ PCF；HDR + Bloom + 色调映射 + FXAA + 太阳光轴（F6 开关）；
+  日月星云、雾、水下色调；太阳阴影（1024–4096）+ PCF；HDR + Bloom + 色调映射 + FXAA + 太阳光轴（F6 开关）；**SSAO + TAA**（high/ultra 档，深度快照驱动）；
   水面顶点波（Fresnel/反射/高光）；第一人称手臂/手持方块/破坏裂纹；原生 GUI 分辨率渲染。
 - **夜景 1:1**：与真实 26.2 客户端参考截图逐区域平均色差约 ±3/255（光影关），月亮 25×28 px vs 原版 24×28。
 - **世界/玩法**：程序化湖岸世界（13×13 区块）、村庄/遗迹/营地、完整昼夜与天气状态机、
@@ -75,6 +75,8 @@ npx tsc --noEmit                                  # 类型检查
 for t in scripts/test-*.mts; do npx tsx $t; done  # 18 套单测
 npx tsx scripts/test-mobs-render.mts              # 生物渲染 19 项
 npx tsx scripts/test-glmath.mts                   # 矩阵工具 6 项
+node scripts/test-ao.mjs                          # SSAO 6 项
+node scripts/test-taa.mjs                         # TAA 8 项
 node scripts/test-menu.mjs                        # 主菜单/世界选择 9 项
 node scripts/test-touch.mjs                       # 触屏 15 项
 node scripts/smoke.mjs                            # 浏览器冒烟 19 场景（默认 ?play）
@@ -86,7 +88,7 @@ node scripts/ref-capture.mjs                      # 真实 26.2 客户端参考�
 
 ## 还不是 1:1
 
-- 光影没有 SSAO / TAA / 水面反射折射 / 体积光云（只有 bloom/光轴/阴影/顶点水波）。
+- 光影没有水面反射/折射、体积光/云（SSAO 与 TAA 已在 high/ultra 档提供）。
 - 合成台/熔炉/箱子只有界面布局，没有真实交互；饥饿效果、药水、附魔、红石、幼年生物变体未做。
 - 生物模型有已知近似（见 `REPORTS/overnight/mobs2.md` 第 5 节）；结构是程序化近似，不是原版 NBT 模板。
 - 世界为有限程序化世界，不是真实 Anvil 世界；Paper 联机未接。

@@ -91,16 +91,25 @@ node scripts/smoke.mjs                   # 19/19 PASS（默认 URL 已带 ?play�
 4. 夜晚对拍复核（M2 的 `shots/ref/INDEX.md` FOV 记录仍是错的，要么改 INDEX，要么重拍）。
 5. Paper 桥接仍未接浏览器（按用户要求没动）。
 
-## 4b. §8-2 进度（2026-11-08 上午，第一轮）
+## 4b. §8-2 进度（2026-11-08 上午，已交付 SSAO + TAA）
 
-- **已提交的基础设施**：HDR 场景目标的深度缓冲从 renderbuffer 换成 **可采样 depth texture**（驱动不支持时自动回退并关闭依赖深度的 pass），
-  `PostProcessor.stats.depthTexture` 可查；新增 `mat4Invert`（gl-matrix 算法）与 6 断言单测 `scripts/test-glmath.mts`；
-  `LevelRenderer.pendingRebuilds` 暴露网格重建队列长度（测试等它归零再截图，否则会拍到旧网格——排查时踩过）。
-- **SSAO 尝试（已回退）**：写了半分辨率 SSAO pass（深度重建 view pos + 屏幕空间法线 + 半球采样 + 深度感知模糊，接入 bloom/合成），
-  但浏览器里 AO 输出恒为 1（全白）。已核对：深度纹理读回有正确几何、投影/逆投影矩阵 uniform 正确、运行时 GL 状态正确、
-  uniform 值正确、重建数学在 Node 单测里往返一致——仍未能定位。为避免提交未验证代码，**实现已回退**，只保留上述基础设施。
-- **下一轮计划**：改用更简单的「合成 pass 内深度差分 AO」（直接采样 scene depth，比较邻域线性深度，不新增 FBO/矩阵依赖），
-  用自然地形 + 可等待 `pendingRebuilds` 的封闭凹角场景做 A/B 验证；通过后再考虑 TAA。
+**关键根因（之前 SSAO 一直失败的原因）**：原版 GameRenderer.renderLevel 在画第一人称手之前会
+gl.clear(DEPTH_BUFFER_BIT)（hand package 照抄了这个行为），所以后处理阶段读到的深度缓冲只剩手。
+现在在 **世界渲染完、画手之前** 用 gl.blitFramebuffer(DEPTH_BUFFER_BIT) 把深度快照到独立纹理
+（PostProcessor.captureDepth() / LevelRenderer.captureDepthForPost()，由 Game.render 调用），
+后处理采样的是这份快照；TAA 因此把手视为 disoccluded（每帧用当前帧，不产生拖影）。
+
+- **SSAO（深度差分）**：不新开 pass，直接在 composite 里做——8 方向 × 2 步采样，邻域线性深度更近即遮挡
+  （uAoRadius 4px、uAoStrength 0.3，仅 high/ultra 档），整体轻微变暗约 5%，无矩阵/重建依赖，稳定。
+  post.stats.ssao 可查；post.debug = 4 输出 AO 掩码（验证用）；低档位与 F6 关闭时完全不启用。
+- **TAA（时间抗锯齿）**：世界用 Halton(2,3) 8 帧亚像素抖动投影；resolve pass 用当前深度 + 上一帧 viewProjection
+  重投影历史帧，3×3 邻域裁剪防拖影，历史 ping-pong（RGBA16F，全分辨率）。仅 high/ultra 档启用；关闭时抖动为 0，
+  Off 路径逐像素不变。实测静态帧收敛、边缘高频能量 -36%；相机转动 1.5s 内收敛；手部不进入历史（无手部拖影）。
+  PostProcessor.taaOff 可做 A/B。
+- **验证脚本**：scripts/test-ao.mjs（6 项：档位 gating、AO 掩码有真实遮挡、A/B 变暗、Off 关闭、F6 开关、无 GL 错误）；
+  scripts/test-taa.mjs（8 项：gating、静态稳定、边缘能量下降、转动后收敛、低档/Off 关闭、恢复、无错误）。
+- **仍未做**：水面反射/折射（需要二次场景渲染 + 裁剪面）、体积光/云；TAA 没有 per-object motion vector
+  （移动生物靠邻域裁剪抑制拖影，未做完美）。
 
 
 ## 5. 并行 session 事故记录

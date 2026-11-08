@@ -1916,12 +1916,15 @@ export class Game {
     }
 
     // GameRenderer#renderLevel: the hand is drawn last, with its own hud projection (FOV 70) and
-    // a cleared depth buffer, then ScreenEffectRenderer's underwater overlay.
+    // a cleared depth buffer, then ScreenEffectRenderer's underwater overlay. The depth-based post
+    // passes (SSAO/TAA) need the world depth, so snapshot it before the hand pass wipes the buffer:
+    // TAA therefore treats the hand as disoccluded (always current frame) and never ghosts it.
+    this.renderer.captureDepthForPost();
     if (this.screens.current === null) {
       this.handRenderer.render(partial, camera, this.player, this.level, this.survival);
     }
 
-    // Resolve the HDR frame (bloom -> tonemap -> FXAA) into the default framebuffer.
+    // Resolve the HDR frame (SSAO + TAA -> bloom -> tonemap -> FXAA) into the default framebuffer.
     this.renderer.endScene();
 
     this.renderHud();

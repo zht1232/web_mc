@@ -5,7 +5,7 @@ import type { MinecraftData } from '../../vanilla/world/level/block/state/BlockS
 import type { ClientLevel } from '../../vanilla/world/level/ClientLevel.js';
 import type { ModelSource } from './model/ModelSource.js';
 import {
-  boxInFrustum, cameraBasis, extractFrustum, mat4Mul, mat4Perspective, mat4View,
+  boxInFrustum, cameraBasis, extractFrustum, mat4Invert, mat4Mul, mat4Perspective, mat4View,
   type Frustum, GlProgram, loadImage,
 } from './gl/Gl.js';
 import { meshSection, RenderLayer, type SectionMesh, type TintSource } from './chunk/SectionMesher.js';
@@ -64,6 +64,8 @@ export class LevelRenderer {
   private readonly view = new Float32Array(16);
   private readonly proj = new Float32Array(16);
   private readonly viewProj = new Float32Array(16);
+  /** Inverse of viewProj for the depth-based post passes (TAA reprojection). */
+  private readonly invViewProj = new Float32Array(16);
 
   /** Camera matrices, exposed for the entity renderer and the post-processing chain. */
   get viewProjection(): Float32Array { return this.viewProj; }
@@ -122,6 +124,14 @@ export class LevelRenderer {
   /** Resolves HDR -> tone mapped/FXAA image into the default framebuffer. */
   endScene(): void {
     this.post.endScene();
+  }
+
+  /**
+   * Snapshots the world depth right before the hand pass clears the depth buffer. Called from
+   * Game.render between the world/entity/weather passes and the first-person hand.
+   */
+  captureDepthForPost(): void {
+    this.post.captureDepth();
   }
 
   /** Allocates/resizes the HDR + bloom targets; safe to call on every window resize. */
@@ -460,9 +470,20 @@ export class LevelRenderer {
 
   private updateMatrices(camera: Camera): void {
     mat4Perspective((camera.fov * Math.PI) / 180, camera.aspect, 0.05, 1024, this.proj);
+    // TAA: sub-pixel projection jitter ([0,0] when disabled, keeping the Off path pixel identical).
+    const [jx, jy] = this.post.advanceJitter();
+    if (jx !== 0 || jy !== 0) {
+      const w = this.gl.drawingBufferWidth || 1;
+      const h = this.gl.drawingBufferHeight || 1;
+      this.proj[8] += (2 * jx) / w; // m02: shifts NDC x
+      this.proj[9] += (2 * jy) / h; // m12: shifts NDC y
+    }
     mat4View(camera.x, camera.y, camera.z, (camera.yaw * Math.PI) / 180, (camera.pitch * Math.PI) / 180, this.view);
     mat4Mul(this.proj, this.view, this.viewProj);
     this.frustum = extractFrustum(this.viewProj);
+    // Post passes (TAA reprojection) need the exact matrices that produced this frame's depth.
+    mat4Invert(this.viewProj, this.invViewProj);
+    this.post.setCamera(this.viewProj, this.invViewProj);
   }
 
   renderSky(sky: SkyState, camera: Camera, worldTime: number, inWater: boolean): void {
@@ -694,6 +715,8 @@ export class LevelRenderer {
   render(level: ClientLevel, camera: Camera, sky: SkyState, partialTicks: number): void {
     const gl = this.gl;
     this.updateMatrices(camera);
+    // Depth-difference post effects need the same clip planes the projection was built with.
+    this.post.setDepthRange(0.05, 1024);
 
     // collect visible sections
     const opaque: SectionGpu[] = [];

@@ -21,9 +21,10 @@
 // Off mode never touches a framebuffer: beginScene()/endScene() return immediately, so the
 // frame is drawn straight into the default framebuffer exactly like the pre-shader build.
 
-import { GlProgram } from '../gl/Gl.js';
+import { GlProgram, mat4Invert } from '../gl/Gl.js';
 import {
-  BLUR_FRAG, BLOOM_PREFILTER_FRAG, COMPOSITE_FRAG, FULLSCREEN_VERT, FXAA_FRAG, UPSAMPLE_FRAG,
+  BLUR_FRAG, BLOOM_PREFILTER_FRAG, COMPOSITE_FRAG, FULLSCREEN_VERT, FXAA_FRAG,
+  TAA_FRAG, UPSAMPLE_FRAG,
 } from './PostShaders.js';
 
 export type PostQuality = 'off' | 'low' | 'medium' | 'high' | 'ultra';
@@ -51,6 +52,10 @@ export interface PostStats {
   sceneBound: boolean;
   /** Scene depth is a sampleable texture (needed by the depth-based passes: SSAO/TAA). */
   depthTexture: boolean;
+  /** Depth-difference SSAO active this frame (high/ultra tiers only). */
+  ssao: boolean;
+  /** Temporal anti-aliasing active this frame (high/ultra tiers only). */
+  taa: boolean;
 }
 
 export class PostProcessor {
@@ -59,6 +64,7 @@ export class PostProcessor {
   private readonly blur: GlProgram;
   private readonly fxaa: GlProgram;
   private readonly upsample: GlProgram;
+  private readonly taaPass: GlProgram;
 
   private readonly quadVao: WebGLVertexArrayObject;
   private readonly blackTex: WebGLTexture;
@@ -70,6 +76,14 @@ export class PostProcessor {
   private depthTex: WebGLTexture | null = null;
   private depthTextureOk = false;
   private depthRb: WebGLRenderbuffer | null = null;
+  /**
+   * Copy of the scene depth taken right after the world pass, BEFORE the first-person hand clears
+   * the depth buffer (vanilla GameRenderer.renderLevel -> clearDepthTexture). Post effects must
+   * sample this copy, otherwise they only see the hand.
+   */
+  private depthCopyTex: WebGLTexture | null = null;
+  private depthCopyFbo: WebGLFramebuffer | null = null;
+  private depthCopied = false;
   private ldrTex: WebGLTexture | null = null;
   private ldrFbo: WebGLFramebuffer | null = null;
   private mips: BloomMip[] = [];
@@ -103,8 +117,65 @@ export class PostProcessor {
   bloomUpsampleWeight = 0.5;
   /** Master switch for the sun/moon shadow pass (kept separate for cheap A/B debugging). */
   shadowsEnabled = true;
-  /** 0 = normal, 1 = raw HDR scene, 2 = bloom only (verification helper, set from the console). */
+  /** 0 = normal, 1 = raw HDR scene, 2 = bloom only, 4 = SSAO mask (verification helper). */
   debug = 0;
+
+  // ---- depth-difference SSAO (HANDOFF §8-2) -------------------------------
+  /** Camera clip planes; LevelRenderer keeps these in sync with its projection (0.05 / 1024). */
+  nearPlane = 0.05;
+  farPlane = 1024;
+  /** Screen-space sample radius in pixels and master strength (0 disables the term). */
+  ssaoRadius = 4;
+  ssaoStrength = 0.3;
+  /** SSAO is a high/ultra tier feature and needs the sampleable depth texture. */
+  get ssaoEnabled(): boolean {
+    return this.enabled && this.depthTextureOk && this.ssaoStrength > 0
+      && (this.qualityValue === 'high' || this.qualityValue === 'ultra');
+  }
+
+  // ---- TAA (HANDOFF §8-2) --------------------------------------------------
+  /** History ping-pong (full-res HDR) + camera matrices for reprojection. */
+  private historyTex: (WebGLTexture | null)[] = [null, null];
+  private historyFbo: (WebGLFramebuffer | null)[] = [null, null];
+  private historyIndex = 0;
+  private historyValid = false;
+  private readonly viewProj = new Float32Array(16);
+  private readonly invViewProj = new Float32Array(16);
+  private readonly prevViewProj = new Float32Array(16);
+  private cameraReady = false;
+  private jitterIndex = 0;
+  /** Weight of the current frame in the temporal blend (0.1 = 90% history). */
+  taaBlend = 0.1;
+  /** A/B switch used by the regression test (and debugging): disables jitter + history blend. */
+  taaOff = false;
+  /** Halton(2,3) sub-pixel offsets; the projection is nudged by these while TAA is active. */
+  private static readonly JITTER: ReadonlyArray<readonly [number, number]> = [
+    [0.5, 0.333333], [0.25, 0.666667], [0.75, 0.111111], [0.125, 0.444444],
+    [0.625, 0.777778], [0.375, 0.222222], [0.875, 0.555556], [0.0625, 0.888889],
+  ];
+
+  get taaEnabled(): boolean {
+    return this.enabled && this.depthTextureOk && this.cameraReady && this.historyFbo[0] !== null
+      && !this.taaOff
+      && (this.qualityValue === 'high' || this.qualityValue === 'ultra');
+  }
+
+  /** Called by LevelRenderer right after it rebuilds the (possibly jittered) view-projection. */
+  setCamera(viewProj: Float32Array, invViewProj: Float32Array): void {
+    if (this.cameraReady) this.prevViewProj.set(this.viewProj);
+    this.viewProj.set(viewProj);
+    this.invViewProj.set(invViewProj);
+    this.cameraReady = true;
+  }
+
+  /** Sub-pixel projection offset in pixels for this frame ([0,0] when TAA is off). */
+  advanceJitter(): readonly [number, number] {
+    if (!this.taaEnabled) return [0, 0];
+    const j = PostProcessor.JITTER[this.jitterIndex % PostProcessor.JITTER.length];
+    this.jitterIndex++;
+    // Halton values are in (0,1); centre them around 0.
+    return [j[0] - 0.5, j[1] - 0.5];
+  }
 
   constructor(private readonly gl: WebGL2RenderingContext) {
     this.composite = new GlProgram(gl, FULLSCREEN_VERT, COMPOSITE_FRAG, 'post.composite');
@@ -112,6 +183,7 @@ export class PostProcessor {
     this.blur = new GlProgram(gl, FULLSCREEN_VERT, BLUR_FRAG, 'post.blur');
     this.fxaa = new GlProgram(gl, FULLSCREEN_VERT, FXAA_FRAG, 'post.fxaa');
     this.upsample = new GlProgram(gl, FULLSCREEN_VERT, UPSAMPLE_FRAG, 'post.upsample');
+    this.taaPass = new GlProgram(gl, FULLSCREEN_VERT, TAA_FRAG, 'post.taa');
 
     // Fullscreen triangle: (-1,-1) (3,-1) (-1,3) covers the whole clip space with one
     // primitive, so no diagonal seam and one fewer vertex than a quad.
@@ -139,6 +211,8 @@ export class PostProcessor {
   /** `renderer.shadersEnabled` and the VideoSettings toggle land here. */
   setEnabled(value: boolean): void {
     this.enabled = value;
+    // The camera moved while the chain was bypassed: never blend with that stale history.
+    if (!value) this.historyValid = false;
   }
 
   setQuality(value: string): void {
@@ -161,11 +235,19 @@ export class PostProcessor {
       lastGlError: this.gl.getError(),
       sceneBound: this.sceneBound,
       depthTexture: this.depthTextureOk,
+      ssao: this.ssaoEnabled,
+      taa: this.taaEnabled,
     };
   }
 
   /** True when the scene depth attachment is a texture that post passes can sample. */
   get depthTextureAvailable(): boolean { return this.depthTextureOk; }
+
+  /** Called by LevelRenderer after it rebuilds the projection so the SSAO linearisation matches. */
+  setDepthRange(near: number, far: number): void {
+    this.nearPlane = near;
+    this.farPlane = far;
+  }
 
   // ------------------------------------------------------------------ targets
 
@@ -192,6 +274,14 @@ export class PostProcessor {
     if (this.depthRb) gl.deleteRenderbuffer(this.depthRb);
     if (this.sceneTex) gl.deleteTexture(this.sceneTex);
     if (this.depthTex) gl.deleteTexture(this.depthTex);
+    if (this.depthCopyFbo) gl.deleteFramebuffer(this.depthCopyFbo);
+    if (this.depthCopyTex) gl.deleteTexture(this.depthCopyTex);
+    for (const f of this.historyFbo) if (f) gl.deleteFramebuffer(f);
+    for (const t of this.historyTex) if (t) gl.deleteTexture(t);
+    this.historyFbo = [null, null];
+    this.historyTex = [null, null];
+    this.historyValid = false;
+    this.jitterIndex = 0;
     if (this.ldrFbo) gl.deleteFramebuffer(this.ldrFbo);
     if (this.ldrTex) gl.deleteTexture(this.ldrTex);
     for (const t of this.mipTextures) gl.deleteTexture(t);
@@ -200,6 +290,9 @@ export class PostProcessor {
     this.sceneTex = null;
     this.depthTex = null;
     this.depthTextureOk = false;
+    this.depthCopyTex = null;
+    this.depthCopyFbo = null;
+    this.depthCopied = false;
     this.ldrFbo = null;
     this.ldrTex = null;
     this.mips = [];
@@ -276,6 +369,31 @@ export class PostProcessor {
       if (!complete) console.warn('[post] scene framebuffer incomplete, shaders disabled');
     }
 
+    // Depth-only target for the pre-hand snapshot (blitFramebuffer DEPTH_BUFFER_BIT).
+    if (this.depthTextureOk) {
+      if (this.depthCopyTex) gl.deleteTexture(this.depthCopyTex);
+      if (this.depthCopyFbo) gl.deleteFramebuffer(this.depthCopyFbo);
+      this.depthCopyTex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.depthCopyTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, this.width, this.height, 0,
+        gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.depthCopyFbo = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.depthCopyFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, this.depthCopyTex, 0);
+      gl.drawBuffers([gl.NONE]);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        console.warn('[post] depth-copy framebuffer incomplete; depth post effects disabled');
+        gl.deleteFramebuffer(this.depthCopyFbo);
+        gl.deleteTexture(this.depthCopyTex);
+        this.depthCopyFbo = null;
+        this.depthCopyTex = null;
+      }
+    }
+
     // --- LDR intermediate for the FXAA pass
     this.ldrTex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.ldrTex);
@@ -300,6 +418,17 @@ export class PostProcessor {
       mw = Math.max(1, mw >> 1);
       mh = Math.max(1, mh >> 1);
     }
+
+    // --- TAA history ping-pong (full resolution, same HDR format as the scene target)
+    for (let i = 0; i < 2; i++) {
+      this.historyTex[i] = this.createMipTexture(this.width, this.height);
+      const fbo = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.historyTex[i], 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+      this.historyFbo[i] = fbo;
+    }
+    this.historyValid = false;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
@@ -338,8 +467,27 @@ export class PostProcessor {
     gl.viewport(0, 0, this.width, this.height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.sceneBound = true;
+    this.depthCopied = false;
     return true;
   }
+
+  /**
+   * Snapshots the world depth before the first-person hand pass clears it (vanilla
+   * GameRenderer.renderLevel -> clearDepthTexture). Depth-based post effects sample the copy.
+   */
+  captureDepth(): void {
+    if (!this.enabled || !this.depthTextureOk || !this.sceneFbo || !this.depthCopyFbo || !this.depthCopyTex) return;
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.sceneFbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.depthCopyFbo);
+    gl.blitFramebuffer(0, 0, this.width, this.height, 0, 0, this.width, this.height,
+      gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFbo);
+    this.depthCopied = true;
+  }
+
+  /** True once captureDepth() ran this frame (the composite pass samples the copy). */
+  get hasDepthCopy(): boolean { return this.depthCopied && this.depthCopyTex !== null; }
 
   /**
    * Re-binds the HDR scene target after a pass that had to render into its own framebuffer
@@ -367,7 +515,10 @@ export class PostProcessor {
     gl.disable(gl.BLEND);
     gl.depthMask(false);
 
-    const bloom = this.mips.length > 0 ? this.runBloomChain() : this.blackTex;
+    // TAA resolve first (the hand is drawn after endScene, so the history stays world-only), then
+    // everything downstream (bloom prefilter + composite) reads the resolved colour.
+    const colorTex = (this.taaEnabled && this.sceneTex) ? (this.runTaa() ?? this.sceneTex) : this.sceneTex;
+    const bloom = this.mips.length > 0 ? this.runBloomChain(colorTex) : this.blackTex;
     const useFxaa = this.qualityValue !== 'low';
 
     // Composite -> LDR intermediate (so FXAA can read it), or straight to the screen.
@@ -375,11 +526,18 @@ export class PostProcessor {
     gl.viewport(0, 0, this.width, this.height);
     this.composite.use();
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
+    gl.bindTexture(gl.TEXTURE_2D, colorTex);
     this.composite.set1i('uColor', 0);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, bloom);
     this.composite.set1i('uBloom', 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.hasDepthCopy ? this.depthCopyTex : (this.depthTex ?? this.blackTex));
+    this.composite.set1i('uDepth', 2);
+    this.composite.set1f('uNear', this.nearPlane);
+    this.composite.set1f('uFar', this.farPlane);
+    this.composite.set1f('uAoRadius', this.ssaoRadius);
+    this.composite.set1f('uAoStrength', this.ssaoEnabled ? this.ssaoStrength : 0);
     this.composite.set2f('uResolution', this.width, this.height);
     this.composite.set1f('uExposure', this.exposure);
     this.composite.set1f('uBloomStrength', this.mips.length > 0 ? this.bloomStrength : 0);
@@ -413,8 +571,44 @@ export class PostProcessor {
     // on demand from the stats getter instead of once per frame.
   }
 
+  /**
+   * Temporal resolve: reproject the previous resolved colour through the depth copy and blend it
+   * with the current jittered frame. Returns the freshly written history texture.
+   */
+  private runTaa(): WebGLTexture | null {
+    const gl = this.gl;
+    const read = this.historyIndex;
+    const write = 1 - read;
+    const readTex = this.historyTex[read];
+    const writeFbo = this.historyFbo[write];
+    if (!readTex || !writeFbo || !this.depthCopyTex || !this.sceneTex) return null;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, writeFbo);
+    gl.viewport(0, 0, this.width, this.height);
+    this.taaPass.use();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
+    this.taaPass.set1i('uColor', 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, readTex);
+    this.taaPass.set1i('uHistory', 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.depthCopyTex);
+    this.taaPass.set1i('uDepth', 2);
+    this.taaPass.setMat4('uInvViewProj', this.invViewProj);
+    this.taaPass.setMat4('uPrevViewProj', this.prevViewProj);
+    this.taaPass.set2f('uResolution', this.width, this.height);
+    this.taaPass.set1f('uBlend', this.taaBlend);
+    this.taaPass.set1f('uReset', this.historyValid ? 0 : 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.activeTexture(gl.TEXTURE0);
+    this.historyIndex = write;
+    this.historyValid = true;
+    return this.historyTex[write];
+  }
+
   /** Prefilter -> downsample chain -> separable gaussian per mip -> additive upsample. */
-  private runBloomChain(): WebGLTexture {
+  private runBloomChain(colorTex: WebGLTexture): WebGLTexture {
     const gl = this.gl;
     const mips = this.mips;
 
@@ -422,7 +616,7 @@ export class PostProcessor {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.mipFbo(0));
     gl.viewport(0, 0, mips[0].w, mips[0].h);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
+    gl.bindTexture(gl.TEXTURE_2D, colorTex);
     this.prefilter.use();
     this.prefilter.set1i('uColor', 0);
     this.prefilter.set2f('uTexel', 1 / this.width, 1 / this.height);

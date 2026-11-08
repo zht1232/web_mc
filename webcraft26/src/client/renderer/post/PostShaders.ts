@@ -43,12 +43,18 @@ in vec2 vUV;
 
 uniform sampler2D uColor;
 uniform sampler2D uBloom;
+uniform sampler2D uDepth;       // scene depth (depth-difference SSAO)
 uniform vec2 uResolution;
 
 uniform float uExposure;       // TM_EXPOSURE
 uniform float uBloomStrength;  // BLOOM_STRENGTH
 uniform float uTime;
 uniform int uDebug;
+// Depth-based SSAO: linearised depth difference against 8 screen-space neighbours.
+uniform float uNear;
+uniform float uFar;
+uniform float uAoRadius;    // sample radius in pixels
+uniform float uAoStrength;  // 0 disables
 
 out vec4 fragColor;
 
@@ -133,12 +139,53 @@ float hash12(vec2 p) {
   return fract((p3.x + p3.y) * p3.z);
 }
 
+// Window depth -> eye-space distance (same near/far the projection was built with).
+float linearDepth(float d) {
+  return uNear * uFar / (uFar - d * (uFar - uNear));
+}
+
+/**
+ * Depth-difference SSAO (HANDOFF §8-2). For every screen-space neighbour that is closer to the
+ * camera than the centre sample, the centre pixel is partially occluded. Cheap and robust: no
+ * matrices, no sampling of reconstructed positions, so it cannot drift out of sync with the
+ * projection. uAoRadius/uAoStrength are tuned per quality tier by PostProcessor.
+ */
+float ssaoTerm(vec2 uv, vec2 texel) {
+  float d0 = texture(uDepth, uv).r;
+  if (d0 >= 0.999999) return 1.0; // sky: no occlusion
+  float z0 = linearDepth(d0);
+  float occ = 0.0;
+  const float TAU = 6.2831853;
+  for (int i = 0; i < 8; i++) {
+    float a = float(i) * (TAU / 8.0);
+    vec2 dir = vec2(cos(a), sin(a));
+    for (int s = 1; s <= 2; s++) {
+      vec2 suv = uv + dir * texel * uAoRadius * (float(s) * 0.5);
+      float d1 = texture(uDepth, suv).r;
+      if (d1 >= 0.999999) continue;
+      float z1 = linearDepth(d1);
+      float diff = z0 - z1;             // > 0: neighbour is closer to the camera
+      if (diff > 0.0) {
+        // Only occluders within the sampling footprint count: a screen-space radius of
+        // uAoRadius pixels at distance z0 covers about z0 * 0.02 world units. Bigger depth
+        // jumps are silhouettes/foreground leaks and must not darken the surface.
+        float maxDiff = z0 * 0.02 + 0.05;
+        occ += clamp(1.0 - diff / maxDiff, 0.0, 1.0);
+      }
+    }
+  }
+  return clamp(1.0 - (occ / 16.0) * uAoStrength, 0.0, 1.0);
+}
+
 void main() {
   vec3 color = srgbToLinear(texture(uColor, vUV).rgb);
   vec3 bloom = texture(uBloom, vUV).rgb;   // prefilter already stores linear values
+  float ao = ssaoTerm(vUV, 1.0 / uResolution);
+  color *= ao;
 
   if (uDebug == 1) { fragColor = vec4(texture(uColor, vUV).rgb, 1.0); return; }
   if (uDebug == 2) { fragColor = vec4(bloom, 1.0); return; }
+  if (uDebug == 4) { fragColor = vec4(vec3(ao), 1.0); return; }
 
   // composite5.glsl:142 - mix, never add.
   color = mix(color, bloom, uBloomStrength);
@@ -281,6 +328,58 @@ void main() {
 
   float lB = luma(rgbB);
   fragColor = vec4((lB < lMin || lB > lMax) ? rgbA : rgbB, 1.0);
+}`;
+
+/**
+ * Temporal anti-aliasing (HANDOFF §8-2). The world is rendered with a sub-pixel jittered
+ * projection; this pass reprojects last frame's resolved colour through the depth buffer
+ * (camera-only motion vectors, no per-object velocity) and blends it with the current frame.
+ * The history is clipped to the 3x3 neighbourhood of the current frame to suppress ghosting;
+ * samples that reproject outside the screen use the current frame directly (disocclusion).
+ */
+export const TAA_FRAG = `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uColor;     // current (jittered) HDR scene
+uniform sampler2D uHistory;   // previous resolved frame
+uniform sampler2D uDepth;     // depth copy (world only, pre-hand)
+uniform mat4 uInvViewProj;    // current frame, jittered
+uniform mat4 uPrevViewProj;   // previous frame, jittered
+uniform vec2 uResolution;
+uniform float uBlend;         // weight of the current frame (0.1 = 90% history)
+uniform float uReset;         // 1 on the first frame after (re)allocating the history
+out vec4 fragColor;
+
+void main() {
+  vec3 current = texture(uColor, vUV).rgb;
+
+  // 3x3 neighbourhood clamp (variance clipping keeps moving edges from smearing).
+  vec3 nmin = current;
+  vec3 nmax = current;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec3 c = texture(uColor, vUV + vec2(float(x), float(y)) / uResolution).rgb;
+      nmin = min(nmin, c);
+      nmax = max(nmax, c);
+    }
+  }
+
+  vec2 prevUV = vec2(0.5);
+  float d = texture(uDepth, vUV).r;
+  bool hasWorld = d < 0.999999;
+  if (hasWorld) {
+    vec4 clip = vec4(vUV * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+    vec4 world = uInvViewProj * clip;
+    world /= world.w;
+    vec4 prevClip = uPrevViewProj * world;
+    if (prevClip.w > 0.0) prevUV = prevClip.xy / prevClip.w * 0.5 + 0.5;
+    else hasWorld = false;
+  }
+
+  bool inside = hasWorld && prevUV.x > 0.0 && prevUV.x < 1.0 && prevUV.y > 0.0 && prevUV.y < 1.0;
+  float alpha = (inside && uReset < 0.5) ? uBlend : 1.0;
+  vec3 history = inside ? clamp(texture(uHistory, prevUV).rgb, nmin, nmax) : current;
+  fragColor = vec4(mix(history, current, alpha), 1.0);
 }`;
 
 /**

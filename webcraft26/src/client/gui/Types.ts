@@ -15,7 +15,8 @@ export interface Rect {
   height: number;
 }
 
-export type MouseAction = 'down' | 'up' | 'move' | 'wheel';
+export type MouseAction = 'down' | 'up' | 'move' | 'wheel' | 'cancel';
+export type ContainerAction = 'PICKUP' | 'QUICK_MOVE' | 'SPLIT' | 'THROW' | 'CLONE' | 'SWAP' | 'QUICK_CRAFT' | 'PICKUP_ALL';
 export type GameMode = 'survival' | 'creative';
 export type Difficulty = 'peaceful' | 'easy' | 'normal' | 'hard';
 
@@ -92,7 +93,9 @@ export interface ContainerMenuLike {
   getSlotCount(): number;
   getItem(index: number): ItemStack;
   /** button: 0 = left, 1 = right; shift = QUICK_MOVE; action describes the vanilla ContainerInput. */
-  click(index: number, button: number, shift: boolean, action: 'PICKUP' | 'QUICK_MOVE' | 'SPLIT' | 'THROW' | 'CLONE' | 'SWAP'): void;
+  click(index: number, button: number, shift: boolean, action: ContainerAction): void;
+  canPlaceItem?(index: number, stack: ItemStack): boolean;
+  getMaxStackSize?(index: number, stack: ItemStack): number;
   getCarried(): ItemStack | null;
   setCarried(stack: ItemStack | null): void;
   /** Creative inventory writes its virtual tab grid through this (optional for real menus). */
@@ -110,6 +113,7 @@ export interface ScreenDeps {
   sprites?: GuiSpriteAtlas;
   icons: ItemIconAtlas;
   options: GuiOptions;
+  touchInput?: boolean;
   /** Optional: ScreenManager falls back to the built-in I18n if omitted. */
   i18n?: (key: string) => string;
   worlds?: WorldListProvider;

@@ -308,54 +308,71 @@ export class BiomeColors {
     return this.biomeSource ? this.biomeSource(x, y, z) : 0;
   }
 
+  /** (x,y,z,kind) -> blended ARGB. A leaves block tints 6+ quads at the same position;
+   *  without this each quad re-runs the 5x5 biome blend (the mesh hot path). */
+  private readonly blendCache = new Map<string, number>();
+
   /** ClientLevel.calculateBlockTint: the biomeBlendRadius 5x5 average. */
   private averageColorAt(
     x: number,
     y: number,
     z: number,
+    kind: number,
     resolver: (biomeId: number, px: number, pz: number) => number,
   ): number {
+    const key = `${x},${y},${z},${kind}`;
+    const hit = this.blendCache.get(key);
+    if (hit !== undefined) return hit;
     const dist = this.blendRadius;
+    let result: number;
     if (dist <= 0) {
-      const biomeId = this.biomeIdAt(x, y, z);
-      return resolver(biomeId, x, z);
-    }
-    const count = (dist * 2 + 1) * (dist * 2 + 1);
-    let red = 0;
-    let green = 0;
-    let blue = 0;
-    for (let dz = -dist; dz <= dist; dz++) {
-      for (let dx = -dist; dx <= dist; dx++) {
-        const px = x + dx;
-        const pz = z + dz;
-        const color = resolver(this.biomeIdAt(px, y, pz), px, pz);
-        red += argb.red(color);
-        green += argb.green(color);
-        blue += argb.blue(color);
+      result = resolver(this.biomeIdAt(x, y, z), x, z);
+    } else {
+      const count = (dist * 2 + 1) * (dist * 2 + 1);
+      let red = 0;
+      let green = 0;
+      let blue = 0;
+      for (let dz = -dist; dz <= dist; dz++) {
+        for (let dx = -dist; dx <= dist; dx++) {
+          const px = x + dx;
+          const pz = z + dz;
+          const color = resolver(this.biomeIdAt(px, y, pz), px, pz);
+          red += argb.red(color);
+          green += argb.green(color);
+          blue += argb.blue(color);
+        }
       }
+      // `return ARGB.color(totalRed / count, ...)` - Java int division truncates.
+      result = argb.color(Math.floor(red / count), Math.floor(green / count), Math.floor(blue / count));
     }
-    // `return ARGB.color(totalRed / count, ...)` - Java int division truncates.
-    return argb.color(Math.floor(red / count), Math.floor(green / count), Math.floor(blue / count));
+    if (this.blendCache.size > 150000) this.blendCache.clear();
+    this.blendCache.set(key, result);
+    return result;
+  }
+
+  /** Biome colours depend on loaded chunks; drop memoized blends when the world changes. */
+  clearBlendCache(): void {
+    this.blendCache.clear();
   }
 
   /** BiomeColors.getAverageGrassColor(level, pos). */
   averageGrassColorInt(x: number, y: number, z: number): number {
-    return this.averageColorAt(x, y, z, (biomeId, px, pz) => this.grassColorInt(biomeId, px, pz));
+    return this.averageColorAt(x, y, z, KIND_GRASS, (biomeId, px, pz) => this.grassColorInt(biomeId, px, pz));
   }
 
   /** BiomeColors.getAverageFoliageColor(level, pos). */
   averageFoliageColorInt(x: number, y: number, z: number): number {
-    return this.averageColorAt(x, y, z, (biomeId) => this.foliageColorInt(biomeId));
+    return this.averageColorAt(x, y, z, KIND_FOLIAGE, (biomeId) => this.foliageColorInt(biomeId));
   }
 
   /** BiomeColors.getAverageDryFoliageColor(level, pos). */
   averageDryFoliageColorInt(x: number, y: number, z: number): number {
-    return this.averageColorAt(x, y, z, (biomeId) => this.dryFoliageColorInt(biomeId));
+    return this.averageColorAt(x, y, z, KIND_DRY_FOLIAGE, (biomeId) => this.dryFoliageColorInt(biomeId));
   }
 
   /** BiomeColors.getAverageWaterColor(level, pos). */
   averageWaterColorInt(x: number, y: number, z: number): number {
-    return this.averageColorAt(x, y, z, (biomeId) => this.waterColorInt(biomeId));
+    return this.averageColorAt(x, y, z, KIND_WATER, (biomeId) => this.waterColorInt(biomeId));
   }
 
   // ---- mesher-facing float API (values are channel / 255, exactly ARGB's scale) ----------

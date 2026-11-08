@@ -19,7 +19,10 @@ export interface ItemModelEntry {
   parts?: { model: number; translation?: number[] }[];
 }
 
-const CELL = 48;
+// Vanilla bakes GUI item icons at the slot's own 16x16 resolution (GuiItemAtlas draws straight
+// into the slot framebuffer). Baking at 48 and blitting down to 16 with nearest-neighbour threw
+// away 2 of every 3 texels, which is what produced the grey "cracks" inside every block icon.
+const CELL = 16;
 const COLS = 40;
 const ATLAS = CELL * COLS;
 
@@ -99,12 +102,11 @@ export class ItemIconAtlas {
     this.program.set1f('uAlphaTest', 0.02);
     this.program.set1f('uTranslucent', 0);
 
-    // Block items: isometric camera (30 degrees down, 45 degrees around Y) approximating the
-    // block model's "gui" display transform (vanilla block/models/*.json display.gui =
-    // rotation [30, 225, 0], scale 0.625, applied inside the GUI item atlas).
-    const proj = ortho(-0.95, 0.95, -0.95, 0.95, -8, 8);
-    const yaw = Math.PI / 4;
-    const pitch = Math.atan(1 / Math.sqrt(2));
+    // Block items: vanilla display.gui rotation [30, 225, 0] => eye-space basis
+    // R = Rx(30deg) * Ry(225deg); top + north + east faces are the visible ones.
+    const proj = ortho(-0.8, 0.8, -0.8, 0.8, -8, 8);
+    const yaw = (225 * Math.PI) / 180;
+    const pitch = (30 * Math.PI) / 180;
     const view = isoView(yaw, pitch);
     const isoVp = mat4Mul(proj, view, new Float32Array(16));
     // Flat items: GuiItemAtlas.drawToSlot (net/minecraft/client/gui/render/GuiItemAtlas.java:103-108)
@@ -158,10 +160,11 @@ export class ItemIconAtlas {
       const flatIcon = entry.kind === 'flat' || entry.kind === 'special';
       this.program.setMat4('uViewProj', flatIcon ? flatVp : isoVp);
 
+      const tint = itemIconTint(name);
       if (entry.kind === 'block' && entry.model !== undefined) {
-        this.drawModel(entry.model, vao, vbo, ibo, verts, dv, indices, entry.guiLight === 'front');
+        this.drawModel(entry.model, vao, vbo, ibo, verts, dv, indices, entry.guiLight === 'front', tint);
       } else if (entry.kind === 'composite' && entry.parts) {
-        for (const part of entry.parts) this.drawModel(part.model, vao, vbo, ibo, verts, dv, indices, false);
+        for (const part of entry.parts) this.drawModel(part.model, vao, vbo, ibo, verts, dv, indices, false, tint);
       } else if (entry.kind === 'flat' && entry.layers?.length) {
         this.drawFlat(entry, vao, vbo, ibo, verts, dv, indices);
       } else if (entry.kind === 'special') {
@@ -194,6 +197,7 @@ export class ItemIconAtlas {
   private drawModel(
     modelIndex: number, vao: WebGLVertexArrayObject, vbo: WebGLBuffer, ibo: WebGLBuffer,
     verts: Uint8Array, dv: DataView, indices: Uint32Array, frontLight: boolean,
+    tint: number,
   ): void {
     const gl = this.gl;
     const model = this.models.getModel(modelIndex);
@@ -218,10 +222,14 @@ export class ItemIconAtlas {
         bdv.setUint16(o + 16, quad.tex, true);
         bdv.setUint8(o + 18, 15);
         bdv.setUint8(o + 19, 15);
-        const c = Math.round(shade * 255);
-        bdv.setUint8(o + 20, c);
-        bdv.setUint8(o + 21, c);
-        bdv.setUint8(o + 22, c);
+        // tintIndex >= 0 uses the default grass/foliage colour, exactly like vanilla's
+        // ItemBlockRenderTypes path with a null biome (grass_block tops were white before).
+        const tr = quad.tint >= 0 ? (tint >> 16) & 255 : 255;
+        const tg = quad.tint >= 0 ? (tint >> 8) & 255 : 255;
+        const tb = quad.tint >= 0 ? tint & 255 : 255;
+        bdv.setUint8(o + 20, Math.round(shade * tr));
+        bdv.setUint8(o + 21, Math.round(shade * tg));
+        bdv.setUint8(o + 22, Math.round(shade * tb));
         bdv.setUint8(o + 23, 255);
         vi++;
       }
@@ -324,6 +332,20 @@ export class ItemIconAtlas {
   }
 }
 
+/**
+ * Default tint applied when a model face declares a tintIndex (grass_block top, leaves, ...).
+ * Vanilla uses GrassColor/FoliageColor#getDefaultColor for GUI icons (no biome context).
+ */
+function itemIconTint(name: string): number {
+  if (/leaves|vine|mangrove_roots|azalea/.test(name)) return 0x48b518;
+  if (/grass_block|short_grass|tall_grass|fern|potted_fern/.test(name)) return 0x7cbd6b;
+  if (/water|bubble_column/.test(name)) return 0x3f76e4;
+  if (/lily_pad/.test(name)) return 0x71c35c;
+  if (/attached_melon_stem|attached_pumpkin_stem/.test(name)) return 0xe0c71c;
+  if (/redstone_wire/.test(name)) return 0xff0000;
+  return 0xffffff;
+}
+
 function faceShade(dir: number): number {
   switch (dir) {
     case 0: return 0.5;
@@ -348,11 +370,11 @@ function ortho(l: number, r: number, b: number, t: number, n: number, f: number)
 function isoView(yaw: number, pitch: number): Float32Array {
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
-  // R = Rx(pitch) * Ry(yaw), then translate the model centre to the origin
+  // R = Rx(pitch) * Ry(yaw), column-major; then translate the model centre to the origin.
   const m = new Float32Array(16);
-  m[0] = cy; m[4] = 0; m[8] = -sy; m[12] = 0;
-  m[1] = sy * sp; m[5] = cp; m[9] = cy * sp; m[13] = 0;
-  m[2] = sy * cp; m[6] = -sp; m[10] = cy * cp; m[14] = 0;
+  m[0] = cy; m[4] = 0; m[8] = sy;
+  m[1] = sp * sy; m[5] = cp; m[9] = -sp * cy;
+  m[2] = -cp * sy; m[6] = sp; m[10] = cp * cy;
   m[3] = 0; m[7] = 0; m[11] = 0; m[15] = 1;
   // center of a 1x1x1 block at (0.5, 0.5, 0.5)
   const cx = 0.5, cyy = 0.5, cz = 0.5;

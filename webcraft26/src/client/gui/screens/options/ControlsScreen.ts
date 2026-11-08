@@ -48,7 +48,7 @@ export class ControlsScreen extends OptionsSubScreen {
   private list!: ScrollPanel<KeyBind>;
 
   constructor(env: ConstructorParameters<typeof OptionsSubScreen>[0]) {
-    super(env, 'options.controlsTitle');
+    super(env, 'options.controls');
   }
 
   protected addOptions(): void {
@@ -56,7 +56,7 @@ export class ControlsScreen extends OptionsSubScreen {
     const top = 32;
     const width = 310;
     const height = this.height - 88;
-    this.list = new ScrollPanel<KeyBind>(left, top, width, height, this.t('options.controlsTitle'), {
+    this.list = new ScrollPanel<KeyBind>(left, top, width, height, this.t('options.controls'), {
       itemHeight: 28,
       renderItem: (g, item, index, x, y, w, h, hovered, selected) => {
         const showCategory = index === 0 || this.binds[index - 1].category !== item.category;

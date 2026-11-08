@@ -45,11 +45,11 @@ export class OptionsScreen extends Screen {
     // 2-column grid of the standard option sub-screens.
     const targets: Record<string, string | null> = {
       'options.skinCustomisation': null,
-      'options.soundsTitle': 'sound',
-      'options.videoTitle': 'video',
-      'options.controlsTitle': 'controls',
-      'options.languageTitle': 'language',
-      'options.chatTitle': null,
+      'options.sounds': 'sound',
+      'options.video': 'video',
+      'options.controls': 'controls',
+      'options.language': 'language',
+      'options.chat': 'chat',
       'options.resourcepack': null,
       'options.accessibility': null,
       'options.telemetry': null,

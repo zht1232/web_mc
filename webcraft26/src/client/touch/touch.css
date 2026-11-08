@@ -12,6 +12,7 @@
 
   /* Replaced from JS with the HUD's real hotbar height (22 * guiScale). */
   --tc-hotbar: 44px;
+  --tc-hud: 98px;
 
   --tc-joy: 112px;
   --tc-nub: 46px;
@@ -70,7 +71,7 @@
 .tc-joy {
   position: absolute;
   left: calc(var(--tc-safe-left) + 18px);
-  bottom: calc(var(--tc-safe-bottom) + var(--tc-hotbar) + 14px);
+  bottom: calc(var(--tc-safe-bottom) + var(--tc-hud) + 14px);
   width: var(--tc-joy);
   height: var(--tc-joy);
   border-radius: 50%;
@@ -151,7 +152,7 @@
 .tc-cluster {
   position: absolute;
   right: calc(var(--tc-safe-right) + 10px);
-  bottom: calc(var(--tc-safe-bottom) + var(--tc-hotbar) + 12px);
+  bottom: calc(var(--tc-safe-bottom) + var(--tc-hud) + 12px);
   width: var(--tc-cluster-w);
   height: var(--tc-cluster-h);
   pointer-events: none;
@@ -346,12 +347,12 @@
 @media (orientation: portrait) {
   .tc-joy {
     left: calc(var(--tc-safe-left) + 20px);
-    bottom: calc(var(--tc-safe-bottom) + var(--tc-hotbar) + 18px);
+    bottom: calc(var(--tc-safe-bottom) + var(--tc-hud) + 18px);
   }
 
   .tc-cluster {
     right: calc(var(--tc-safe-right) + 8px);
-    bottom: calc(var(--tc-safe-bottom) + var(--tc-hotbar) + 18px);
+    bottom: calc(var(--tc-safe-bottom) + var(--tc-hud) + 18px);
   }
 }
 

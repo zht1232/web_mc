@@ -104,11 +104,13 @@ export abstract class OptionsSubScreen extends Screen {
 /** Shared list of button labels used by OptionsScreen for the 2-column grid. */
 export const OPTIONS_BUTTON_KEYS = [
   'options.skinCustomisation',
-  'options.soundsTitle',
-  'options.videoTitle',
-  'options.controlsTitle',
-  'options.languageTitle',
-  'options.chatTitle',
+  // Real 26.2 keys (OptionsScreen.java). The old *Title variants were invented and only
+  // existed in the English fallback table, so they stayed English under zh_cn.
+  'options.sounds',
+  'options.video',
+  'options.controls',
+  'options.language',
+  'options.chat',
   'options.resourcepack',
   'options.accessibility',
   'options.telemetry',

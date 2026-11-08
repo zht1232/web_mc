@@ -378,7 +378,7 @@ export class TouchControls {
    * 22 GUI-px hotbar at the bottom. Keeping controls above it also keeps
    * them clear of the home indicator via env(safe-area-inset-bottom).
    */
-  private updateMetrics(): void {
+  updateMetrics(guiScale?: number): void {
     if (this.disposed) return;
     const w = Math.max(1, window.innerWidth);
     const h = Math.max(1, window.innerHeight);
@@ -386,8 +386,9 @@ export class TouchControls {
     // scale when available instead of guessing from CSS dimensions.
     const mc = (globalThis as unknown as { __mc?: { guiScale?: number } }).__mc;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const scale = mc?.guiScale ?? Math.max(2, Math.min(4, Math.floor(Math.min(w * dpr / 320, h * dpr / 240))));
-    this.el.style.setProperty('--tc-hotbar', `${Math.round((22 * scale) / dpr)}px`);
+    const scale = guiScale ?? mc?.guiScale ?? Math.max(2, Math.min(4, Math.floor(Math.min(w * dpr / 320, h * dpr / 240))));
+    this.el.style.setProperty('--tc-hotbar', `${Math.ceil((22 * scale) / dpr)}px`);
+    this.el.style.setProperty('--tc-hud', `${Math.ceil((49 * scale) / dpr)}px`);
   }
 
   /* ------------------------------------------------------------------ buttons */

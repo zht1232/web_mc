@@ -236,6 +236,8 @@ export class SkyRenderer {
   moonPhase = 0;
   /** visual/sky_fog_end_distance, clipped by the render distance like FogRenderer does. */
   skyFogEnd: number;
+  /** Optional display-space fog tint (the renderer blends the pale vanilla fog toward the sky). */
+  fogColorOverride: [number, number, number] | null = null;
   /** Sea level of the dimension; below it the black bottom disc is drawn. */
   horizonHeight: number;
   readonly opts: Required<SkyRendererOptions>;
@@ -422,7 +424,7 @@ export class SkyRenderer {
     // colour with the sky colour and - when the camera looks toward the sun - the sunrise/sunset
     // colour (AtmosphericFogEnvironment.getBaseColor). FogState is the light package's port.
     const fogRgb = computeFogColor({
-      fogColorArgb: argbFromRgb(sky.fogColor),
+      fogColorArgb: argbFromRgb(this.fogColorOverride ?? sky.fogColor),
       skyColorArgb: argbFromRgb(sky.skyColor),
       sunriseSunsetColorArgb: sky.sunriseColorArgb,
       sunAngleDeg: sky.sunAngleDeg,

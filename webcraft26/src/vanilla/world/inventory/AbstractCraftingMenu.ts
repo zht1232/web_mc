@@ -115,7 +115,10 @@ export abstract class AbstractCraftingMenu extends AbstractContainerMenu {
     const n = this.craftSlots.getContainerSize();
     for (let i = 0; i < n; i++) {
       const stack = this.craftSlots.removeItemNoUpdate(i);
-      if (!stack.isEmpty() && player) player.inventory.add(stack);
+      if (!stack.isEmpty() && player) {
+        player.inventory.add(stack);
+        if (!stack.isEmpty()) player.drop(stack);
+      }
     }
     this.resultSlots.setItem(0, ItemStack.EMPTY);
     this.recomputeResult();

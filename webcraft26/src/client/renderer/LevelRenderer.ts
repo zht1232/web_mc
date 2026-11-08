@@ -34,6 +34,26 @@ interface SectionGpu {
 }
 
 const LAYERS = 3;
+const EMPTY_BYTES = new Uint8Array(0);
+const EMPTY_U32 = new Uint32Array(0);
+
+/** Concatenates the SOLID and CUTOUT vertex/index arrays into one upload. */
+function mergeOpaqueLayers(mesh: SectionMesh): { vertices: Uint8Array; indices: Uint32Array } {
+  const vs = mesh.vertices[RenderLayer.SOLID];
+  const vc = mesh.vertices[RenderLayer.CUTOUT];
+  const is = mesh.indices[RenderLayer.SOLID];
+  const ic = mesh.indices[RenderLayer.CUTOUT];
+  if (vc.length === 0) return { vertices: vs, indices: is };
+  if (vs.length === 0) return { vertices: vc, indices: ic };
+  const vertices = new Uint8Array(vs.length + vc.length);
+  vertices.set(vs, 0);
+  vertices.set(vc, vs.length);
+  const base = vs.length / 24;
+  const indices = new Uint32Array(is.length + ic.length);
+  indices.set(is, 0);
+  for (let i = 0; i < ic.length; i++) indices[is.length + i] = ic[i] + base;
+  return { vertices, indices };
+}
 
 export class LevelRenderer {
   private readonly terrain: GlProgram;
@@ -60,6 +80,14 @@ export class LevelRenderer {
 
   private readonly sections = new Map<number, SectionGpu>();
   private readonly rebuildQueue: { chunkX: number; chunkZ: number; sectionY: number }[] = [];
+  /** Dedup: a chunk dirty wave must not enqueue the same section twice (10k-entry backlogs). */
+  private readonly queuedSections = new Set<number>();
+  /** Shadow map reuse: the depth pass is the single biggest draw-call source, so it only
+   *  re-renders when the camera/light moved or a section changed. */
+  private shadowCacheValid = false;
+  private readonly shadowCam = { x: 0, y: 0, z: 0 };
+  private readonly shadowLight: [number, number, number] = [0, 1, 0];
+  private lastShadowSize = 0;
 
   private readonly view = new Float32Array(16);
   private readonly proj = new Float32Array(16);
@@ -226,6 +254,9 @@ export class LevelRenderer {
         chunk.dirty = false;
         this.waitingSince.delete(chunk);
         for (let sy = chunk.minSectionY; sy <= chunk.maxSectionY; sy++) {
+          const key = sectionKey(chunk.x, chunk.z, sy);
+          if (this.queuedSections.has(key)) continue;
+          this.queuedSections.add(key);
           this.rebuildQueue.push({ chunkX: chunk.x, chunkZ: chunk.z, sectionY: sy });
         }
         pushed = true;
@@ -236,6 +267,7 @@ export class LevelRenderer {
 
     // nearest first (only needed when something was added; sorting thousands of entries every frame is not free)
     if (pushed) {
+      this.biomeColors.clearBlendCache();
       this.rebuildQueue.sort((a, b) => {
         const da = (a.chunkX - cx) ** 2 + (a.chunkZ - cz) ** 2;
         const db = (b.chunkX - cx) ** 2 + (b.chunkZ - cz) ** 2;
@@ -247,6 +279,7 @@ export class LevelRenderer {
     let built = 0;
     while (this.rebuildQueue.length && performance.now() - started < budgetMs) {
       const item = this.rebuildQueue.shift()!;
+      this.queuedSections.delete(sectionKey(item.chunkX, item.chunkZ, item.sectionY));
       this.buildSection(level, item.chunkX, item.chunkZ, item.sectionY, tints);
       built++;
     }
@@ -318,11 +351,17 @@ export class LevelRenderer {
       this.sections.set(key, existing);
     }
 
+    // Solid and cutout share primitives and only differed by the alpha-test threshold, so they
+    // are concatenated into one buffer and drawn with the cutout threshold (opaque textures
+    // never have alpha in (0.1, 0.5)). That removes one draw + two uniform updates per visible
+    // section, which is the dominant per-frame cost with 500+ sections in view.
+    const merged = mergeOpaqueLayers(mesh);
+
     let total = 0;
     for (let layer = 0; layer < LAYERS; layer++) {
-      const vertices = mesh.vertices[layer];
-      const indices = mesh.indices[layer];
-      const quadCount = mesh.quadCounts[layer];
+      const vertices = layer === RenderLayer.CUTOUT ? EMPTY_BYTES : (layer === RenderLayer.SOLID ? merged.vertices : mesh.vertices[layer]);
+      const indices = layer === RenderLayer.CUTOUT ? EMPTY_U32 : (layer === RenderLayer.SOLID ? merged.indices : mesh.indices[layer]);
+      const quadCount = indices.length > 0 ? Math.max(1, Math.floor(indices.length / 6)) : 0;
       total += quadCount;
       existing.counts[layer] = indices.length;
 
@@ -369,6 +408,7 @@ export class LevelRenderer {
       gl.vertexAttribPointer(4, 4, gl.UNSIGNED_BYTE, true, 24, 20);
     }
 
+    this.shadowCacheValid = false;
     existing.empty = total === 0;
     if (existing.empty) {
       for (let layer = 0; layer < LAYERS; layer++) {
@@ -469,6 +509,7 @@ export class LevelRenderer {
           if (section.vaos[layer]) this.gl.deleteVertexArray(section.vaos[layer]);
         }
         this.sections.delete(key);
+        this.shadowCacheValid = false;
       }
     }
   }
@@ -676,9 +717,11 @@ export class LevelRenderer {
    * water never blocks sunlight, and sections are culled against the *light* frustum rather
    * than the camera frustum.
    */
-  private renderShadowPass(camera: Camera): void {
+  private renderShadowPass(camera: Camera, level: ClientLevel): void {
     const gl = this.gl;
-    const r = this.renderDistance;
+    // Casters beyond ~the ortho extent cannot land inside the map; underground sections
+    // (top below the chunk's lowest surface column) never receive/cast visible sunlight.
+    const r = Math.min(this.renderDistance, 5);
     const camCX = Math.floor(camera.x) >> 4;
     const camCZ = Math.floor(camera.z) >> 4;
 
@@ -692,16 +735,29 @@ export class LevelRenderer {
     program.set1i('uAtlas', 3);
     program.set1f('uAlphaTest', 0.1);
 
+    const minSurface = new Map<number, number>();
     let shadowSections = 0;
     let shadowDraws = 0;
     for (const section of this.sections.values()) {
       if (section.empty) continue;
-      if (Math.abs(section.cx - camCX) > r + 1 || Math.abs(section.cz - camCZ) > r + 1) continue;
+      if (Math.abs(section.cx - camCX) > r || Math.abs(section.cz - camCZ) > r) continue;
       const minX = section.cx << 4, minZ = section.cz << 4, minY = section.sy << 4;
       if (!boxInFrustum(this.shadow.frustum, minX, minY, minZ, minX + 16, minY + 16, minZ + 16)) continue;
+      const ck = chunkKey(section.cx, section.cz);
+      let surface = minSurface.get(ck);
+      if (surface === undefined) {
+        const chunk = level.getChunk(section.cx, section.cz);
+        surface = level.minY;
+        if (chunk) {
+          surface = 32767;
+          for (let i = 0; i < 256; i++) surface = Math.min(surface, chunk.surfaceHeight[i]);
+        }
+        minSurface.set(ck, surface);
+      }
+      if (minY + 16 <= surface) continue;
       shadowSections++;
       program.set3f('uChunkOrigin', minX, minY, minZ);
-      for (const layer of [RenderLayer.SOLID, RenderLayer.CUTOUT]) {
+      for (const layer of [RenderLayer.SOLID]) {
         const count = section.counts[layer];
         const vao = section.vaos[layer];
         if (!count || !vao) continue;
@@ -750,7 +806,21 @@ export class LevelRenderer {
     const rainLevel = typeof level.getRainLevel === 'function' ? level.getRainLevel() : 0;
     this.updateSunLight(sky, rainLevel);
     this.shadowsActive = this.post.enabled && this.post.shadowsEnabled && this.post.shadowSize > 0;
-    if (this.shadowsActive) this.renderShadowPass(camera);
+    if (this.shadowsActive) {
+      const moved =
+        Math.abs(camera.x - this.shadowCam.x) + Math.abs(camera.y - this.shadowCam.y) + Math.abs(camera.z - this.shadowCam.z) > 2;
+      const lightMoved =
+        Math.abs(this.lightDir[0] - this.shadowLight[0]) +
+        Math.abs(this.lightDir[1] - this.shadowLight[1]) +
+        Math.abs(this.lightDir[2] - this.shadowLight[2]) > 0.002;
+      if (!this.shadowCacheValid || moved || lightMoved || this.shadow.size !== this.lastShadowSize) {
+        this.renderShadowPass(camera, level);
+        this.shadowCacheValid = true;
+        this.lastShadowSize = this.shadow.size;
+        this.shadowCam.x = camera.x; this.shadowCam.y = camera.y; this.shadowCam.z = camera.z;
+        this.shadowLight[0] = this.lightDir[0]; this.shadowLight[1] = this.lightDir[1]; this.shadowLight[2] = this.lightDir[2];
+      }
+    }
 
     // Fog: single source of truth is renderer/environment/FogState.ts (FogRenderer.setupFog).
     // The old hand-rolled fogStart/fogEnd formula is gone; terrain, entities, weather and sky
@@ -821,8 +891,7 @@ export class LevelRenderer {
 
     // solid + cutout (vanilla CUTOUT_TERRAIN alpha threshold is 0.5; solid keeps the default 0.1)
     for (const section of opaque) {
-      this.drawSection(section, RenderLayer.SOLID, 0.1);
-      this.drawSection(section, RenderLayer.CUTOUT, 0.5);
+      this.drawSection(section, RenderLayer.SOLID, 0.5);
     }
 
     // translucent, back to front, no depth write

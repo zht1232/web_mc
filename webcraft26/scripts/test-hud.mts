@@ -200,7 +200,7 @@ function baseState(overrides: Partial<HudState> = {}): HudState {
     hotbar: Array.from({ length: 9 }, () => ({ item: -1, count: 0, damage: 0, maxDamage: 0, popTime: 0 })),
     offhand: null, offhandLeft: true, selectedSlot: 0,
     itemNameTimer: 0, itemName: '',
-    debugLeft: [], debugRight: [], showDebug: false,
+    debugLeft: [], debugRight: [], showDebug: false, fps: 0,
     gamemode: 'survival', tickCount: 0,
     ...overrides,
   };
@@ -284,7 +284,7 @@ function renderScene(state: HudState, W = 427, H = 240) {
   eq('item x is W/2-88 (H-19)', { x: itemX, y: itemY }, { x: Math.floor(W / 2) - 88, y: H - 19 });
 }
 
-// Hud.extractPlayerHealth 783-809: hearts (W/2-91+i*8, H-39), armor H-49, food (W/2+91-i*8-9, H-39), air H-59
+// Without vehicle hearts, the air row sits 10 pixels above the food row.
 function countAt(calls: DrawCall[], pred: (c: DrawCall) => boolean): number { return calls.filter(pred).length; }
 {
   const { ctx, W, H } = renderScene(baseState({ hearts: 20, maxHearts: 20 }));
@@ -331,9 +331,19 @@ function countAt(calls: DrawCall[], pred: (c: DrawCall) => boolean): number { re
   const { ctx, W, H } = renderScene(baseState({ air: 120 }));
   const air = ctx.drawCalls.filter((c) => c.path.includes('/air'));
   check('air bubbles drawn when air < max', air.length > 0);
-  eq('bubble 1 at (W/2+91-9, H-59)', { x: air[0].x, y: air[0].y }, { x: Math.floor(W / 2) + 91 - 9, y: H - 59 });
+  eq('bubble 1 at (W/2+91-9, H-49)', { x: air[0].x, y: air[0].y }, { x: Math.floor(W / 2) + 91 - 9, y: H - 49 });
   check('120/300 ticks -> 4 full bubbles', air.filter((c) => c.path.endsWith('/air')).length === 4);
   check('6 empty bubbles', air.filter((c) => c.path.endsWith('/air_empty')).length === 6);
+}
+for (const [W, H] of [[427, 240], [320, 640], [854, 480]]) {
+  for (const air of [300, 150, 0]) {
+    const { ctx } = renderScene(baseState({ underwater: true, air, armor: 20, maxHearts: 40, hearts: 40, absorption: 8, tickCount: 1 }), W, H);
+    const bubbles = ctx.drawCalls.filter((c) => c.path.includes('/air'));
+    const food = ctx.find('gui/sprites/hud/food_empty');
+    eq(`underwater air=${air} at ${W}x${H}: bubble count`, bubbles.length, air === 150 ? 9 : 10);
+    check(`air stays above food despite extra heart rows at ${W}x${H}`, bubbles.every((c) => c.y === food[0].y - 10));
+    eq(`air and food right edges align at ${W}x${H}`, bubbles[0].x, food[0].x);
+  }
 }
 {
   const { ctx } = renderScene(baseState({ air: 300 }));

@@ -167,13 +167,20 @@ export class ScreenManager {
   /** Pop to the previous screen; used by option sub-pages / world-selection. */
   back(): void {
     const previous = this.stack.pop();
-    if (!previous) { this._current = null; return; }
+    if (!previous) { this.close(); return; }
     this.ensureLogicalSize();
     previous.resize(this.logicalW, this.logicalH);
     this._current = previous;
   }
 
   get current(): Screen | null { return this._current; }
+
+  /** Live language switch: rebuild widget labels on the whole stack. */
+  refreshLanguage(): void {
+    this.ensureLogicalSize();
+    for (const s of this.stack) { s.refreshTexts(); s.resize(this.logicalW, this.logicalH); }
+    if (this._current) { this._current.refreshTexts(); this._current.resize(this.logicalW, this.logicalH); }
+  }
 
   get guiSpriteAtlas(): GuiSpriteAtlas { return this.sprites; }
   get toastManager(): ToastManager { return this.toasts; }
@@ -187,6 +194,10 @@ export class ScreenManager {
 
   /** Window#calculateScale / Options#getMaxGuiScale, using the framebuffer size. */
   get guiScale(): number {
+    // Game owns the live scale (it also applies the touch-device minimum). Keep both HUD and
+    // screens on the same logical pixel grid instead of computing a second, smaller scale here.
+    const live = (globalThis as unknown as { __mc?: { guiScale?: number } }).__mc?.guiScale;
+    if (typeof live === 'number' && live >= 1) return live;
     const fw = this.canvas.width || Math.floor(this.cssW * this.dpr());
     const fh = this.canvas.height || Math.floor(this.cssH * this.dpr());
     const forced = typeof this.deps.options?.guiScale === 'number' ? this.deps.options.guiScale : 0;
@@ -227,6 +238,7 @@ export class ScreenManager {
     this.ctx.globalAlpha = 1;
     this.ctx.globalCompositeOperation = 'source-over';
     this.ctx.filter = 'none';
+    this.ctx.imageSmoothingEnabled = false;
 
     // A screen that preserves the HUD (ChatScreen) draws over it; all other
     // menus clear the GUI canvas first (vanilla hides the HUD while a screen is up).
@@ -243,7 +255,7 @@ export class ScreenManager {
       icons: this.deps.icons,
       width: this.logicalW,
       height: this.logicalH,
-      itemName: makeItemName(this.deps.mc),
+      itemName: makeItemName(this.deps.mc, (k) => this.env.t(k)),
     });
 
     // 20 Hz widget ticking (EditBox cursor blink, splash rotation, panorama spin).
@@ -275,14 +287,20 @@ export class ScreenManager {
     return false;
   }
 
+  setModifiers(mods: number): void { this.lastMods = mods; }
+
   /** mx/my are CSS pixels relative to the GUI canvas. */
-  onMouse(mx: number, my: number, button: number, action: MouseAction, wheelDelta = 0): boolean {
+  onMouse(mx: number, my: number, button: number, action: MouseAction, wheelDelta = 0, mods = this.lastMods): boolean {
+    this.lastMods = mods;
     const scale = this.guiScale || 1;
     const dpr = this.dpr();
     this.mouseX = (mx * dpr) / scale;
     this.mouseY = (my * dpr) / scale;
     if (!this._current) return false;
-    return this._current.mouseEvent(this.mouseX, this.mouseY, button, action, wheelDelta);
+    // DOM MouseEvent.button (0=left,1=middle,2=right) -> GLFW/vanilla GUI button
+    // (0=left,1=right,2=middle). Without this, right-click split / place-one never fired.
+    const guiButton = button === 2 ? 1 : button === 1 ? 2 : button;
+    return this._current.mouseEvent(this.mouseX, this.mouseY, guiButton, action, wheelDelta);
   }
 
   /** Registers or replaces a screen factory (for the main agent / other agents). */
@@ -293,12 +311,17 @@ export class ScreenManager {
 
 const GuiScalePlaceholder = 320;
 
-function makeItemName(mc: unknown): (itemId: number) => string {
+function makeItemName(mc: unknown, t: (key: string) => string): (itemId: number) => string {
   return (id: number): string => {
     if (!mc || typeof mc !== 'object') return `item.${id}`;
     const items = (mc as { items?: unknown }).items;
     if (!Array.isArray(items)) return `item.${id}`;
     const item = items[id] as { name?: unknown } | undefined;
-    return item && typeof item.name === 'string' ? item.name : `item.${id}`;
+    if (!item || typeof item.name !== 'string') return `item.${id}`;
+    for (const key of [`block.minecraft.${item.name}`, `item.minecraft.${item.name}`]) {
+      const translated = t(key);
+      if (translated !== key) return translated;
+    }
+    return item.name;
   };
 }

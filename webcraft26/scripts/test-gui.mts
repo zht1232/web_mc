@@ -45,7 +45,8 @@ import { Button } from '../src/client/gui/components/Button.js';
 import { Tooltip } from '../src/client/gui/components/Tooltip.js';
 import { TitleScreen } from '../src/client/gui/screens/TitleScreen.js';
 import { CreativeModeInventoryScreen } from '../src/client/gui/screens/inventory/CreativeModeInventoryScreen.js';
-import type { ScreenEnv, Rect } from '../src/client/gui/Types.js';
+import { AbstractContainerScreen, MemoryContainerMenu } from '../src/client/gui/screens/inventory/AbstractContainerScreen.js';
+import type { ScreenEnv, Rect, ContainerAction, ContainerMenuLike, MouseAction } from '../src/client/gui/Types.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -369,5 +370,124 @@ check('sprite without .mcmeta falls back to fixed scaling',
   parseScaling(undefined, 16, 16).type === 'fixed');
 
 // ---------------------------------------------------------------------------
+console.log('\n[6] Container screen input protocol');
+
+class InputTestScreen extends AbstractContainerScreen {
+  protected buildSlots() {
+    return Array.from({ length: 5 }, (_, i) => ({ index: i + 9, x: 8 + i * 18, y: 84 }));
+  }
+  point(index: number) { return { x: this.leftPos + 16 + (index - 9) * 18, y: this.topPos + 92 }; }
+}
+
+function inputFixture(touch = false) {
+  const menu = new MemoryContainerMenu();
+  const calls: { index: number; button: number; action: ContainerAction }[] = [];
+  let closed = false;
+  let mods = 0;
+  const adapter: ContainerMenuLike = {
+    getSlotCount: () => menu.getSlotCount(),
+    getItem: i => menu.getItem(i),
+    getCarried: () => menu.getCarried(),
+    setCarried: s => menu.setCarried(s),
+    canPlaceItem: i => i !== 13,
+    getMaxStackSize: () => 64,
+    click: (index, button, shift, action) => {
+      calls.push({ index, button, action });
+      menu.click(index, button, shift, action);
+    },
+  };
+  const env = {
+    deps: { options: { gamemode: 'survival' }, container: adapter, touchInput: touch },
+    t: (key: string) => key, get mods() { return mods; },
+    close: () => { closed = true; },
+  } as unknown as ScreenEnv;
+  const screen = new InputTestScreen(env, 'test');
+  screen.init(480, 270);
+  const fire = (index: number, action: MouseAction, button = 0) => {
+    const p = screen.point(index);
+    return screen.mouseEvent(p.x, p.y, button, action);
+  };
+  return { screen, menu, calls, fire, setMods: (value: number) => { mods = value; }, isClosed: () => closed };
+}
+
+{
+  const f = inputFixture();
+  f.menu.setItem(9, { itemId: 1, count: 11 });
+  f.fire(9, 'down', 1); f.fire(9, 'up', 1);
+  check('right pickup happens once, release does not place it back',
+    f.menu.getCarried()?.count === 6 && f.menu.getItem(9).count === 5 && f.calls.length === 1);
+  f.fire(10, 'down', 1);
+  check('carried placement waits for release, allowing drag selection', f.menu.getItem(10).count === 0);
+  f.fire(10, 'up', 1);
+  f.fire(10, 'down', 1); f.fire(10, 'up', 1);
+  check('right click merges one item into a matching stack', f.menu.getItem(10).count === 2 && f.menu.getCarried()?.count === 4);
+}
+for (const button of [0, 1]) {
+  const f = inputFixture();
+  f.menu.setCarried({ itemId: 1, count: 10 });
+  f.fire(9, 'down', button); f.fire(10, 'move'); f.fire(11, 'move'); f.fire(11, 'up', button);
+  check(`drag button=${button} sends START / each SLOT / END, not PICKUP`,
+    f.calls.length === 5 && f.calls.every(c => c.action === 'QUICK_CRAFT') &&
+    JSON.stringify(f.calls.map(c => c.button)) === JSON.stringify([button << 2, button << 2 | 1, button << 2 | 1, button << 2 | 1, button << 2 | 2]));
+  const each = button === 0 ? 3 : 1;
+  check(`drag button=${button} distributes and preserves remainder`,
+    [9, 10, 11].every(i => f.menu.getItem(i).count === each) && f.menu.getCarried()?.count === 10 - each * 3);
+}
+{
+  const f = inputFixture();
+  f.menu.setCarried({ itemId: 1, count: 10 });
+  f.menu.setItem(9, { itemId: 1, count: 63 });
+  f.menu.setItem(10, { itemId: 2, count: 2 });
+  f.menu.setItem(12, { itemId: 1, count: 64 });
+  f.fire(9, 'down'); f.fire(10, 'move'); f.fire(11, 'move'); f.fire(12, 'move'); f.fire(13, 'move'); f.fire(11, 'up');
+  check('drag excludes incompatible/full/restricted slots before dividing',
+    JSON.stringify(f.calls.filter(c => (c.button & 3) === 1).map(c => c.index)) === '[9,11]' &&
+    f.menu.getItem(9).count === 64 && f.menu.getItem(11).count === 5 && f.menu.getCarried()?.count === 4);
+}
+for (const cancel of ['cancel', 'resize', 'wrong-button'] as const) {
+  const f = inputFixture();
+  f.menu.setCarried({ itemId: 1, count: 10 });
+  f.fire(9, 'down'); f.fire(10, 'move');
+  if (cancel === 'resize') f.screen.resize(480, 270);
+  else f.fire(10, cancel === 'cancel' ? 'cancel' : 'up', 1);
+  f.fire(10, 'up');
+  check(`${cancel} cancels pending drag without depositing or losing items`,
+    f.menu.getCarried()?.count === 10 && f.menu.getItem(9).count === 0 && f.menu.getItem(10).count === 0 && f.calls.length === 0);
+}
+{
+  const f = inputFixture();
+  f.menu.setItem(9, { itemId: 1, count: 12 });
+  f.menu.setItem(10, { itemId: 1, count: 60 });
+  f.fire(9, 'down'); f.fire(9, 'up'); f.fire(9, 'down'); f.fire(9, 'up');
+  check('double click collects matching items to max without deleting overflow',
+    f.calls[1]?.action === 'PICKUP_ALL' && f.menu.getCarried()?.count === 64 && f.menu.getItem(10).count === 8);
+}
+{
+  const f = inputFixture();
+  f.menu.setCarried({ itemId: 1, count: 6 });
+  f.screen.mouseEvent(1, 1, 1, 'down'); f.screen.mouseEvent(1, 1, 1, 'up');
+  check('outside right click drops one using PICKUP, not slot THROW',
+    f.calls[0]?.index === -999 && f.calls[0]?.action === 'PICKUP' && f.menu.getCarried()?.count === 5);
+  f.screen.mouseEvent(1, 1, 0, 'down'); f.screen.mouseEvent(1, 1, 0, 'up');
+  check('outside left click drops remaining carried stack', f.menu.getCarried() === null);
+}
+{
+  const f = inputFixture();
+  f.menu.setItem(9, { itemId: 1, count: 8 });
+  f.menu.setItem(36, { itemId: 2, count: 3 });
+  f.fire(9, 'move'); f.screen.keyPressed('Digit1', '1', 0);
+  check('number swap uses current hover without waiting for a render',
+    f.menu.getItem(36).itemId === 1 && f.menu.getItem(9).itemId === 2);
+  f.screen.keyPressed('KeyQ', 'q', 2);
+  check('Ctrl-Q sends whole-slot THROW', f.calls[1]?.action === 'THROW' && f.calls[1]?.button === 1);
+}
+{
+  const f = inputFixture(true);
+  f.menu.setCarried({ itemId: 1, count: 5 });
+  f.screen.mouseEvent(450, 12, 0, 'down'); f.screen.mouseEvent(450, 12, 0, 'up');
+  check('touch Done button consumes click instead of dropping carried stack',
+    f.isClosed() && f.calls.length === 0 && f.menu.getCarried()?.count === 5);
+}
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : 'FAILURES'}: ${checks - failures}/${checks} checks passed`);
 if (failures > 0) process.exitCode = 1;

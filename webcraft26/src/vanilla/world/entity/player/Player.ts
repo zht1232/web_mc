@@ -74,6 +74,12 @@ export class Player {
 
   get eyeY(): number { return this.pos.y + (this.sneaking ? PLAYER_SNEAK_EYE_HEIGHT : this.eyeHeight); }
 
+  isEyeInWater(level: ClientLevel): boolean {
+    const y = Math.floor(this.eyeY);
+    const height = waterHeightAt(level, Math.floor(this.pos.x), y, Math.floor(this.pos.z));
+    return height > 0 && this.eyeY < y + height;
+  }
+
   boundingBox(pos = this.pos, height = this.height): AABB {
     const half = this.width / 2;
     return new AABB(pos.x - half, pos.y, pos.z - half, pos.x + half, pos.y + height, pos.z + half);
@@ -84,8 +90,10 @@ export class Player {
     this.prevPos = this.pos;
     this.prevBob = this.bob;
 
-    this.inWater = isInWater(level, this.boundingBox());
-    this.sneaking = input.sneak && !this.flying;
+    const waterDepth = getWaterDepth(level, this.boundingBox());
+    this.inWater = waterDepth > 0;
+    const waterTravel = this.inWater && !this.flying;
+    this.sneaking = input.sneak && !this.flying && !this.inWater;
     if (input.sprint && (input.forward > 0 || this.flying)) this.sprinting = true;
     if (input.forward <= 0 && !this.flying) this.sprinting = false;
 
@@ -99,7 +107,6 @@ export class Player {
     } else {
       targetSpeed = SPEED.walk;
     }
-    if (this.inWater && !this.flying) targetSpeed *= 0.55;
 
     // desired horizontal velocity in world space
     const yawRad = (this.yaw * Math.PI) / 180;
@@ -120,7 +127,10 @@ export class Player {
 
     let vx = this.vel.x;
     let vz = this.vel.z;
-    if (len > 1e-4) {
+    if (waterTravel) {
+      vx += (inputZ * sin - inputX * cos) * 0.02;
+      vz += (inputZ * cos + inputX * sin) * 0.02;
+    } else if (len > 1e-4) {
       const dirX = desiredX / targetSpeed;
       const dirZ = desiredZ / targetSpeed;
       vx = (vx + dirX * accel) * damping;
@@ -136,14 +146,15 @@ export class Player {
       else if (input.sneak) vy = -SPEED.fly;
       else vy *= 0.85;
     } else {
-      if (input.jump && this.onGround) {
-        vy = JUMP_VELOCITY;
-        this.onGround = false;
-      } else if (input.jump && this.inWater) {
-        vy = 0.04;
+      if (waterTravel && input.sneak) vy -= 0.04;
+      if (input.jump) {
+        if (waterTravel && (!this.onGround || waterDepth > 0.4)) {
+          vy += 0.04;
+        } else if (this.onGround) {
+          vy = Math.max(vy, JUMP_VELOCITY);
+          this.onGround = false;
+        }
       }
-      vy = (vy - GRAVITY) * VERTICAL_DRAG;
-      if (vy < -TERMINAL_FALL) vy = -TERMINAL_FALL;
     }
 
     this.vel = new Vec3(vx, vy, vz);
@@ -151,13 +162,22 @@ export class Player {
     const before = this.pos.y;
     this.move(level, this.vel.x, this.vel.y, this.vel.z);
 
+    // Gravity follows movement; fluid gravity follows drag rather than preceding it.
+    if (waterTravel) {
+      const drag = this.sprinting ? 0.9 : 0.8;
+      this.vel = new Vec3(this.vel.x * drag,
+        this.vel.y * 0.8 - (this.sprinting ? 0 : GRAVITY / 16), this.vel.z * drag);
+    } else if (!this.flying) {
+      const nextY = Math.max(-TERMINAL_FALL, (this.vel.y - GRAVITY) * VERTICAL_DRAG);
+      this.vel = new Vec3(this.vel.x, nextY, this.vel.z);
+    }
+
+    this.inWater = getWaterDepth(level, this.boundingBox()) > 0;
     const movedY = this.pos.y - before;
-    if (!this.flying) {
-      if (this.vel.y < 0 && movedY < 0) {
-        this.fallDistance -= movedY;
-      } else if (this.onGround) {
-        this.fallDistance = 0;
-      }
+    if (this.flying || waterTravel || this.inWater || this.onGround) {
+      this.fallDistance = 0;
+    } else if (movedY < 0) {
+      this.fallDistance -= movedY;
     }
 
     // walk animation distance (vanilla walkDist += horizontal speed * 0.6)
@@ -316,17 +336,28 @@ export function collectCollisionBoxes(level: ClientLevel, area: AABB): AABB[] {
   return out;
 }
 
-function isInWater(level: ClientLevel, box: AABB): boolean {
-  const x0 = Math.floor(box.minX), x1 = Math.floor(box.maxX - 1e-4);
-  const y0 = Math.floor(box.minY), y1 = Math.floor(box.maxY - 1e-4);
-  const z0 = Math.floor(box.minZ), z1 = Math.floor(box.maxZ - 1e-4);
+function waterHeightAt(level: ClientLevel, x: number, y: number, z: number): number {
+  const mc = level.mc;
+  const state = level.getBlockState(x, y, z);
+  if (!mc.hasFluid(state) || mc.blockOf(state).name === 'lava') return 0;
+  const above = level.getBlockState(x, y + 1, z);
+  if (mc.hasFluid(above) && mc.blockOf(above).name !== 'lava') return 1;
+  const amount = Number(mc.getProp(state, 'level') ?? 0);
+  return (amount >= 8 ? 8 : 8 - amount) / 9;
+}
+
+function getWaterDepth(level: ClientLevel, box: AABB): number {
+  const x0 = Math.floor(box.minX + 0.001), x1 = Math.floor(box.maxX - 0.001);
+  const y0 = Math.floor(box.minY + 0.001), y1 = Math.floor(box.maxY - 0.001);
+  const z0 = Math.floor(box.minZ + 0.001), z1 = Math.floor(box.maxZ - 0.001);
+  let depth = 0;
   for (let y = y0; y <= y1; y++) {
     for (let z = z0; z <= z1; z++) {
       for (let x = x0; x <= x1; x++) {
-        const state = level.getBlockState(x, y, z);
-        if (level.mc.blockOf(state).name === 'water') return true;
+        const height = waterHeightAt(level, x, y, z);
+        if (height > 0 && y + height >= box.minY + 0.001) depth = Math.max(depth, y + height - box.minY);
       }
     }
   }
-  return false;
+  return depth;
 }

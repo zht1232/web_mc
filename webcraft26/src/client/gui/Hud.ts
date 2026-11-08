@@ -87,6 +87,7 @@ export interface HudState {
   debugLeft: string[];
   debugRight: string[];
   showDebug: boolean;
+  fps: number;
   gamemode: 'survival' | 'creative';
   /** Hud.tickCount — drives the low-health/empty-bubble jitter and the blink */
   tickCount: number;
@@ -375,6 +376,8 @@ export class Hud {
       this.renderExperience(ctx, state, W, H); // gameMode.hasExperience()
     }
     this.renderSelectedItemName(ctx, state, W, H);
+    // Vanilla only shows the frame counter inside the F3 debug overlay; a permanent
+    // "N FPS" in the corner is not part of the vanilla HUD.
     if (state.showDebug) this.renderDebug(ctx, state, W, H);
   }
 
@@ -507,8 +510,7 @@ export class Hud {
     const absorption = Math.max(0, state.absorption);
     const numHealthRows = Math.ceil((maxHealth + absorption) / 2 / 10);
     const healthRowHeight = Math.max(10 - (numHealthRows - 2), 3);
-    // no vehicles in the port -> yLineAir = yLineBase - 10 - 10 (Hud.java 790/805)
-    const yLineAir = yLineBase - 10 - 10;
+    const yLineAir = yLineBase - 10;
     // MobEffects.REGENERATION does not exist yet: heartOffsetIndex stays -1 (Hud.java 791-794)
     const heartOffsetIndex = -1;
 

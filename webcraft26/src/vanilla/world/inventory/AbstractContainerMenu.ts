@@ -117,10 +117,13 @@ export abstract class AbstractContainerMenu {
     this.stateId = stateId;
   }
 
-  /** AbstractContainerMenu.removed: place the carried stack back in the inventory. */
+  /** AbstractContainerMenu.removed: return the carried stack, dropping any overflow. */
   removed(player: MenuPlayer | null): void {
+    this.resetQuickCraft();
     if (player && !this.carried.isEmpty()) {
-      player.inventory.add(this.carried);
+      const stack = this.carried;
+      player.inventory.add(stack);
+      if (!stack.isEmpty()) player.drop(stack);
       this.setCarried(ItemStack.EMPTY);
     }
   }

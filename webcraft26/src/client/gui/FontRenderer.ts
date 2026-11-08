@@ -133,7 +133,10 @@ export class FontRenderer {
         i += 2;
         continue;
       }
-      const w = this.charWidth(ch) + 1;
+      // charWidth() already contains the 1px inter-glyph spacing (vanilla
+      // BitmapProvider advance = ink width + 1); adding another +1 here made
+      // every label wider than what width()/centering assumed.
+      const w = this.charWidth(ch);
       this.draw(ctx, ch, cx, y, color, shadow);
       cx += w;
       i++;

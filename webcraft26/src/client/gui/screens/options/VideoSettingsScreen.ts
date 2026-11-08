@@ -20,7 +20,7 @@ const FPS_LIMITS = [30, 60, 120, 144, 240] as const;
 
 export class VideoSettingsScreen extends OptionsSubScreen {
   constructor(env: ConstructorParameters<typeof OptionsSubScreen>[0]) {
-    super(env, 'options.videoTitle');
+    super(env, 'options.video');
   }
 
   protected addOptions(): void {
@@ -32,7 +32,7 @@ export class VideoSettingsScreen extends OptionsSubScreen {
     // Render Distance (2..32) and FOV (30..110).
     const rd = getOptionNumber(deps, 'renderDistance', 8);
     this.addSlider(col0, this.gridRowY(0), w, this.t('options.renderDistance'), (rd - 2) / 30,
-      (v) => `${Math.round(2 + v * 30)} chunks`,
+      (v) => this.t('options.chunks').replace('%s', String(Math.round(2 + v * 30))),
       (v) => setOption(deps, 'renderDistance', Math.round(2 + v * 30)));
 
     const fov = getOptionNumber(deps, 'fov', 70);
@@ -49,13 +49,13 @@ export class VideoSettingsScreen extends OptionsSubScreen {
     const gs = getOptionNumber(deps, 'guiScale', 0);
     this.addCycle(col1, this.gridRowY(1), w, this.t('options.guiScale'), GUI_SCALES,
       (GUI_SCALES as readonly number[]).includes(gs) ? gs : 0,
-      (v) => (v === 0 ? 'Auto' : `${v}x`),
+      (v) => (v === 0 ? this.t('options.guiScale.auto') : `${v}x`),
       (v) => setOption(deps, 'guiScale', v));
 
     // Graphics quality and smooth lighting.
     const fancy = getOptionBoolean(deps, 'fancyGraphics', true);
-    this.addCycle(col0, this.gridRowY(2), w, this.t('options.graphicsQuality'), GRAPHICS, fancy ? 'Fancy' : 'Fast',
-      (v) => v, (v) => setOption(deps, 'fancyGraphics', v === 'Fancy'));
+    this.addCycle(col0, this.gridRowY(2), w, this.t('options.graphics'), GRAPHICS, fancy ? 'Fancy' : 'Fast',
+      (v) => this.t(`options.graphics.${v.toLowerCase()}`), (v) => setOption(deps, 'fancyGraphics', v === 'Fancy'));
     this.addToggle(col1, this.gridRowY(2), this.t('options.ao'), getOptionBoolean(deps, 'smoothLighting', true),
       (v) => setOption(deps, 'smoothLighting', v));
 
@@ -63,7 +63,7 @@ export class VideoSettingsScreen extends OptionsSubScreen {
     const quality = getShaderQuality(deps);
     this.addCycle(col0, this.gridRowY(3), w, this.t('options.shaderQuality'), SHADER_QUALITY_LEVELS,
       (SHADER_QUALITY_LEVELS as readonly string[]).includes(quality) ? quality : 'high',
-      (v) => v.toUpperCase(), (v) => setShaderQuality(deps, v));
+      (v) => this.t(`options.shaderQuality.${v}`), (v) => setShaderQuality(deps, v));
     this.addToggle(col1, this.gridRowY(3), this.t('options.shaders'), getShadersEnabled(deps),
       (v) => setShadersEnabled(deps, v));
 
@@ -75,6 +75,6 @@ export class VideoSettingsScreen extends OptionsSubScreen {
 
     this.addCycle(col0, this.gridRowY(5), w, this.t('options.framerateLimit'), FPS_LIMITS,
       (FPS_LIMITS as readonly number[]).includes(getOptionNumber(deps, 'maxFps', 60)) ? getOptionNumber(deps, 'maxFps', 60) : 60,
-      (v) => `${v} fps`, (v) => setOption(deps, 'maxFps', v));
+      (v) => `${v}`, (v) => setOption(deps, 'maxFps', v));
   }
 }

@@ -10,6 +10,7 @@
 // still use the exact vanilla coordinates.
 
 import type { GuiGraphics } from '../../GuiGraphics.js';
+import type { MouseAction } from '../../Types.js';
 import { AbstractContainerScreen, type SlotDef } from './AbstractContainerScreen.js';
 import { inventoryMenuSlotXY, MENU_OFFHAND_SLOT } from './SlotLayout.js';
 import { INVENTORY_TITLE_LABEL_X } from '../../GuiConstants.js';
@@ -101,7 +102,7 @@ export class InventoryScreen extends AbstractContainerScreen {
     void RECIPE_BOOK_WIDTH;
   }
 
-  mouseEvent(mx: number, my: number, button: number, action: 'down' | 'up' | 'move' | 'wheel', wheelDelta = 0): boolean {
+  mouseEvent(mx: number, my: number, button: number, action: MouseAction, wheelDelta = 0): boolean {
     const rx = this.recipeBook.getX(this.width, this.imageWidth, this.leftPos);
     if (action === 'down' && this.recipeBook.mouseClicked(mx, my, button, rx, this.topPos)) return true;
     return super.mouseEvent(mx, my, button, action, wheelDelta);

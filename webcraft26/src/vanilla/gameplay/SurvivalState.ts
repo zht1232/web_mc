@@ -404,7 +404,10 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
     this.activeMenu = menu;
     return menu;
   }
-  closeMenu(): void { this.activeMenu = null; }
+  closeMenu(): void {
+    if (this.activeMenu) this.activeMenu.removed(this.asMenuPlayer());
+    this.activeMenu = null;
+  }
   getActiveMenu(): AbstractContainerMenu | null { return this.activeMenu; }
 
   /** Convenience for the GUI: the player inventory as a MenuPlayer adapter. */

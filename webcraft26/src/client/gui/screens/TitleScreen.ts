@@ -58,17 +58,26 @@ export class TitleScreen extends Screen {
     this.addRenderableWidget(Button.big(L.online.x, L.online.y, this.t('menu.online'),
       () => this.toast(this.t('menu.online'))));
 
-    // Three 20x20 icon buttons: friends / language / accessibility.
-    const iconLabels = ['F', 'L', 'A'];
+    // Three 20x20 icon buttons: friends / language / accessibility (CommonButtons in 26.2).
+    // They used to be plain "F" / "L" / "A" letter buttons, which read as debug placeholders.
+    const iconSpecs = [
+      { sprite: 'icon/invite', tooltip: this.t('options.online') },
+      { sprite: 'icon/language', tooltip: this.t('options.language') },
+      { sprite: 'icon/accessibility', tooltip: this.t('options.accessibility') },
+    ];
     const iconActions = [
-      () => this.toast('Friends'),
+      () => this.toast(this.t('options.online')),
       () => this.open('language'),
-      () => this.toast('Accessibility'),
+      () => this.toast(this.t('options.accessibility')),
     ];
     for (let i = 0; i < L.iconButtons.length; i++) {
       const r = L.iconButtons[i];
-      const b = new Button(r.x, r.y, TITLE_ICON_BUTTON_SIZE, TITLE_ICON_BUTTON_SIZE, iconLabels[i] ?? '', iconActions[i] ?? (() => undefined));
-      b.setTooltip(Tooltip.create(iconLabels[i] ?? ''));
+      const spec = iconSpecs[i];
+      const b = new Button(r.x, r.y, TITLE_ICON_BUTTON_SIZE, TITLE_ICON_BUTTON_SIZE, '', iconActions[i] ?? (() => undefined));
+      if (spec) {
+        b.setIcon(spec.sprite);
+        b.setTooltip(Tooltip.create(spec.tooltip));
+      }
       this.addRenderableWidget(b);
     }
 
@@ -98,8 +107,17 @@ export class TitleScreen extends Screen {
     if (this.env.deps.options.modedFlag === true) version += ' Modded';
     g.drawString(version, L.versionX, L.versionY, 0xffffffff, true);
 
-    // Copyright (PlainTextButton in vanilla): bottom-right, clickable.
-    g.drawString(this.t('title.credits'), L.copyright.x, L.copyright.y, 0xffffffff, true);
+    // Copyright (PlainTextButton in vanilla): bottom-right, clickable. Right-align it against
+    // the live text width instead of the width cached in build(), otherwise a longer locale
+    // string runs off the screen and collides with the version string on the left.
+    const copyright = this.t('title.credits');
+    const copyrightWidth = this.env.font.width(copyright);
+    const copyrightX = this.width - 2 - copyrightWidth;
+    const copyrightY = this.height - 10;
+    if (this.layout.copyright.x !== copyrightX || this.layout.copyright.width !== copyrightWidth) {
+      this.layout.copyright = { x: copyrightX, y: copyrightY, width: copyrightWidth, height: 10 };
+    }
+    g.drawString(copyright, copyrightX, copyrightY, 0xffffffff, true);
   }
 
   protected onMouseClicked(mx: number, my: number, button: number): boolean {

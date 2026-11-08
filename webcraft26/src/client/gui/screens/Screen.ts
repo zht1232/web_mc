@@ -23,8 +23,16 @@ export abstract class Screen implements ScreenLike {
   private lastMouseX = 0;
   private lastMouseY = 0;
 
+  protected readonly titleKey: string;
+
   constructor(protected readonly env: ScreenEnv, title: string) {
+    this.titleKey = title;
     this.title = env.t(title);
+  }
+
+  /** Re-translate cached labels after a live language switch. */
+  refreshTexts(): void {
+    this.title = this.env.t(this.titleKey);
   }
 
   getTitle(): string { return this.title; }
@@ -167,6 +175,10 @@ export abstract class Screen implements ScreenLike {
 
   mouseEvent(mx: number, my: number, button: number, action: MouseAction, wheelDelta = 0): boolean {
     switch (action) {
+      case 'cancel': {
+        this.draggingButton = -1;
+        return true;
+      }
       case 'down': {
         this.draggingButton = button;
         this.lastMouseX = mx; this.lastMouseY = my;

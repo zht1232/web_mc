@@ -19,6 +19,7 @@ import {
   populateCreativeTabs,
   itemId,
   TAB_SEARCH,
+  TAB_SURVIVAL,
 } from '../../CreativeTabs.js';
 import {
   CREATIVE_NUM_ROWS,
@@ -129,7 +130,9 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
 
   protected drawLabels(g: GuiGraphics): void {
     const tab = this.tabs[this.selectedTab];
-    if (tab) g.drawString(tab.key, 8, 6, -12566464, false);
+    // CreativeModeTab#getDisplayName -> translatable "itemGroup.<name>"; drawing the raw
+    // tab.key showed English labels even with a Chinese locale.
+    if (tab) g.drawString(this.t(tab.key), 8, 6, -12566464, false);
   }
 
   protected renderBackground(g: GuiGraphics, mx: number, my: number, pt: number): void {
@@ -156,16 +159,21 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
       if (icon >= 0) g.renderItem(icon, x + 5, y + 8 + (isTop ? 1 : -1), 16);
     }
 
-    // Scroller at (175, 18) over a 12px wide track.
-    const trackH = CREATIVE_NUM_ROWS * SLOT_GRID;
-    g.blitSprite('widget/scroller_background', SCROLLER_X, SCROLLER_Y, CREATIVE_SCROLLER_WIDTH, trackH);
+    // Scroller: CreativeModeInventoryScreen#extractBackground draws only the thumb, over the
+    // well that is already painted into the tab background texture. Drawing a
+    // scroller_background track here added the black bar the player saw, and the old thumb
+    // formula used a 90px track instead of the vanilla 112px one.
+    const trackH = 112;
     const maxScroll = this.maxScroll();
-    const thumbY = SCROLLER_Y + (maxScroll > 0 ? Math.round((this.scrollOffs / maxScroll) * (trackH - CREATIVE_SCROLLER_HEIGHT)) : 0);
-    g.blitSprite('container/creative_inventory/scroller', SCROLLER_X, thumbY, CREATIVE_SCROLLER_WIDTH, CREATIVE_SCROLLER_HEIGHT);
+    if (maxScroll > 0) {
+      const sprite = 'container/creative_inventory/scroller';
+      const thumbY = SCROLLER_Y + Math.round((trackH - (CREATIVE_SCROLLER_HEIGHT + 2)) * (maxScroll > 0 ? this.scrollOffs / maxScroll : 0));
+      g.blitSprite(sprite, SCROLLER_X, thumbY, CREATIVE_SCROLLER_WIDTH, CREATIVE_SCROLLER_HEIGHT);
+    }
 
-    // Destroy/trash slot (bottom-right), vanilla "inventory.binSlot".
-    g.fill(this.imageWidth - 27, this.imageHeight - 25, this.imageWidth - 9, this.imageHeight - 7, 0xff8b8b8b);
-    g.outline(this.imageWidth - 27, this.imageHeight - 25, 18, 18, 0xff373737);
+    // The destroy-item bin is a real Slot at (173,112) that only exists on the Survival
+    // Inventory tab, and its frame is part of tab_inventory.png. The old unconditional
+    // grey square at (168,111) was the stray button under the scrollbar.
     g.popPose();
   }
 
@@ -195,29 +203,35 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
       if (tab >= 0) { this.setTab(tab); return true; }
       const sx = this.leftPos + SCROLLER_X;
       if (mx >= sx && mx < sx + CREATIVE_SCROLLER_WIDTH && my >= this.topPos + SCROLLER_Y &&
-        my < this.topPos + SCROLLER_Y + CREATIVE_NUM_ROWS * SLOT_GRID) {
+        my < this.topPos + SCROLLER_Y + 112) {
         this.scrolling = true;
         this.applyScrollbar(mx, my);
         return true;
       }
-      // Creative item slot: pick up a full stack (or clear on the trash slot).
+      // Deletes the carried stack: the Survival Inventory tab's destroy slot at (173,112).
+      if (this.selectedTab === TAB_SURVIVAL) {
+        const tx = this.leftPos + 173;
+        const ty = this.topPos + 112;
+        if (mx >= tx && mx < tx + 16 && my >= ty && my < ty + 16) {
+          this.menu.setCarried(null);
+          return true;
+        }
+      }
+    }
+    if (action === 'cancel') this.scrolling = false;
+    if (action === 'down' && button >= 0 && button <= 2) {
       const idx = this.getHoveredSlot(mx, my);
       if (idx >= 0 && idx < CREATIVE_NUM_ROWS * CREATIVE_NUM_COLS) {
-        const stack = this.menu.getItem(idx);
-        if (button === 0) this.menu.setCarried(stack.itemId >= 0 ? { itemId: stack.itemId, count: 64 } : null);
-        return true;
-      }
-      const tx = this.leftPos + this.imageWidth - 27;
-      const ty = this.topPos + this.imageHeight - 25;
-      if (mx >= tx && mx < tx + 18 && my >= ty && my < ty + 18) {
-        this.menu.setCarried(null);
+        this.hoveredSlot = idx;
+        const shift = (this.env.mods & 1) !== 0;
+        this.menu.click(idx, button, shift, button === 2 ? 'CLONE' : shift ? 'QUICK_MOVE' : 'PICKUP');
         return true;
       }
     }
     if (action === 'move' && this.scrolling) { this.applyScrollbar(mx, my); return true; }
     if (action === 'up' && this.scrolling) { this.scrolling = false; return true; }
     if (action === 'wheel') {
-      this.scrollOffs = Math.max(0, Math.min(this.maxScroll(), this.scrollOffs + (wheelDelta > 0 ? -1 : 1)));
+      this.scrollOffs = Math.max(0, Math.min(this.maxScroll(), this.scrollOffs + (wheelDelta > 0 ? 1 : -1)));
       this.writeMenuItems();
       return true;
     }
@@ -225,8 +239,8 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
   }
 
   private applyScrollbar(_mx: number, my: number): void {
-    const trackH = CREATIVE_NUM_ROWS * SLOT_GRID;
-    const rel = (my - this.topPos - SCROLLER_Y) / Math.max(1, trackH - CREATIVE_SCROLLER_HEIGHT);
+    const trackH = 112;
+    const rel = (my - this.topPos - SCROLLER_Y) / Math.max(1, trackH - (CREATIVE_SCROLLER_HEIGHT + 2));
     this.scrollOffs = Math.max(0, Math.min(this.maxScroll(), Math.round(rel * this.maxScroll())));
     this.writeMenuItems();
   }

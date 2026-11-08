@@ -20,7 +20,7 @@ const SOUND_CATEGORIES = [
 
 export class SoundOptionsScreen extends OptionsSubScreen {
   constructor(env: ConstructorParameters<typeof OptionsSubScreen>[0]) {
-    super(env, 'options.soundsTitle');
+    super(env, 'options.sounds.title');
   }
 
   protected addOptions(): void {

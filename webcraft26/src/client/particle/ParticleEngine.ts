@@ -76,6 +76,13 @@ export class ParticleEngine {
   /** Optional callback: stateId -> block texture-array layer. */
   blockLayerForState: ((stateId: number) => number) | null = null;
 
+  /**
+   * Optional callback: packed light level (0..15) at a world position. Vanilla multiplies every
+   * non-full-bright particle by the lightmap, which is why break particles must darken in caves
+   * and at night instead of glowing at full brightness.
+   */
+  lightAt: ((x: number, y: number, z: number) => number) | null = null;
+
   private program: GlProgram | null = null;
   private vao: WebGLVertexArrayObject | null = null;
   private quadVbo: WebGLBuffer | null = null;
@@ -164,7 +171,16 @@ export class ParticleEngine {
     if (spec.frameCount === undefined && this.atlas) {
       spec.frameCount = Math.min(255, this.atlas.frames(info.spriteKey).length);
     }
-    return this.pool.add(spec);
+    const idx = this.pool.add(spec);
+    if (idx >= 0 && this.lightAt && !info.glow) {
+      const l = Math.max(0, Math.min(15, this.lightAt(spec.x, spec.y, spec.z))) / 15;
+      // Lightmap curve (core/lightmap.fsh): b = l / (4 - 3l), clamped to a small ambient floor.
+      const b = Math.max(0.05, l / (4 - 3 * l));
+      this.pool.r[idx] *= b;
+      this.pool.g[idx] *= b;
+      this.pool.b[idx] *= b;
+    }
+    return idx;
   }
 
   tick(): void { this.pool.tick(); }
@@ -194,10 +210,17 @@ export class ParticleEngine {
       const uv = this.atlas ? this.atlas.frame(info.spriteKey, pool.frame[i]) : FALLBACK_UV;
       const texSel = info.blockAtlas && this.hasBlock ? 1 : 0;
       const layer = pool.blockLayer[i] < 0 ? 0 : pool.blockLayer[i];
+      // TerrainParticle shows a quarter of the block sprite, not the whole texture shrunk to
+      // 0.1 blocks (which read as a tiny copy of the block instead of a broken fragment).
+      let u0 = uv.u0, v0 = uv.v0, u1 = uv.u1, v1 = uv.v1;
+      if (texSel > 0.5) {
+        const q = pool.frame[i] & 3;
+        u0 = (q & 1) * 0.5; v0 = (q >> 1) * 0.5; u1 = u0 + 0.5; v1 = v0 + 0.5;
+      }
 
       d[n++] = x; d[n++] = y; d[n++] = z;
       d[n++] = pool.size[i];
-      d[n++] = uv.u0; d[n++] = uv.v0; d[n++] = uv.u1; d[n++] = uv.v1;
+      d[n++] = u0; d[n++] = v0; d[n++] = u1; d[n++] = v1;
       d[n++] = pool.r[i]; d[n++] = pool.g[i]; d[n++] = pool.b[i]; d[n++] = pool.alpha[i] * fade;
       d[n++] = texSel; d[n++] = layer;
     }
@@ -297,6 +320,8 @@ export function spawnBlockBreakParticles(
       z: z + 0.5 + spread(rng, 0.4),
       vx: spread(rng, 0.12), vy: rng.nextFloat() * 0.1 + 0.05, vz: spread(rng, 0.12),
       blockLayer: layer,
+      // Deterministic quadrant selector; block particles are not sprite-animated.
+      spriteFrame: Math.floor(rng.nextFloat() * 4),
       size: 0.1 + rng.nextFloat() * 0.08,
     });
     if (idx >= 0) made++;

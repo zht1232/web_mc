@@ -28,7 +28,8 @@ import { ClientLevel } from '../src/vanilla/world/level/ClientLevel.ts';
 import { SurvivalState, setWorldData, type WorldData } from '../src/vanilla/gameplay/SurvivalState.ts';
 import { EntityManager } from '../src/vanilla/world/entity/EntityManager.ts';
 import { createEntity, canCreateEntity } from '../src/vanilla/world/entity/EntityFactory.ts';
-import { Player } from '../src/vanilla/world/entity/player/Player.ts';
+import { Player, type PlayerInput } from '../src/vanilla/world/entity/player/Player.ts';
+import { Vec3 } from '../src/vanilla/core/Geometry.ts';
 import { ItemStack } from '../src/vanilla/world/item/ItemStack.ts';
 import { LivingEntity } from '../src/vanilla/world/entity/LivingEntity.ts';
 import { Arrow } from '../src/vanilla/world/entity/projectile/Arrow.ts';
@@ -449,6 +450,120 @@ check('13. day/night mapping drives spawn light (noon bright, midnight dark)', (
   if (nightBrightness > 3) return `midnight brightness=${nightBrightness} expected <= 3`;
   // Monster spawn light test: brightness <= nextInt(8) => spawnable in the dark, never at 15.
   if (nightBrightness > 7) return 'monsters could not spawn in the dark';
+  return true;
+});
+
+const idleInput: PlayerInput = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, jumpPressed: false };
+const water = mc.stateOf('water');
+function makeWaterLevel(surface = 200, bottom = -200): ClientLevelType {
+  return {
+    mc,
+    getBlockState: (_x: number, y: number, _z: number) => y < bottom ? GRASS : y < surface ? water : 0,
+  } as unknown as ClientLevelType;
+}
+
+check('14. water vertical acceleration follows input, move, drag, then fluid gravity', () => {
+  for (const [key, acceleration] of [['jump', 0.04], ['sneak', -0.04], [null, 0]] as const) {
+    const p = new Player(0.5, 80, 0.5);
+    const input = { ...idleInput, ...(key ? { [key]: true } : {}) };
+    let y = p.pos.y;
+    let velocity = 0;
+    for (let t = 0; t < 40; t++) {
+      velocity += acceleration;
+      y += velocity;
+      velocity = velocity * 0.8 - 0.005;
+      p.tick(makeWaterLevel(), input);
+      if (Math.abs(p.pos.y - y) > 1e-6 || Math.abs(p.vel.y - velocity) > 1e-6) {
+        return `${key ?? 'idle'} tick=${t} y=${p.pos.y}/${y} vy=${p.vel.y}/${velocity}`;
+      }
+    }
+  }
+  return true;
+});
+
+check('15. water terminal speeds: rise 3.5, sink 0.5, dive 4.5 blocks/s', () => {
+  for (const [input, expected] of [
+    [{ ...idleInput, jump: true }, 3.5],
+    [idleInput, -0.5],
+    [{ ...idleInput, sneak: true }, -4.5],
+  ] as const) {
+    const p = new Player(0.5, 80, 0.5);
+    for (let t = 0; t < 100; t++) p.tick(makeWaterLevel(), input);
+    const speed = (p.pos.y - p.prevPos.y) * 20;
+    if (Math.abs(speed - expected) > 0.001) return `speed=${speed} expected=${expected}`;
+  }
+  return true;
+});
+
+check('16. water movement accelerates and stops with fluid drag', () => {
+  const p = new Player(0.5, 80, 0.5);
+  for (let t = 0; t < 80; t++) p.tick(makeWaterLevel(), { ...idleInput, forward: 1 });
+  const speed = (p.pos.z - p.prevPos.z) * 20;
+  if (Math.abs(speed - 2) > 0.001) return `water speed=${speed} expected=2`;
+  for (let t = 0; t < 20; t++) p.tick(makeWaterLevel(), idleInput);
+  return Math.abs(p.vel.z) < 0.002 || `release velocity=${p.vel.z}`;
+});
+
+check('17. deep-water floor uses liquid jump, shallow wading retains ground jump', () => {
+  const deep = new Player(0.5, GROUND, 0.5);
+  deep.onGround = true;
+  deep.tick(makeWaterLevel(100, GROUND), { ...idleInput, jump: true });
+  if (Math.abs(deep.pos.y - GROUND - 0.04) > 1e-6) return `deep rise=${deep.pos.y - GROUND}`;
+  const { level, setBlock } = makeFlatLevel();
+  setBlock(0, GROUND, 0, mc.withProp(water, 'level', '7'));
+  const shallow = new Player(0.5, GROUND, 0.5);
+  shallow.onGround = true;
+  shallow.tick(level, { ...idleInput, jump: true });
+  return Math.abs(shallow.pos.y - GROUND - 0.42) < 1e-6 || `shallow rise=${shallow.pos.y - GROUND}`;
+});
+
+check('18. water contact uses fluid surface, not the entire block', () => {
+  const p = new Player(0.5, 80.95, 0.5);
+  p.tick(makeWaterLevel(81), idleInput);
+  return !p.inWater || 'player above the 8/9 water surface is still treated as submerged';
+});
+
+check('18b. eye immersion tracks water surface while standing and diving', () => {
+  const p = new Player(0.5, 79.3, 0.5);
+  if (p.isEyeInWater(makeWaterLevel(81))) return 'eye above source-water surface remains underwater';
+  p.pos = new Vec3(0.5, 79.2, 0.5);
+  p.tick(makeWaterLevel(81), { ...idleInput, sneak: true });
+  if (!p.isEyeInWater(makeWaterLevel(81))) return 'immersed eye is not underwater';
+  return !p.sneaking || 'diving incorrectly lowers the eye to crouching height';
+});
+
+check('19. entering water clears fall distance and creative flight ignores fluid drag', () => {
+  const p = new Player(0.5, 80, 0.5);
+  p.fallDistance = 15;
+  p.vel = new Vec3(0, -0.5, 0);
+  p.tick(makeWaterLevel(), idleInput);
+  if (p.fallDistance !== 0) return `underwater fallDistance=${p.fallDistance}`;
+  const fly = new Player(0.5, 80, 0.5);
+  fly.flying = true;
+  fly.tick(makeWaterLevel(), { ...idleInput, jump: true });
+  return Math.abs(fly.pos.y - 80 - 0.5395) < 1e-6 || `flying rise=${fly.pos.y - 80}`;
+});
+
+check('20. survival jump crosses a one-block obstacle without intersecting it', () => {
+  for (const yaw of [0, 90, 180, 270]) {
+    const { level, setBlock } = makeFlatLevel();
+    const dx = Math.round(Math.sin(yaw * Math.PI / 180));
+    const dz = Math.round(Math.cos(yaw * Math.PI / 180));
+    setBlock(dx, GROUND, dz, GRASS);
+    const p = new Player(0.5, GROUND, 0.5);
+    p.yaw = yaw;
+    p.onGround = true;
+    let maximum = GROUND;
+    let crossed = false;
+    for (let t = 0; t < 35; t++) {
+      p.tick(level, { ...idleInput, forward: 1, jump: t === 0 });
+      maximum = Math.max(maximum, p.pos.y);
+      const obstacle = mc.collision(GRASS)[0].move(dx, GROUND, dz);
+      if (p.boundingBox().deflate(1e-5).intersects(obstacle)) return `yaw=${yaw} collided at tick=${t} pos=${p.pos}`;
+      if ((p.pos.x - 0.5) * dx + (p.pos.z - 0.5) * dz > 1.31) crossed = true;
+    }
+    if (!crossed || maximum < GROUND + 1.2) return `yaw=${yaw} crossed=${crossed} rise=${maximum - GROUND}`;
+  }
   return true;
 });
 

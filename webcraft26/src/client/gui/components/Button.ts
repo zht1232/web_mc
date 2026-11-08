@@ -37,6 +37,14 @@ export const BUTTON_SPRITES: WidgetSprites = {
 export type OnPress = (button: Button) => void;
 
 export class Button extends AbstractWidget {
+  /** Optional 16x16 sprite (gui/sprites path) drawn centred instead of the label. */
+  icon: string | null = null;
+
+  setIcon(path: string): this {
+    this.icon = path;
+    return this;
+  }
+
   constructor(
     x: number, y: number, width: number, height: number,
     message: string,
@@ -62,6 +70,10 @@ export class Button extends AbstractWidget {
       : (this.isHovered() || this.focused) ? this.sprites.highlighted : this.sprites.enabled;
     g.blitSprite(sprite, this.x, this.y, this.width, this.height);
 
+    if (this.icon && g.sprites.get(this.icon)) {
+      g.blitSprite(this.icon, this.x + Math.floor((this.width - 16) / 2), this.y + Math.floor((this.height - 16) / 2), 16, 16);
+      return;
+    }
     // AbstractButton#extractDefaultLabel: 0xE0E0E0 normally, 0xA0A0A0 disabled,
     // 0xFFFFA0 highlighted, always with the vanilla drop shadow.
     const color = !this.active ? 0xffa0a0a0 : (this.isHovered() || this.focused) ? 0xffffffa0 : 0xffe0e0e0;

@@ -12,6 +12,7 @@ import { LevelRenderer, type Camera } from './renderer/LevelRenderer.js';
 import { LevelChunk as Chunk } from '../vanilla/world/level/chunk/LevelChunk.js';
 import { buildLightmap, computeSkyState, DAY_PERIOD, type SkyState } from './EnvironmentLighting.js';
 import { FontRenderer } from './gui/FontRenderer.js';
+import { DEFAULT_I18N } from './gui/Language.js';
 import { calcGuiScale, guiScaledSize } from './gui/GuiScale.js';
 import {
   GuiTextures, Hud, HUD_SPRITES, layoutDebugScreen,
@@ -72,6 +73,7 @@ export interface GameOptions {
   shaders: boolean;
   /** off / low / medium / high / ultra (TASK-render Phase A.3). */
   shaderQuality: string;
+  language: string;
   seed?: number;
   /** worker pool size override (defaults to min(hardwareConcurrency, 4)) */
   workers?: number;
@@ -89,6 +91,7 @@ const DEFAULT_OPTIONS: GameOptions = {
   gamemode: 'creative',
   shaders: true,
   shaderQuality: 'high',
+  language: 'zh_cn',
   seed: 0x2602c0de,
 };
 
@@ -100,6 +103,8 @@ const ACTION_TO_INPUT: Record<string, ContainerInput> = {
   THROW: ContainerInput.THROW,
   CLONE: ContainerInput.CLONE,
   SWAP: ContainerInput.SWAP,
+  QUICK_CRAFT: ContainerInput.QUICK_CRAFT,
+  PICKUP_ALL: ContainerInput.PICKUP_ALL,
 };
 
 export class Game {
@@ -188,6 +193,8 @@ export class Game {
   private keys = new Set<string>();
   private mouseLocked = false;
   private lastJumpPress = 0;
+  private lastWPress = 0;
+  private sprintTap = false;
   private attackCooldown = 0;
   private useCooldown = 0;
   /** left button held: survival mining advances while this is true */
@@ -215,6 +222,8 @@ export class Game {
   private pausedByMenu = false;
   /** Set by the touch layer: pointer lock must be skipped on touch devices. */
   private touchEnabled = false;
+  /** True on touch hardware (coarse pointer / ?touch=1); controls mobile quality + GUI scale. */
+  private readonly touchDevice: boolean;
   /** Bedrock-style touch overlay (ported from M2); created on touch hardware or with ?touch=1. */
   private touch?: TouchControls;
   private touchVisible = false;
@@ -243,6 +252,7 @@ export class Game {
       this.options.renderDistance = Math.min(this.options.renderDistance, 10);
       this.options.shaderQuality = 'medium';
     }
+    this.touchDevice = touchDevice;
     this.glCanvas = document.createElement('canvas');
     this.glCanvas.className = 'game-canvas';
     this.guiCanvas = document.createElement('canvas');
@@ -254,6 +264,9 @@ export class Game {
     if (!gl) throw new Error('WebGL2 is required');
     this.gl = gl;
     this.guiCtx = this.guiCanvas.getContext('2d')!;
+    // Pixel-art GUI: bilinear sampling bleeds neighbouring atlas cells into glyph/icon
+    // edges (the "gray cracks") and blurs downscaled item icons.
+    this.guiCtx.imageSmoothingEnabled = false;
 
     // Boot URL: ?seed=<any vanilla seed string>, ?world=<save id>, ?play/?preview (skip the title).
     // The seed stays a bigint (vanilla seeds are 64-bit); options.seed is only the human-readable copy.
@@ -418,6 +431,10 @@ export class Game {
     await this.initSave();
 
     // GUI: Canvas2D overlay on the shared guiCanvas, drawn after the HUD every frame.    this.onStatus?.('Preparing menus', 0.98);
+    // Await the locale before any screen is built: the screens translate their button labels
+    // in init(), so firing setLanguage() and continuing left the whole first title screen in
+    // English even though the zh_cn table arrived a moment later.
+    await DEFAULT_I18N.setLanguage(this.options.language).catch(() => undefined);
     this.screens = new ScreenManager(this.guiCanvas, this.gl, {
       mc: this.mc,
       models: this.models,
@@ -426,6 +443,7 @@ export class Game {
       icons: this.icons,
       // GameOptions has every field GuiOptions requires; the index signature is the only gap.
       options: this.options as unknown as GuiOptions,
+      touchInput: this.touchDevice,
       container: this.containerAdapter(),
       worlds: this.worldProvider(),
       callbacks: {
@@ -441,6 +459,10 @@ export class Game {
             this.renderer.shaderQuality = String(value);
           } else if (key === 'shadersEnabled' || key === 'shaders') {
             this.renderer.shadersEnabled = Boolean(value);
+          } else if (key === 'guiScale') {
+            this.touch?.updateMetrics(this.guiScale);
+          } else if (key === 'language') {
+            void DEFAULT_I18N.setLanguage(String(value)).then(() => this.screens.refreshLanguage());
           }
         },
         onRespawn: () => this.respawnPlayer(),
@@ -459,6 +481,9 @@ export class Game {
           this.openTitle();
         },
         onScreenClosed: () => {
+          this.survival.closeMenu();
+          this.keys.clear();
+          this.sprintTap = false;
           // Singleplayer pause freezes the level (vanilla MinecraftServer.isPaused); the close
           // callback is the only path that also covers Esc / E / Back to Game.
           if (this.pausedByMenu && !this.titleMode) {
@@ -596,6 +621,7 @@ export class Game {
       onAttackEnd: () => { this.mining = false; },
     });
     this.touch = touch;
+    touch.updateMetrics(this.guiScale);
     this.touchEnabled = touch.isEnabled();
     if (!this.touchEnabled) return;
 
@@ -779,11 +805,12 @@ export class Game {
     // Last resort: stand on the highest terrain sampled by the spawn search, above the sea.
     const fallbackY = Math.max(spot.y + 1, this.level.seaLevel + 1);
     this.player = new Player(x + 0.5, (standing ?? fallbackY) + 1 + 0.01, z + 0.5);
-    // Face the nearest water: the first frame shows the landscape instead of the inside of a trunk,
-    // and the measurement proves the "water within 24 blocks" spawn rule on the real terrain.
+    // Face inland: looking straight at the nearest sea leaves a large fog-only horizon on the
+    // first frame. The water is still behind the player and visible after a short turn.
     const water = this.findNearestWater(x, z, 24);
-    this.player.yaw = water ? (Math.atan2(water.x - x, water.z - z) * 180) / Math.PI : 0;
-    this.player.pitch = 0;
+    const waterYaw = water ? (Math.atan2(water.x - x, water.z - z) * 180) / Math.PI : 0;
+    this.player.yaw = water ? waterYaw + 180 : 0;
+    this.player.pitch = -3;
     console.log(
       `[spawn] ${x + 0.5}, ${(standing ?? fallbackY) + 1}, ${z + 0.5}` +
       ` (sea ${this.level.seaLevel}, standing ${standing ?? 'fallback'},` +
@@ -835,10 +862,10 @@ export class Game {
     const creativeGrid: { itemId: number; count: number }[] = Array.from(
       { length: 45 }, () => ({ itemId: -1, count: 0 }),
     );
-    let creativeCarried: { itemId: number; count: number } | null = null;
     const isCreative = (): boolean => this.screens?.current instanceof CreativeModeInventoryScreen;
+    const menuIndex = (index: number): number => isCreative() && index >= 45 ? index - 9 : index;
     const plain = (stack: ItemStack): { itemId: number; count: number } =>
-      ({ itemId: stack.item ? stack.item.id : -1, count: stack.getCount() });
+      ({ itemId: stack.isEmpty() ? -1 : stack.item!.id, count: stack.getCount() });
     return {
       getSlotCount: () => (isCreative() ? 54 : menu().slots.length),
       getItem: (index) => {
@@ -851,35 +878,55 @@ export class Game {
         return plain(stack);
       },
       click: (index, button, _shift, action) => {
-        if (isCreative()) {
-          if (index >= 0 && index < 45) {
-            const stack = creativeGrid[index];
-            if (stack.itemId >= 0) creativeCarried = { itemId: stack.itemId, count: button === 1 ? 1 : 64 };
-            return;
+        const active = menu();
+        if (isCreative() && index >= 0 && index < 45) {
+          const item = this.survival.registry.get(creativeGrid[index].itemId);
+          if (!item) { active.setCarried(ItemStack.EMPTY); return; }
+          const stack = new ItemStack(item, 1);
+          const max = stack.getMaxStackSize();
+          const carried = active.getCarried();
+          if (action === 'SWAP') {
+            this.survival.inventory.setItem(button, stack.copyWithCount(max));
+          } else if (action === 'THROW') {
+            this.survival.drop(stack.copyWithCount(button === 1 ? max : 1));
+          } else if (action === 'CLONE' || action === 'QUICK_MOVE') {
+            active.setCarried(stack.copyWithCount(max));
+          } else if (action === 'PICKUP' || action === 'SPLIT') {
+            if (carried.isEmpty()) active.setCarried(stack);
+            else if (ItemStack.isSameItemSameComponents(carried, stack)) {
+              carried.setCount(Math.max(0, Math.min(max, carried.getCount() + (button === 1 ? -1 : 1))));
+            } else active.setCarried(ItemStack.EMPTY);
           }
-          if (index >= 45 && index < 54) {
-            const slot = index - 45;
-            if (creativeCarried && creativeCarried.itemId >= 0) {
-              const item = this.survival.registry.get(creativeCarried.itemId);
-              if (item) this.survival.inventory.setItem(slot, new ItemStack(item, creativeCarried.count));
-            } else {
-              const stack = this.survival.inventory.getItem(slot);
-              if (stack.item) creativeCarried = { itemId: stack.item.id, count: 64 };
-            }
-            return;
-          }
+          return;
         }
-        menu().clicked(index, button, ACTION_TO_INPUT[action] ?? ContainerInput.PICKUP, this.survival.asMenuPlayer());
+        if (isCreative() && index >= 45 && index < 54 && action === 'QUICK_MOVE') {
+          this.survival.inventory.setItem(index - 45, ItemStack.EMPTY);
+          return;
+        }
+        active.clicked(menuIndex(index), button, ACTION_TO_INPUT[action], this.survival.asMenuPlayer());
+      },
+      canPlaceItem: (index, stack) => {
+        if (isCreative() && index >= 0 && index < 45) return false;
+        const active = menu();
+        const slot = active.slots[menuIndex(index)];
+        const item = this.survival.registry.get(stack.itemId);
+        return !!slot && !!item && slot.mayPlace(new ItemStack(item, stack.count)) && active.canDragTo(slot);
+      },
+      getMaxStackSize: (index, stack) => {
+        const item = this.survival.registry.get(stack.itemId);
+        if (!item) return 0;
+        const value = new ItemStack(item, stack.count);
+        if (isCreative() && index >= 0 && index < 45) return value.getMaxStackSize();
+        return menu().slots[menuIndex(index)]?.getMaxStackSize(value) ?? value.getMaxStackSize();
       },
       setItem: (index, stack) => {
         if (isCreative() && index >= 0 && index < 45) creativeGrid[index] = { itemId: stack.itemId, count: stack.count };
       },
-      getCarried: () => (isCreative() ? creativeCarried : (() => {
+      getCarried: () => {
         const stack = menu().getCarried();
-        return stack && stack.item ? { itemId: stack.item.id, count: stack.getCount() } : null;
-      })()),
+        return stack.isEmpty() ? null : plain(stack);
+      },
       setCarried: (stack) => {
-        if (isCreative()) { creativeCarried = stack; return; }
         const item = stack && stack.itemId >= 0 ? this.survival.registry.get(stack.itemId) : undefined;
         menu().setCarried(item && stack ? new ItemStack(item, stack.count) : ItemStack.EMPTY);
       },
@@ -894,6 +941,9 @@ export class Game {
    * explicit beforeunload listener below covers a plain reload).
    */
   private async initSave(): Promise<void> {
+    // Particles sample the same light as terrain (break particles used to glow in the dark).
+    ParticleEngine.get().lightAt = (x, y, z) =>
+      this.level.getBrightness(Math.floor(x), Math.floor(y), Math.floor(z));
     this.chunkCodec = {
       blockCodec: new MinecraftDataBlockStateCodec(this.mc),
       biomeCodec: new ReversibleBiomeCodec(),
@@ -1028,6 +1078,9 @@ export class Game {
 
   private bindInput(): void {
     const canvas = this.guiCanvas;
+    canvas.style.touchAction = 'none';
+    const modifiers = (e: MouseEvent | KeyboardEvent): number =>
+      (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0);
 
     canvas.addEventListener('click', () => {
       if (this.screens.current) return;  // a menu is up: the click belongs to the GUI
@@ -1036,20 +1089,28 @@ export class Game {
     });
     document.addEventListener('pointerlockchange', () => {
       this.mouseLocked = document.pointerLockElement === canvas;
-      if (!this.mouseLocked) this.mining = false;
+      if (!this.mouseLocked) {
+        this.mining = false;
+        // The browser consumes the first Esc to exit pointer lock without delivering a
+        // keydown; vanilla pauses the game in exactly this situation.
+        if (!this.screens.current && !this.titleMode && this.worldActive && !this.touchEnabled) {
+          this.openScreen('pause');
+        }
+      }
     });
-    document.addEventListener('mousemove', (e) => {
+    document.addEventListener('pointermove', (e) => {
       if (this.screens.current) {
-        this.screens.onMouse(e.clientX, e.clientY, -1, 'move', 0);
+        this.screens.onMouse(e.clientX, e.clientY, -1, 'move', 0, modifiers(e));
         return;
       }
       if (!this.mouseLocked) return;
-      this.player.yaw -= e.movementX * 0.15;
-      this.player.pitch = Math.max(-90, Math.min(90, this.player.pitch + e.movementY * 0.15));
+      const sens = 0.15 * (this.zooming ? 0.25 : 1);
+      this.player.yaw -= e.movementX * sens;
+      this.player.pitch = Math.max(-90, Math.min(90, this.player.pitch + e.movementY * sens));
     });
     document.addEventListener('wheel', (e) => {
       if (e.ctrlKey) e.preventDefault();
-      if (this.screens.current) { this.screens.onMouse(e.clientX, e.clientY, -1, 'wheel', e.deltaY); return; }
+      if (this.screens.current) { this.screens.onMouse(e.clientX, e.clientY, -1, 'wheel', e.deltaY, modifiers(e)); return; }
       if (!this.mouseLocked) return;
       const dir = Math.sign(e.deltaY);
       this.selectedSlot = (this.selectedSlot + dir + 9) % 9;
@@ -1069,6 +1130,11 @@ export class Game {
       if (e.code === 'F3') { this.showDebug = !this.showDebug; e.preventDefault(); return; }
       if (e.code === 'F6') { this.setShaders(!this.renderer.shadersEnabled); e.preventDefault(); return; }
       if (e.code === 'Escape') { this.openScreen('pause'); e.preventDefault(); return; }
+      if (e.code === 'KeyW' && !e.repeat && !this.keys.has('KeyW')) {
+        const now = performance.now();
+        if (now - this.lastWPress < 300) this.sprintTap = true;
+        this.lastWPress = now;
+      }
       this.keys.add(e.code);
       if (e.code.startsWith('Digit')) {
         const n = Number(e.code.slice(5));
@@ -1077,7 +1143,7 @@ export class Game {
       if (e.code === 'KeyF' && this.options.gamemode === 'creative') {
         this.player.flying = !this.player.flying;
       }
-      if (e.code === 'Space') {
+      if (e.code === 'Space' && !e.repeat) {
         const now = performance.now();
         if (now - this.lastJumpPress < 280 && this.options.gamemode === 'creative') {
           this.player.flying = !this.player.flying;
@@ -1090,12 +1156,26 @@ export class Game {
       }
       if (e.code === 'KeyT') { this.openScreen('chat'); e.preventDefault(); }
     });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
+    window.addEventListener('keyup', (e) => {
+      this.keys.delete(e.code);
+      this.screens.setModifiers(modifiers(e));
+      if (e.code === 'KeyW') this.sprintTap = false;
+    });
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.sprintTap = false;
+      this.mining = false;
+      this.screens.setModifiers(0);
+      this.screens.onMouse(0, 0, -1, 'cancel', 0, 0);
+    });
 
-    canvas.addEventListener('mousedown', (e) => {
+    canvas.addEventListener('pointerdown', (e) => {
+      if (!e.isPrimary) return;
       this.unlockAudio();
       if (this.screens.current) {
-        this.screens.onMouse(e.clientX, e.clientY, e.button, 'down');
+        if (e.pointerType !== 'mouse') e.preventDefault();
+        canvas.setPointerCapture(e.pointerId);
+        this.screens.onMouse(e.clientX, e.clientY, e.button, 'down', 0, modifiers(e));
         return;
       }
       if (!this.mouseLocked) {
@@ -1106,13 +1186,18 @@ export class Game {
       if (e.button === 2) this.useItem();
       if (e.button === 1) this.pickBlock();
     });
-    canvas.addEventListener('mouseup', (e) => {
+    document.addEventListener('pointerup', (e) => {
+      if (!e.isPrimary) return;
       if (e.button === 0) this.mining = false;
       if (this.screens.current) {
-        this.screens.onMouse(e.clientX, e.clientY, e.button, 'up');
+        this.screens.onMouse(e.clientX, e.clientY, e.button, 'up', 0, modifiers(e));
         // A button may have closed the menu: take the pointer back while we still have activation.
         if (!this.screens.current && !this.mouseLocked && !this.touchEnabled) canvas.requestPointerLock();
       }
+    });
+    canvas.addEventListener('pointercancel', (e) => {
+      this.mining = false;
+      this.screens.onMouse(e.clientX, e.clientY, -1, 'cancel', 0, modifiers(e));
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
@@ -1123,6 +1208,10 @@ export class Game {
   }
 
   /** Opens a GUI screen and releases the mouse so the buttons can be clicked. */  private openScreen(screen: ScreenRef): void {
+    if (screen === 'inventory' || screen === 'creative') {
+      this.survival.closeMenu();
+      this.survival.openInventory();
+    }
     this.screens.open(screen);
     this.keys.clear();
     if (document.pointerLockElement) document.exitPointerLock();
@@ -1144,13 +1233,21 @@ export class Game {
   }
 
   showDebug = false;
+  /** OptiFine-style C zoom (spyglass FOV). */
+  private get zooming(): boolean { return this.keys.has('KeyC'); }
   onInventoryToggle?: () => void;
   onChatToggle?: () => void;
 
   private showItemName(): void {
     const item = this.hotbar[this.selectedSlot];
     if (item >= 0) {
-      this.itemName = this.mc.items[item].name.replace(/_/g, ' ');
+      const name = this.mc.items[item].name;
+      let label = name.replace(/_/g, ' ');
+      for (const key of [`block.minecraft.${name}`, `item.minecraft.${name}`]) {
+        const tr = DEFAULT_I18N.get(key);
+        if (tr !== key) { label = tr; break; }
+      }
+      this.itemName = label;
       this.itemNameTimer = 40;
     }
   }
@@ -1296,6 +1393,9 @@ export class Game {
     const state = this.level.getBlockState(hit.x, hit.y, hit.z);
     if (state === 0) { this.survival.breaking.reset(); return; }
 
+    // Vanilla keeps the arm swinging the whole time attack is held, not only on the break tick.
+    this.player.swingHand();
+
     const underwater = this.player.inWater;
     if (!this.survival.mine(1, state, underwater)) return;
 
@@ -1414,11 +1514,7 @@ export class Game {
 
   /** Entity.isEyeInFluid(FluidTags.WATER) for the player's eye block. */
   private playerEyeInWater(): boolean {
-    const x = Math.floor(this.player.pos.x);
-    const y = Math.floor(this.player.eyeY);
-    const z = Math.floor(this.player.pos.z);
-    const state = this.level.getBlockState(x, y, z);
-    return state !== 0 && this.mc.blockOf(state).name === 'water';
+    return this.player.isEyeInWater(this.level);
   }
 
   /** Entity.isInLava for the player's feet block. */
@@ -1834,7 +1930,7 @@ export class Game {
       jump: this.keys.has('Space') || touchJump || (this.player.flying && touchFlyUp),
       sneak: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || touchSneak
         || (this.player.flying && touchFlyDown),
-      sprint: this.keys.has('ControlLeft') || touchSprint,
+      sprint: this.keys.has('ControlLeft') || this.sprintTap || touchSprint,
       jumpPressed: false,
     };
     const wasOnGround = this.player.onGround;
@@ -1843,7 +1939,7 @@ export class Game {
 
     // Fall damage: LivingEntity.causeFallDamage runs when a falling entity lands. Player.tick
     // resets fallDistance on the landing tick, so use the value accumulated before the move.
-    if (!this.survival.isDead && !wasOnGround && this.player.onGround && !this.player.flying) {
+    if (!this.survival.isDead && !wasOnGround && this.player.onGround && !this.player.flying && !this.player.inWater) {
       const fall = Math.max(fallDistanceBefore, this.player.fallDistance);
       if (fall > 0) this.survival.fallDamage(fall);
     }
@@ -2007,14 +2103,20 @@ export class Game {
     this.guiCanvas.height = Math.floor(h * dpr);
     this.guiCanvas.style.width = `${w}px`;
     this.guiCanvas.style.height = `${h}px`;
+    // resizing the backing store resets 2D context state
+    this.guiCtx.imageSmoothingEnabled = false;
     this.gl.viewport(0, 0, this.glCanvas.width, this.glCanvas.height);
     this.renderer?.resize(this.glCanvas.width, this.glCanvas.height);
     this.screens?.resize(w, h);
+    this.touch?.updateMetrics(this.guiScale);
   }
 
   get guiScale(): number {
     const forced = this.options.guiScale > 0 ? this.options.guiScale : 0;
-    return calcGuiScale(this.glCanvas.width, this.glCanvas.height, forced, false);
+    const auto = calcGuiScale(this.glCanvas.width, this.glCanvas.height, forced, false);
+    // OpusMC uses 3x GUI pixels on phones; vanilla's auto scale picks 2 on a 390 px-wide device.
+    // Three matches the reference screenshots and makes slot/font lines one CSS pixel, not 1.5.
+    return this.touchDevice && auto < 3 ? 3 : auto;
   }
 
   private render(partial: number): void {
@@ -2048,14 +2150,18 @@ export class Game {
     this.textures.updateLightmap(lightmap, key);
     this.textures.animate(this.level.time);
 
+    // Vanilla renders between ticks: lerp(prevPos, pos, partialTick). Without this the
+    // camera steps at 20 Hz and movement judders even at high frame rates.
+    const p = this.player.pos;
+    const pp = this.player.prevPos;
     const eyeY = this.player.eyeY;
     const camera: Camera = {
-      x: this.player.pos.x,
-      y: eyeY,
-      z: this.player.pos.z,
+      x: pp.x + (p.x - pp.x) * partial,
+      y: pp.y + (p.y - pp.y) * partial + (eyeY - p.y),
+      z: pp.z + (p.z - pp.z) * partial,
       yaw: this.player.yaw,
       pitch: this.player.pitch,
-      fov: this.options.fov * (this.player.sprinting ? 1.1 : 1),
+      fov: this.options.fov * (this.player.sprinting ? 1.1 : 1) * (this.zooming ? 0.25 : 1),
       aspect: this.glCanvas.width / this.glCanvas.height,
     };
 
@@ -2206,6 +2312,7 @@ export class Game {
       itemName: this.itemName,
       ...this.buildDebugColumns(),
       showDebug: this.showDebug,
+      fps: this.fps,
       gamemode: this.options.gamemode,
       tickCount: this.tickCount,
     };
@@ -2244,9 +2351,6 @@ export class Game {
     const yaw = wrapDegrees(-this.player.yaw);
     const pitch = wrapDegrees(this.player.pitch);
     const facing = ['south', 'west', 'north', 'east'][Math.floor((yaw + 8) / 90) & 3];
-    const faceString = facing === 'north' ? 'Towards negative Z'
-      : facing === 'south' ? 'Towards positive Z'
-        : facing === 'west' ? 'Towards negative X' : 'Towards positive X';
 
     const sky = this.level.getSkyLight(feetX, feetY, feetZ);
     const block = this.level.getBlockLight(feetX, feetY, feetZ);
@@ -2266,29 +2370,35 @@ export class Game {
     const target = this.raycast(20);
     const targetLines: string[] = [];
     if (target) {
-      targetLines.push(`Targeted Block: ${target.x}, ${target.y}, ${target.z}`);
-      targetLines.push(`minecraft:${this.mc.blockOf(this.level.getBlockState(target.x, target.y, target.z)).name}`);
+      targetLines.push(`准星方块: ${target.x}, ${target.y}, ${target.z}`);
+      const blockName = this.mc.blockOf(this.level.getBlockState(target.x, target.y, target.z)).name;
+      const blockKey = `block.minecraft.${blockName}`;
+      const blockLabel = DEFAULT_I18N.get(blockKey);
+      targetLines.push(blockLabel !== blockKey ? blockLabel : `minecraft:${blockName}`);
     }
 
+    const biomeKey = `biome.${biomeId.replace(':', '.')}`;
+    const biomeLabel = DEFAULT_I18N.get(biomeKey);
+    const facingZh = { south: '南', west: '西', north: '北', east: '东' }[facing] ?? facing;
     const entries: DebugEntryOutput[] = [
       // biome
-      { lines: [`Biome: ${biomeId}`] },
+      { lines: [`生物群系: ${biomeLabel !== biomeKey ? biomeLabel : biomeId}`] },
       // chunk_generation_stats
-      { lines: [`Gen: ${this.chunkProvider.usingWorkers ? `${this.chunkProvider.workerCount}w` : 'sync'} queue ${this.chunkProvider.queueLength} inflight ${this.chunkProvider.inflight}`] },
+      { lines: [`生成: ${this.chunkProvider.usingWorkers ? `${this.chunkProvider.workerCount} 线程` : '同步'} 队列 ${this.chunkProvider.queueLength} 进行中 ${this.chunkProvider.inflight}`] },
       // chunk_render_stats (LevelExtractor.sectionStatistics: "C: rendered/total ... D: distance, stats")
-      { lines: [`C: ${stats.sections} D: ${this.options.renderDistance}, ${stats.ms.toFixed(1)} ms`] },
+      { lines: [`渲染区块: ${stats.sections} 视距: ${this.options.renderDistance}, ${stats.ms.toFixed(1)} ms`] },
       // chunk_source_stats
-      { lines: [`ChunkSource: ${this.level.chunks.size} chunks, queue ${this.chunkProvider.queueLength}`] },
+      { lines: [`区块源: ${this.level.chunks.size} 个区块, 队列 ${this.chunkProvider.queueLength}`] },
       // day_count
-      { lines: [`Day #${Math.floor(this.level.time / 24000) + 1}`] },
+      { lines: [`第 ${Math.floor(this.level.time / 24000) + 1} 天`] },
       // entity_render_stats (LevelExtractor.entityStatistics: "E: rendered/total, SD: n")
-      { lines: [`E: ${this.entityRenderer.lastDrawCallCount}/${entities.length}`] },
+      { lines: [`实体: ${this.entityRenderer.lastDrawCallCount}/${entities.length}`] },
       // fps (DebugEntryFps: "%d fps T: %s%s"; limit 260 prints "inf", no present mode in a browser)
-      { priority: [`${this.fps} fps T: inf`] },
+      { priority: [`${this.fps} 帧/秒`] },
       // game_version (DebugEntryVersion)
-      { priority: ['Minecraft 26.2 (web/vanilla)'] },
+      { priority: ['Minecraft 26.2 (网页二创版)'] },
       // light_levels (DebugEntryLight)
-      { groups: [{ id: 'light', lines: [`Client Light: ${rawBrightness} (${sky} sky, ${block} block)`] }] },
+      { groups: [{ id: 'light', lines: [`客户端光照: ${rawBrightness} (天空 ${sky}, 方块 ${block})`] }] },
       // looking_at_block_state (DebugEntryLookingAt.BlockStateInfo, pick(20))
       { groups: [{ id: 'looking_at_block', lines: targetLines }] },
       // player_position (DebugEntryPosition)
@@ -2296,10 +2406,10 @@ export class Game {
         groups: [{
           id: 'position',
           lines: [
-            `XYZ: ${pos.x.toFixed(3)} / ${pos.y.toFixed(5)} / ${pos.z.toFixed(3)}`,
-            `Block: ${feetX} ${feetY} ${feetZ}`,
-            `Chunk: ${chunkX} ${feetY >> 4} ${chunkZ} [${chunkX & 31} ${chunkZ & 31} in r.${chunkX >> 5}.${chunkZ >> 5}.mca]`,
-            `Facing: ${facing} (${faceString}) (${yaw.toFixed(1)} / ${pitch.toFixed(1)})`,
+            `坐标: ${pos.x.toFixed(3)} / ${pos.y.toFixed(5)} / ${pos.z.toFixed(3)}`,
+            `方块: ${feetX} ${feetY} ${feetZ}`,
+            `区块: ${chunkX} ${feetY >> 4} ${chunkZ} [${chunkX & 31} ${chunkZ & 31} 于 r.${chunkX >> 5}.${chunkZ >> 5}.mca]`,
+            `朝向: ${facingZh} (${yaw.toFixed(1)} / ${pitch.toFixed(1)})`,
             'minecraft:overworld FC: 0',
           ],
         }],
@@ -2308,17 +2418,17 @@ export class Game {
       {
         groups: [{
           id: 'position',
-          lines: [`Section-relative: ${pad2(feetX & 15)} ${pad2(feetY & 15)} ${pad2(feetZ & 15)}`],
+          lines: [`section 内坐标: ${pad2(feetX & 15)} ${pad2(feetY & 15)} ${pad2(feetZ & 15)}`],
         }],
       },
       // simple_performance_impactors
-      { lines: ['fancy-clouds B: 0', 'Filtering: none'] },
+      { lines: ['华丽云: 关', '过滤: 无'] },
       // system_specs (DebugEntrySystemSpecs)
       {
         groups: [{
           id: 'system',
           lines: [
-            `Display: ${this.glCanvas.width}x${this.glCanvas.height} (${vendor})`,
+            `显示: ${this.glCanvas.width}x${this.glCanvas.height} (${vendor})`,
             `GPU: ${gpu}`,
             `GL: ${glVersion}`,
           ],

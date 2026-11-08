@@ -11,8 +11,9 @@
 // All 3D / HUD data comes through ScreenDeps; Game.ts is never imported.
 
 import type { GuiGraphics } from '../../GuiGraphics.js';
-import type { ItemStack, ContainerMenuLike, MouseAction, Rect } from '../../Types.js';
+import type { ItemStack, ContainerAction, ContainerMenuLike, MouseAction, Rect } from '../../Types.js';
 import { Screen } from '../Screen.js';
+import { Button } from '../../components/Button.js';
 import {
   CONTAINER_DEFAULT_IMAGE_WIDTH,
   CONTAINER_DEFAULT_IMAGE_HEIGHT,
@@ -37,8 +38,10 @@ export interface SlotDef {
 export class MemoryContainerMenu implements ContainerMenuLike {
   private readonly items: ItemStack[];
   private carried: ItemStack | null = null;
+  private quickCraftType = 0;
+  private readonly dragSlots = new Set<number>();
 
-  constructor(slotCount = 45, seed?: (index: number) => ItemStack) {
+  constructor(slotCount = 46, seed?: (index: number) => ItemStack) {
     this.items = Array.from({ length: slotCount }, (_, i) =>
       seed ? seed(i) : { itemId: -1, count: 0 });
   }
@@ -49,17 +52,55 @@ export class MemoryContainerMenu implements ContainerMenuLike {
   getCarried(): ItemStack | null { return this.carried; }
   setCarried(stack: ItemStack | null): void { this.carried = stack; }
 
-  click(index: number, button: number, shift: boolean, action: 'PICKUP' | 'QUICK_MOVE' | 'SPLIT' | 'THROW' | 'CLONE' | 'SWAP'): void {
+  click(index: number, button: number, shift: boolean, action: ContainerAction): void {
     const empty = (s: ItemStack | null): boolean => !s || s.itemId < 0 || s.count <= 0;
     const slot = this.getItem(index);
-    if (action === 'THROW') { this.carried = null; return; }
+    if (action === 'QUICK_CRAFT') {
+      const phase = button & 3;
+      if (phase === 0) { this.dragSlots.clear(); this.quickCraftType = button >> 2; }
+      if (phase === 1 && index >= 0 && this.carried &&
+        (empty(slot) || slot.itemId === this.carried.itemId)) this.dragSlots.add(index);
+      if (phase === 2 && this.carried) {
+        const count = this.quickCraftType === 2 ? 64 : this.quickCraftType === 1 ? 1
+          : Math.floor(this.carried.count / this.dragSlots.size);
+        for (const i of this.dragSlots) {
+          const target = this.getItem(i);
+          const amount = Math.min(count, 64 - target.count, this.quickCraftType === 2 ? 64 : this.carried.count);
+          this.items[i] = { itemId: this.carried.itemId, count: target.count + amount };
+          if (this.quickCraftType !== 2) this.carried.count -= amount;
+        }
+        if (this.carried.count <= 0) this.carried = null;
+        this.dragSlots.clear();
+      }
+      return;
+    }
+    if (index === -999 && action === 'PICKUP') {
+      if (this.carried && button === 1) this.carried.count--;
+      if (button === 0 || empty(this.carried)) this.carried = null;
+      return;
+    }
+    if (index < 0 || index >= this.items.length) return;
+    if (action === 'PICKUP_ALL') {
+      if (!this.carried) return;
+      for (const target of this.items) {
+        if (target.itemId !== this.carried.itemId) continue;
+        const amount = Math.min(target.count, 64 - this.carried.count);
+        this.carried.count += amount;
+        target.count -= amount;
+      }
+      return;
+    }
+    if (action === 'THROW') {
+      if (!this.carried) this.items[index] = { itemId: slot.itemId, count: button === 1 ? 0 : Math.max(0, slot.count - 1) };
+      return;
+    }
     if (action === 'CLONE') {
       if (!empty(slot)) this.carried = { itemId: slot.itemId, count: 64 };
       return;
     }
     if (action === 'SWAP') {
       if (index < 0 || index >= this.items.length) return;
-      const other = index < 9 ? index + 27 : index - 27;
+      const other = button === 40 ? 45 : 36 + button;
       if (other < this.items.length) {
         const t = this.items[index]; this.items[index] = this.items[other]; this.items[other] = t;
       }
@@ -67,8 +108,8 @@ export class MemoryContainerMenu implements ContainerMenuLike {
     }
     if (action === 'QUICK_MOVE' || shift) {
       if (empty(slot)) return;
-      const from = index < 9 ? 9 : 0;
-      const to = index < 9 ? this.items.length : 9;
+      const from = index >= 36 && index < 45 ? 9 : 36;
+      const to = index >= 36 && index < 45 ? 36 : Math.min(45, this.items.length);
       for (let i = from; i < to; i++) {
         const target = this.items[i];
         if (empty(target)) { this.items[i] = slot; this.items[index] = { itemId: -1, count: 0 }; return; }
@@ -88,8 +129,8 @@ export class MemoryContainerMenu implements ContainerMenuLike {
         this.carried = { itemId: slot.itemId, count: take };
         this.items[index] = { itemId: slot.itemId, count: slot.count - take };
         if (this.items[index].count <= 0) this.items[index] = { itemId: -1, count: 0 };
-      } else if (!empty(this.carried) && empty(slot)) {
-        this.items[index] = { itemId: this.carried!.itemId, count: 1 };
+      } else if (!empty(this.carried) && (empty(slot) || slot.itemId === this.carried!.itemId && slot.count < 64)) {
+        this.items[index] = { itemId: this.carried!.itemId, count: slot.count + 1 };
         this.carried!.count -= 1;
         if (this.carried!.count <= 0) this.carried = null;
       }
@@ -130,7 +171,15 @@ export abstract class AbstractContainerScreen extends Screen {
   protected menu: ContainerMenuLike;
   protected hoveredSlot = -1;
   private containerDragButton = -1;
+  private dragStartSlot = -1;
+  private dragMoved = false;
+  private doubleClick = false;
+  private lastClickSlot = -1;
+  private lastClickButton = -1;
+  private lastClickTime = 0;
   private readonly quickCraftSlots = new Set<number>();
+  /** True when the background sheet already contains the slot frames (vanilla sheets do). */
+  private textureBacked = false;
 
   constructor(
     env: ConstructorParameters<typeof Screen>[0],
@@ -146,7 +195,7 @@ export abstract class AbstractContainerScreen extends Screen {
     this.playerInventoryTitle = env.t('container.inventory');
     this.setInGameUi(true);
     this.setPauseScreen(false);
-    this.menu = env.deps.container ?? new MemoryContainerMenu(45);
+    this.menu = env.deps.container ?? new MemoryContainerMenu(46);
   }
 
   /** Subclasses provide the slot list (coordinates relative to the GUI image). */
@@ -158,6 +207,13 @@ export abstract class AbstractContainerScreen extends Screen {
     this.topPos = o.topPos;
     this.inventoryLabelY = this.imageHeight - CONTAINER_INVENTORY_LABEL_Y_OFFSET;
     this.slots = this.buildSlots();
+    this.cancelDrag();
+    if (this.env.deps.touchInput) {
+      this.addRenderableWidget(new Button(this.width - 48, 4, 44, 20, this.t('gui.done'), () => {
+        this.onClose();
+        this.close();
+      }));
+    }
   }
 
   protected slotRects(): Rect[] {
@@ -184,15 +240,17 @@ export abstract class AbstractContainerScreen extends Screen {
     g.pushPose();
     g.translate(this.leftPos, this.topPos);
 
-    // Container background sheet (256x256), region (0,0,imageWidth,imageHeight).
-    // This resource pack ships low-colour placeholder sheets, so a vanilla
-    // #C6C6C6 panel is laid down first and the original texture blitted on top;
-    // the recessed slot frames are re-drawn below (they live in that texture).
-    g.fill(0, 0, this.imageWidth, this.imageHeight, 0xffc6c6c6);
-    g.outline(0, 0, this.imageWidth, this.imageHeight, 0xff555555);
-    if (g.textures.get(this.backgroundTexture)) {
+    // The vanilla container sheet already contains the panel bevel and every slot frame. Drawing
+    // a second #C6C6C6 fill / outline / slot frame on top produced the light-grey grid lines the
+    // player saw around every slot. Only use the procedural fallback when the texture is missing.
+    const hasTexture = !!g.textures.get(this.backgroundTexture);
+    if (!hasTexture) {
+      g.fill(0, 0, this.imageWidth, this.imageHeight, 0xffc6c6c6);
+      g.outline(0, 0, this.imageWidth, this.imageHeight, 0xff555555);
+    } else {
       g.blit(this.backgroundTexture, 0, 0, this.imageWidth, this.imageHeight);
     }
+    this.textureBacked = hasTexture;
 
     this.drawLabels(g);
     this.drawSlotHighlight(g, SLOT_HIGHLIGHT_BACK);
@@ -215,8 +273,12 @@ export abstract class AbstractContainerScreen extends Screen {
   /** AbstractContainerScreen#extractSlot: frame, item icon, decorations. */
   protected drawSlots(g: GuiGraphics): void {
     for (const s of this.slots) {
-      this.drawSlotFrame(g, s.x, s.y);
-      const stack = this.safeItem(s.index);
+      if (!this.textureBacked) this.drawSlotFrame(g, s.x, s.y);
+      let stack = this.safeItem(s.index);
+      const carried = this.menu.getCarried();
+      if (carried && this.quickCraftSlots.size > 1 && this.quickCraftSlots.has(s.index)) {
+        stack = { itemId: carried.itemId, count: this.quickCraftCount(s.index, carried) };
+      }
       if (!(stack.itemId >= 0 && stack.count > 0)) {
         // Slot.getNoItemIcon: the greyed armor / shield outline of an empty slot
         const icon = this.emptySlotSprite(s.index);
@@ -257,8 +319,14 @@ export abstract class AbstractContainerScreen extends Screen {
     // extractCarriedItem: floating stack following the cursor at (mouse-8).
     const carried = this.menu.getCarried();
     if (carried && carried.itemId >= 0) {
+      let count = carried.count;
+      if (this.quickCraftSlots.size > 1 && this.containerDragButton !== 2) {
+        for (const index of this.quickCraftSlots) {
+          count -= this.quickCraftCount(index, carried) - this.safeItem(index).count;
+        }
+      }
       g.renderItem(carried.itemId, mx - 8, my - 8, 16);
-      g.renderItemDecorations(carried.itemId, carried.count, mx - 8, my - 8);
+      g.renderItemDecorations(carried.itemId, Math.max(0, count), mx - 8, my - 8);
     }
     // extractTooltip: item tooltip for the hovered slot.
     if (this.hoveredSlot >= 0 && !carried) {
@@ -268,50 +336,105 @@ export abstract class AbstractContainerScreen extends Screen {
   }
 
   // ------------------------------------------------------------- input
+  private cancelDrag(): void {
+    this.containerDragButton = -1;
+    this.quickCraftSlots.clear();
+    this.doubleClick = false;
+  }
+
+  private addQuickCraftSlot(index: number): void {
+    const carried = this.menu.getCarried();
+    if (!carried || index < 0 || this.quickCraftSlots.has(index)) return;
+    if (this.containerDragButton !== 2 && carried.count <= this.quickCraftSlots.size) return;
+    const target = this.safeItem(index);
+    const max = this.menu.getMaxStackSize?.(index, carried) ?? 64;
+    if (target.count > 0 && (target.itemId !== carried.itemId || target.count >= max)) return;
+    if (this.menu.canPlaceItem?.(index, carried) === false) return;
+    this.quickCraftSlots.add(index);
+  }
+
+  private quickCraftCount(index: number, carried: ItemStack): number {
+    const max = this.menu.getMaxStackSize?.(index, carried) ?? 64;
+    const amount = this.containerDragButton === 2 ? max : this.containerDragButton === 1
+      ? 1 : Math.floor(carried.count / this.quickCraftSlots.size);
+    return Math.min(max, this.safeItem(index).count + amount);
+  }
+
   mouseEvent(mx: number, my: number, button: number, action: MouseAction, wheelDelta = 0): boolean {
-    if (action === 'down') {
-      const idx = this.getHoveredSlot(mx, my);
-      if (idx >= 0 && (button === 0 || button === 1)) {
-        const shift = (this.env.mods & 1) !== 0;
-        if (button === 1 && !shift) this.menu.click(idx, 1, false, 'SPLIT');
-        else this.menu.click(idx, button, shift, shift ? 'QUICK_MOVE' : 'PICKUP');
-        this.containerDragButton = button;
-        this.quickCraftSlots.clear();
-        this.quickCraftSlots.add(idx);
-        return true;
-      }
-      if (this.hasClickedOutside(mx, my) && this.menu.getCarried()) {
-        this.menu.click(-999, button, false, 'THROW');
-        return true;
-      }
+    const idx = this.getHoveredSlot(mx, my);
+    this.hoveredSlot = idx;
+    if (action === 'cancel') {
+      this.cancelDrag();
+      this.lastClickSlot = -1;
       return super.mouseEvent(mx, my, button, action, wheelDelta);
     }
-    if (action === 'move' && this.containerDragButton >= 0) {
-      const idx = this.getHoveredSlot(mx, my);
-      if (idx >= 0) this.quickCraftSlots.add(idx);
+    if (action === 'down') {
+      if (super.mouseEvent(mx, my, button, action, wheelDelta)) return true;
+      if (button < 0 || button > 2) return false;
+      const outside = this.hasClickedOutside(mx, my);
+      if (idx < 0 && !outside) return false;
+      const shift = (this.env.mods & 1) !== 0;
+      const now = performance.now();
+      this.cancelDrag();
+      this.doubleClick = button === 0 && !shift && idx >= 0 && idx === this.lastClickSlot
+        && button === this.lastClickButton && now - this.lastClickTime < 250;
+      this.lastClickSlot = idx;
+      this.lastClickButton = button;
+      this.lastClickTime = now;
+      // Shift-click always quick-moves the slot, even while carrying a stack. Without this
+      // the carried stack was dropped into the slot first (a PICKUP swap), which is what made
+      // shift-click shuffle items around instead of transferring them.
+      if (shift && idx >= 0) {
+        this.menu.click(idx, button, true, 'QUICK_MOVE');
+        return true;
+      }
+      if (!this.menu.getCarried()) {
+        if (idx >= 0) this.menu.click(idx, button, false,
+          button === 2 ? 'CLONE' : 'PICKUP');
+      } else if (button !== 2 || this.env.deps.options.gamemode === 'creative') {
+        this.containerDragButton = button;
+        this.addQuickCraftSlot(idx);
+      }
       return true;
     }
-    if (action === 'up') {
-      if (this.containerDragButton >= 0 && this.quickCraftSlots.size > 1 && this.menu.getCarried()) {
-        // Distribute the carried stack evenly across the dragged slots.
-        const stack = this.menu.getCarried()!;
-        const per = Math.floor(stack.count / this.quickCraftSlots.size);
-        for (const idx of this.quickCraftSlots) {
-          if (per > 0) {
-            const target = this.safeItem(idx);
-            if (target.itemId < 0) this.menu.click(idx, 0, false, 'PICKUP');
-          }
-        }
+    if (action === 'move' && this.containerDragButton >= 0) {
+      this.addQuickCraftSlot(idx);
+      return true;
+    }
+    if (action === 'up' && this.containerDragButton >= 0) {
+      if (button !== this.containerDragButton) { this.cancelDrag(); return true; }
+      // Double-click with a carried stack collects every matching stack from the inventory
+      // (PICKUP_ALL); the old condition required the clicked slot to be empty.
+      if (this.doubleClick && idx >= 0 && button === 0 && this.menu.getCarried()) {
+        this.menu.click(idx, button, false, 'PICKUP_ALL');
+      } else if (this.quickCraftSlots.size > 1) {
+        this.menu.click(-999, button << 2, false, 'QUICK_CRAFT');
+        for (const slot of this.quickCraftSlots) this.menu.click(slot, (button << 2) | 1, false, 'QUICK_CRAFT');
+        this.menu.click(-999, (button << 2) | 2, false, 'QUICK_CRAFT');
+        this.lastClickSlot = -1;
+      } else if (button !== 2) {
+        const target = idx >= 0 ? idx : this.hasClickedOutside(mx, my) ? -999 : -1;
+        if (target !== -1) this.menu.click(target, button, false, 'PICKUP');
       }
-      this.containerDragButton = -1;
-      this.quickCraftSlots.clear();
-      return super.mouseEvent(mx, my, button, action, wheelDelta);
+      this.cancelDrag();
+      super.mouseEvent(mx, my, button, action, wheelDelta);
+      return true;
     }
     return super.mouseEvent(mx, my, button, action, wheelDelta);
   }
 
   keyPressed(code: string, char: string, mods: number): boolean {
     if (code === 'KeyE') { this.onClose(); this.close(); return true; }
+    if (this.hoveredSlot >= 0 && !this.menu.getCarried()) {
+      if (code === 'KeyQ') {
+        this.menu.click(this.hoveredSlot, (mods & 2) !== 0 ? 1 : 0, false, 'THROW');
+        return true;
+      }
+      if (code === 'KeyF') {
+        this.menu.click(this.hoveredSlot, 40, false, 'SWAP');
+        return true;
+      }
+    }
     if (/^Digit[1-9]$/.test(code)) {
       const hotbar = Number(code.slice(5)) - 1;
       if (this.hoveredSlot >= 0) {

@@ -15,7 +15,7 @@ import { MemoryWorldListProvider } from '../WorldListProvider.js';
 import { BUTTON_DEFAULT_HEIGHT } from '../GuiConstants.js';
 
 const LIST_TOP = 32;
-const LIST_BOTTOM_MARGIN = 64;
+const LIST_BOTTOM_MARGIN = 98;
 const ENTRY_HEIGHT = 36;
 const BUTTON_WIDTH = 150;
 const SMALL_BUTTON_WIDTH = 72;
@@ -27,6 +27,7 @@ export class SelectWorldScreen extends Screen {
   private loaded = false;
   private playButton!: Button;
   private deleteButton!: Button;
+  private exportButton!: Button;
 
   constructor(env: ConstructorParameters<typeof Screen>[0]) {
     super(env, 'selectWorld.title');
@@ -61,7 +62,12 @@ export class SelectWorldScreen extends Screen {
         g.fill(x + 3, y + 3, x + 27, y + 27, 0xff3b5f2b);
         g.outline(x + 3, y + 3, 24, 24, 0xff000000);
       },
-      onSelect: (w) => { this.playButton.active = true; this.deleteButton.active = true; void w; },
+      onSelect: (w) => {
+        this.playButton.active = true;
+        this.deleteButton.active = true;
+        if (this.exportButton) this.exportButton.active = true;
+        void w;
+      },
     });
     this.list.setItems(this.worlds);
     this.addRenderableWidget(this.list);
@@ -83,6 +89,15 @@ export class SelectWorldScreen extends Screen {
       this.t('selectWorld.edit'), () => this.toast('Edit World')));
     this.addRenderableWidget(new Button(cx + 4, by - 24, BUTTON_WIDTH, BUTTON_DEFAULT_HEIGHT,
       this.t('gui.cancel'), () => this.goBack()));
+
+    // Local save files: vanilla stores worlds on disk, a browser build only has IndexedDB, so
+    // export/import is the equivalent of the .minecraft/saves folder.
+    this.exportButton = new Button(cx - 154, by - 48, BUTTON_WIDTH, BUTTON_DEFAULT_HEIGHT,
+      '导出存档', () => { void this.exportSelected(); });
+    this.exportButton.active = false;
+    this.addRenderableWidget(this.exportButton);
+    this.addRenderableWidget(new Button(cx + 4, by - 48, BUTTON_WIDTH, BUTTON_DEFAULT_HEIGHT,
+      '导入存档', () => this.importArchive()));
   }
 
   /** Async load of the IndexedDB world list (kicked off after init). */
@@ -114,6 +129,52 @@ export class SelectWorldScreen extends Screen {
     await this.refresh();
     this.playButton.active = false;
     this.deleteButton.active = false;
+  }
+
+  /** Downloads the selected world as a .mcworld archive (local backup / transfer). */
+  private async exportSelected(): Promise<void> {
+    const w = this.list.getSelected();
+    if (!w || !this.provider.exportWorld) { this.toast('无法导出存档'); return; }
+    try {
+      const bytes = await this.provider.exportWorld(w.id);
+      const blob = new Blob([bytes.slice().buffer as ArrayBuffer], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(w.name || 'world').replace(/[\\/:*?"<>|]/g, '_')}.mcworld`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      this.toast('已导出存档');
+    } catch (err) {
+      console.warn('[save] export failed', err);
+      this.toast('导出失败');
+    }
+  }
+
+  /** Reads a .mcworld archive from disk and adds it to the world list. */
+  private importArchive(): void {
+    if (!this.provider.importWorld) { this.toast('无法导入存档'); return; }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.mcworld,.zip,.dat,application/octet-stream';
+    input.style.display = 'none';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      try {
+        await this.provider.importWorld!(await file.arrayBuffer());
+        await this.refresh();
+        this.toast('已导入存档');
+      } catch (err) {
+        console.warn('[save] import failed', err);
+        this.toast('导入失败：文件格式不正确');
+      }
+    };
+    document.body.appendChild(input);
+    input.click();
   }
 
   private goBack(): void { this.env.back(); }

@@ -148,6 +148,9 @@ export class PostProcessor {
   taaBlend = 0.1;
   /** A/B switch used by the regression test (and debugging): disables jitter + history blend. */
   taaOff = false;
+
+  /** Drops the TAA history (teleport/respawn/world switch would otherwise ghost the old view). */
+  invalidateHistory(): void { this.historyValid = false; }
   /** Halton(2,3) sub-pixel offsets; the projection is nudged by these while TAA is active. */
   private static readonly JITTER: ReadonlyArray<readonly [number, number]> = [
     [0.5, 0.333333], [0.25, 0.666667], [0.75, 0.111111], [0.125, 0.444444],

@@ -1,4 +1,7 @@
-// Entry point: boots the client, shows the loading screen, then hands over to the game.
+// Entry point: boots the client, shows the vanilla-style loading overlay, then hands over to the game.
+//
+// The overlay mirrors LoadingOverlay in 26.2: a black screen, the Mojang Studios logo centred, and
+// a thin progress bar at the bottom with a percentage on the right.
 
 import './client/style.css';
 import './client/touch/touch.css';
@@ -9,10 +12,13 @@ const app = document.getElementById('app')!;
 const loading = document.createElement('div');
 loading.className = 'loading-screen';
 loading.innerHTML = `
-  <div class="loading-title">Minecraft</div>
-  <div class="loading-sub">26.2 · browser client</div>
-  <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
-  <div class="loading-status" id="loading-status">Starting</div>
+  <div class="loading-center">
+    <img class="loading-logo" src="/mc/textures/gui/title/mojangstudios.png" alt="Mojang Studios" />
+  </div>
+  <div class="loading-bottom">
+    <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
+    <div class="loading-status" id="loading-status">正在启动…</div>
+  </div>
 `;
 app.appendChild(loading);
 
@@ -42,7 +48,7 @@ async function boot() {
     const detail = document.createElement('pre');
     detail.className = 'loading-error';
     detail.textContent = (err as Error).stack ?? '';
-    loading.appendChild(detail);
+    loading.querySelector('.loading-bottom')?.appendChild(detail);
   }
 }
 

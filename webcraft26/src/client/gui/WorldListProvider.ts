@@ -44,4 +44,13 @@ export class MemoryWorldListProvider implements WorldListProvider {
     const w = this.worlds.find((x) => x.id === id);
     if (w) w.lastPlayed = Date.now();
   }
+
+  /** In-memory fallback cannot produce a portable archive. */
+  async exportWorld(_id: string): Promise<Uint8Array> {
+    throw new Error('no persistence');
+  }
+
+  async importWorld(_data: ArrayBuffer): Promise<string> {
+    throw new Error('no persistence');
+  }
 }

@@ -72,6 +72,18 @@ check('title at boot', (await screenName()) === 'TitleScreen', `screen=${await s
 await sleep(3500);
 await page.screenshot({ path: `${outDir}/01-title.png` });
 
+// The client no longer restores/creates a world while booting to the title (vanilla does not
+// create a level until you enter one), so a fresh profile has an empty list. Create one through
+// the ?play path first, exactly like a returning player's save.
+log('=== 1b. warm-up world so the list has an entry ===');
+await page.goto(`${base}/?play`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+await waitFor('__mc (warmup)', () => !!window.__mc);
+await waitFor('world running', () => !!window.__mc.running, 60000);
+await sleep(1500);
+await page.goto(`${base}/`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+await waitFor('__mc (title)', () => !!window.__mc);
+await waitFor('loading screen gone (title)', () => !document.querySelector('.loading-screen'));
+
 log('=== 2. Singleplayer -> Select World ===');
 await clickRect(await titleButton('singleplayer'));
 await waitFor('SelectWorldScreen', () => {

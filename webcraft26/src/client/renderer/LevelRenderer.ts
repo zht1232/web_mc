@@ -26,16 +26,89 @@ export interface Camera {
 
 interface SectionGpu {
   cx: number; cz: number; sy: number;
-  vaos: (WebGLVertexArrayObject | null)[];
-  counts: number[];
-  /** squared distance to camera, filled during culling */
-  dist: number;
+  /** CPU copy of the merged SOLID+CUTOUT mesh, positions already relative to the region origin. */
+  verts: Uint8Array;
+  idx: Uint32Array;
+  /** CPU copy of the TRANSLUCENT mesh, same coordinate space. */
+  tVerts: Uint8Array;
+  tIdx: Uint32Array;
   empty: boolean;
 }
 
+/** 4x4 chunks of sections drawn with one draw call each (OpusMC/vanilla RenderRegion idea). */
+const REGION_CHUNKS = 4;
+const REGION_SHIFT = 2;
+const REGION_MASK = REGION_CHUNKS - 1;
+
+interface RegionGpu {
+  rx: number; rz: number;
+  opaqueVao: WebGLVertexArrayObject | null;
+  opaqueVbo: WebGLBuffer | null;
+  opaqueIbo: WebGLBuffer | null;
+  opaqueCount: number;
+  transVao: WebGLVertexArrayObject | null;
+  transVbo: WebGLBuffer | null;
+  transIbo: WebGLBuffer | null;
+  transCount: number;
+  dirty: boolean;
+  minY: number;
+  maxY: number;
+  /** Reused staging buffers (fresh arrays per rebuild caused GC hitches). */
+  scratchV: Uint8Array;
+  scratchI: Uint32Array;
+  tScratchV: Uint8Array;
+  tScratchI: Uint32Array;
+  /** squared distance to the camera, filled during culling */
+  dist: number;
+}
+
 const LAYERS = 3;
+/** Merges SOLID+CUTOUT and rebases the positions in a single pass. */
+function mergeRebase(mesh: SectionMesh, ox: number, oy: number, oz: number): { vertices: Uint8Array; indices: Uint32Array } {
+  const vs = mesh.vertices[RenderLayer.SOLID];
+  const vc = mesh.vertices[RenderLayer.CUTOUT];
+  const is = mesh.indices[RenderLayer.SOLID];
+  const ic = mesh.indices[RenderLayer.CUTOUT];
+  const vertices = new Uint8Array(vs.length + vc.length);
+  vertices.set(vs, 0);
+  vertices.set(vc, vs.length);
+  if (ox !== 0 || oy !== 0 || oz !== 0) {
+    const f = new Float32Array(vertices.buffer);
+    for (let i = 0; i < f.length; i += 6) {
+      f[i] += ox;
+      f[i + 1] += oy;
+      f[i + 2] += oz;
+    }
+  }
+  if (ic.length === 0) return { vertices, indices: is };
+  const base = vs.length / 24;
+  const indices = new Uint32Array(is.length + ic.length);
+  indices.set(is, 0);
+  for (let i = 0; i < ic.length; i++) indices[is.length + i] = ic[i] + base;
+  return { vertices, indices };
+}
+
+/** Returns a copy of a 24-byte-stride vertex buffer shifted by (ox, oy, oz). */
+function rebase(verts: Uint8Array, ox: number, oy: number, oz: number): Uint8Array {
+  if (verts.length === 0) return verts;
+  if (ox === 0 && oy === 0 && oz === 0) return verts;
+  const out = new Uint8Array(verts.byteLength);
+  out.set(verts);
+  const f = new Float32Array(out.buffer);
+  const stride = 6; // 24 bytes = 6 floats
+  for (let i = 0; i < f.length; i += stride) {
+    f[i] += ox;
+    f[i + 1] += oy;
+    f[i + 2] += oz;
+  }
+  return out;
+}
+
 const EMPTY_BYTES = new Uint8Array(0);
 const EMPTY_U32 = new Uint32Array(0);
+
+function regionKey(rx: number, rz: number): string { return `${rx},${rz}`; }
+function regionOfChunk(c: number): number { return c >> REGION_SHIFT; }
 
 /** Concatenates the SOLID and CUTOUT vertex/index arrays into one upload. */
 function mergeOpaqueLayers(mesh: SectionMesh): { vertices: Uint8Array; indices: Uint32Array } {
@@ -79,6 +152,7 @@ export class LevelRenderer {
   readonly shadowStats = { sections: 0, draws: 0, size: 0 };
 
   private readonly sections = new Map<number, SectionGpu>();
+  private readonly regions = new Map<string, RegionGpu>();
   private readonly rebuildQueue: { chunkX: number; chunkZ: number; sectionY: number }[] = [];
   /** Dedup: a chunk dirty wave must not enqueue the same section twice (10k-entry backlogs). */
   private readonly queuedSections = new Set<number>();
@@ -88,6 +162,7 @@ export class LevelRenderer {
   private readonly shadowCam = { x: 0, y: 0, z: 0 };
   private readonly shadowLight: [number, number, number] = [0, 1, 0];
   private lastShadowSize = 0;
+  private readonly lastShadowMatrix = new Float32Array(16);
 
   private readonly view = new Float32Array(16);
   private readonly proj = new Float32Array(16);
@@ -238,13 +313,27 @@ export class LevelRenderer {
   }
 
   /** Rebuilds dirty sections near the camera, honouring a time budget. */
-  update(level: ClientLevel, camX: number, camZ: number, budgetMs = 8): void {
+  update(level: ClientLevel, camX: number, camZ: number, budgetMs = 8, camY = 0): void {
     const started = performance.now();
     const cx = Math.floor(camX) >> 4;
     const cz = Math.floor(camZ) >> 4;
     const r = this.renderDistance;
 
-    // enqueue dirty chunks
+    // Coming down from the surface (or out of creative flight) exposes sections that were skipped
+    // while the camera was high above them: re-queue everything nearby once.
+    if (camY < this.lastCamY - 8) {
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const c = level.getChunk(cx + dx, cz + dz);
+          if (c) c.dirty = true;
+        }
+      }
+    }
+    this.lastCamY = camY;
+
+    // enqueue dirty chunks. Sections far below the camera *and* below the chunk surface cannot be
+    // seen (surface play), and they were the bulk of the 10k-entry mesh backlog: at ~1.5 ms per
+    // 16^3 section that backlog alone cost 15 s of main-thread time after every world load.
     let pushed = false;
     for (let dz = -r; dz <= r; dz++) {
       for (let dx = -r; dx <= r; dx++) {
@@ -253,7 +342,14 @@ export class LevelRenderer {
         if (!this.neighboursReady(level, chunk, cx, cz, r, started)) continue;
         chunk.dirty = false;
         this.waitingSince.delete(chunk);
+        let surface = 32767;
+        if (chunk.surfaceHeight) {
+          for (let i = 0; i < 256; i++) surface = Math.min(surface, chunk.surfaceHeight[i]);
+        }
+        const cutoff = Math.min(surface, camY) - 32;
         for (let sy = chunk.minSectionY; sy <= chunk.maxSectionY; sy++) {
+          if (sy * 16 + 16 <= cutoff) continue;
+          if (this.sections.get(sectionKey(chunk.x, chunk.z, sy))?.empty) continue;
           const key = sectionKey(chunk.x, chunk.z, sy);
           if (this.queuedSections.has(key)) continue;
           this.queuedSections.add(key);
@@ -277,7 +373,10 @@ export class LevelRenderer {
 
     const tints = this.tintSource(level);
     let built = 0;
-    while (this.rebuildQueue.length && performance.now() - started < budgetMs) {
+    // The budget is a time check BETWEEN sections, so one dense section can blow through it.
+    // Cap the count as well: a frame with 4 x 2 ms sections is already 8 ms of main thread.
+    const maxSections = 3;
+    while (this.rebuildQueue.length && built < maxSections && performance.now() - started < budgetMs) {
       const item = this.rebuildQueue.shift()!;
       this.queuedSections.delete(sectionKey(item.chunkX, item.chunkZ, item.sectionY));
       this.buildSection(level, item.chunkX, item.chunkZ, item.sectionY, tints);
@@ -289,6 +388,7 @@ export class LevelRenderer {
 
   /** Chunk -> first time it was found waiting for a neighbour (see neighboursReady). */
   private readonly waitingSince = new WeakMap<object, number>();
+  private lastCamY = 0;
 
   /**
    * A section is meshed from an 18x18x18 copy of its surroundings, and a missing neighbour chunk reads as
@@ -343,59 +443,118 @@ export class LevelRenderer {
     if (!existing) {
       existing = {
         cx: chunkX, cz: chunkZ, sy,
-        vaos: new Array(LAYERS).fill(null),
-        counts: new Array(LAYERS).fill(0),
-        dist: 0,
+        verts: EMPTY_BYTES, idx: EMPTY_U32, tVerts: EMPTY_BYTES, tIdx: EMPTY_U32,
         empty: false,
       };
       this.sections.set(key, existing);
     }
 
-    // Solid and cutout share primitives and only differed by the alpha-test threshold, so they
-    // are concatenated into one buffer and drawn with the cutout threshold (opaque textures
-    // never have alpha in (0.1, 0.5)). That removes one draw + two uniform updates per visible
-    // section, which is the dominant per-frame cost with 500+ sections in view.
-    const merged = mergeOpaqueLayers(mesh);
+    // Solid and cutout share primitives and only differ by the alpha-test threshold, so they are
+    // concatenated (opaque textures never have alpha in (0.1, 0.5)) and drawn with the cutout
+    // threshold. Positions are rebased onto the region origin here, once, so a region rebuild is
+    // a plain memcpy of the per-section arrays.
+    const rx = regionOfChunk(chunkX);
+    const rz = regionOfChunk(chunkZ);
+    const ox = originX - ((rx * REGION_CHUNKS) << 4);
+    const oy = originY;
+    const oz = originZ - ((rz * REGION_CHUNKS) << 4);
 
-    let total = 0;
-    for (let layer = 0; layer < LAYERS; layer++) {
-      const vertices = layer === RenderLayer.CUTOUT ? EMPTY_BYTES : (layer === RenderLayer.SOLID ? merged.vertices : mesh.vertices[layer]);
-      const indices = layer === RenderLayer.CUTOUT ? EMPTY_U32 : (layer === RenderLayer.SOLID ? merged.indices : mesh.indices[layer]);
-      const quadCount = indices.length > 0 ? Math.max(1, Math.floor(indices.length / 6)) : 0;
-      total += quadCount;
-      existing.counts[layer] = indices.length;
+    // Merge SOLID+CUTOUT and rebase onto the region origin in one allocation/pass (dense leaf
+    // sections are several MB of vertices, so the extra copies showed up as 15-20 ms frames).
+    const merged = mergeRebase(mesh, ox, oy, oz);
+    existing.verts = merged.vertices;
+    existing.idx = merged.indices;
+    existing.tVerts = rebase(mesh.vertices[RenderLayer.TRANSLUCENT], ox, oy, oz);
+    existing.tIdx = mesh.indices[RenderLayer.TRANSLUCENT];
+    existing.empty = existing.idx.length === 0 && existing.tIdx.length === 0;
 
-      if (quadCount === 0) {
-        if (existing.vaos[layer]) {
-          this.gl.deleteVertexArray(existing.vaos[layer]);
-          existing.vaos[layer] = null;
-        }
-        continue;
+    this.markRegionDirty(rx, rz);
+    this.shadowCacheValid = false;
+  }
+
+  private markRegionDirty(rx: number, rz: number): void {
+    const key = regionKey(rx, rz);
+    let region = this.regions.get(key);
+    if (!region) {
+      region = {
+        rx, rz,
+        opaqueVao: null, opaqueVbo: null, opaqueIbo: null, opaqueCount: 0,
+        transVao: null, transVbo: null, transIbo: null, transCount: 0,
+        dirty: true, minY: 0, maxY: 0, dist: 0,
+        scratchV: EMPTY_BYTES, scratchI: EMPTY_U32,
+        tScratchV: EMPTY_BYTES, tScratchI: EMPTY_U32,
+      };
+      this.regions.set(key, region);
+    }
+    region.dirty = true;
+  }
+
+  /**
+   * Rebuilds one region's combined buffers from the cached per-section meshes. Cost is a few
+   * hundred KB of memcpy for a full 4x4 chunk region; called with a per-frame budget.
+   */
+  private rebuildRegion(region: RegionGpu): void {
+    const gl = this.gl;
+    const parts: SectionGpu[] = [];
+    const baseX = region.rx * REGION_CHUNKS;
+    const baseZ = region.rz * REGION_CHUNKS;
+    for (const section of this.sections.values()) {
+      if (section.cx < baseX || section.cx >= baseX + REGION_CHUNKS) continue;
+      if (section.cz < baseZ || section.cz >= baseZ + REGION_CHUNKS) continue;
+      if (section.idx.length === 0 && section.tIdx.length === 0) continue;
+      parts.push(section);
+    }
+    parts.sort((a, b) => (a.sy - b.sy) || (a.cx - b.cx) || (a.cz - b.cz));
+
+    const build = (
+      pickVerts: (s: SectionGpu) => Uint8Array,
+      pickIdx: (s: SectionGpu) => Uint32Array,
+      scratchV: Uint8Array, scratchI: Uint32Array,
+    ): { verts: Uint8Array; idx: Uint32Array; scratchV: Uint8Array; scratchI: Uint32Array } => {
+      let vTotal = 0;
+      let iTotal = 0;
+      for (const part of parts) { vTotal += pickVerts(part).length; iTotal += pickIdx(part).length; }
+      if (scratchV.length < vTotal) scratchV = new Uint8Array(Math.ceil(vTotal * 1.3) + 1024);
+      if (scratchI.length < iTotal) scratchI = new Uint32Array(Math.ceil(iTotal * 1.3) + 1024);
+      const verts = scratchV;
+      const idx = scratchI;
+      let vo = 0;
+      let io = 0;
+      for (const part of parts) {
+        const v = pickVerts(part);
+        const i = pickIdx(part);
+        if (v.length === 0) continue;
+        verts.set(v, vo);
+        const base = vo / 24;
+        for (let k = 0; k < i.length; k++) idx[io + k] = i[k] + base;
+        vo += v.length;
+        io += i.length;
       }
+      return { verts: verts.subarray(0, vo), idx: idx.subarray(0, io), scratchV, scratchI };
+    };
 
-      const gl = this.gl;
-      const vao = existing.vaos[layer] ?? gl.createVertexArray()!;
-      existing.vaos[layer] = vao;
-      gl.bindVertexArray(vao);
+    // The two staging buffers are kept per region and reused; `upload()` copies into the GPU
+    // buffer synchronously, so the scratch content can be overwritten right after.
+    const opaque = build((s) => s.verts, (s) => s.idx, region.scratchV, region.scratchI);
+    region.scratchV = opaque.scratchV;
+    region.scratchI = opaque.scratchI;
+    const trans = build((s) => s.tVerts, (s) => s.tIdx, region.tScratchV, region.tScratchI);
+    region.tScratchV = trans.scratchV;
+    region.tScratchI = trans.scratchI;
 
-      // vertex buffer
-      let vbo = vaoBuffers.get(vao)?.vbo;
-      if (!vbo) {
-        vbo = gl.createBuffer()!;
-        vaoBuffers.set(vao, { vbo, ibo: null });
-      }
-      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-      gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-
-      // indices
-      let ibo = vaoBuffers.get(vao)!.ibo;
-      if (!ibo) {
-        ibo = gl.createBuffer()!;
-        vaoBuffers.get(vao)!.ibo = ibo;
-      }
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-
+    const upload = (
+      vao: WebGLVertexArrayObject | null, vbo: WebGLBuffer | null, ibo: WebGLBuffer | null,
+      verts: Uint8Array, idx: Uint32Array,
+    ): [WebGLVertexArrayObject | null, WebGLBuffer | null, WebGLBuffer | null, number] => {
+      if (idx.length === 0) return [vao, vbo, ibo, 0];
+      const v = vao ?? gl.createVertexArray()!;
+      const b = vbo ?? gl.createBuffer()!;
+      const i = ibo ?? gl.createBuffer()!;
+      gl.bindVertexArray(v);
+      gl.bindBuffer(gl.ARRAY_BUFFER, b);
+      gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, i);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
       gl.enableVertexAttribArray(0);
       gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
       gl.enableVertexAttribArray(1);
@@ -406,22 +565,28 @@ export class LevelRenderer {
       gl.vertexAttribPointer(3, 2, gl.UNSIGNED_BYTE, false, 24, 18);
       gl.enableVertexAttribArray(4);
       gl.vertexAttribPointer(4, 4, gl.UNSIGNED_BYTE, true, 24, 20);
-    }
+      return [v, b, i, idx.length];
+    };
 
-    this.shadowCacheValid = false;
-    existing.empty = total === 0;
-    if (existing.empty) {
-      for (let layer = 0; layer < LAYERS; layer++) {
-        if (existing.vaos[layer]) {
-          this.gl.deleteVertexArray(existing.vaos[layer]);
-          existing.vaos[layer] = null;
-          existing.counts[layer] = 0;
-        }
-      }
+    [region.opaqueVao, region.opaqueVbo, region.opaqueIbo, region.opaqueCount] =
+      upload(region.opaqueVao, region.opaqueVbo, region.opaqueIbo, opaque.verts, opaque.idx);
+    [region.transVao, region.transVbo, region.transIbo, region.transCount] =
+      upload(region.transVao, region.transVbo, region.transIbo, trans.verts, trans.idx);
+
+    let minY = 1e9;
+    let maxY = -1e9;
+    for (const p of parts) {
+      minY = Math.min(minY, p.sy << 4);
+      maxY = Math.max(maxY, (p.sy << 4) + 16);
     }
+    region.minY = minY === 1e9 ? 0 : minY;
+    region.maxY = maxY === -1e9 ? 16 : maxY;
+    region.dirty = false;
   }
 
   /**
+   * Copies an 18x18x18 neighbourhood
+/**
    * Copies an 18x18x18 neighbourhood (the section plus a one block skirt) into flat
    * arrays. Sections are fetched once and read through their paletted containers, so
    * the copy does not pay for a chunk map lookup per cell.
@@ -505,10 +670,8 @@ export class LevelRenderer {
           const chunk = level.getChunk(section.cx, section.cz);
           if (chunk) chunk.dirty = true;
         }
-        for (let layer = 0; layer < LAYERS; layer++) {
-          if (section.vaos[layer]) this.gl.deleteVertexArray(section.vaos[layer]);
-        }
         this.sections.delete(key);
+        this.markRegionDirty(regionOfChunk(section.cx), regionOfChunk(section.cz));
         this.shadowCacheValid = false;
       }
     }
@@ -738,33 +901,35 @@ export class LevelRenderer {
     const minSurface = new Map<number, number>();
     let shadowSections = 0;
     let shadowDraws = 0;
-    for (const section of this.sections.values()) {
-      if (section.empty) continue;
-      if (Math.abs(section.cx - camCX) > r || Math.abs(section.cz - camCZ) > r) continue;
-      const minX = section.cx << 4, minZ = section.cz << 4, minY = section.sy << 4;
-      if (!boxInFrustum(this.shadow.frustum, minX, minY, minZ, minX + 16, minY + 16, minZ + 16)) continue;
-      const ck = chunkKey(section.cx, section.cz);
-      let surface = minSurface.get(ck);
-      if (surface === undefined) {
-        const chunk = level.getChunk(section.cx, section.cz);
-        surface = level.minY;
-        if (chunk) {
-          surface = 32767;
-          for (let i = 0; i < 256; i++) surface = Math.min(surface, chunk.surfaceHeight[i]);
+    // Regions below their local surface cannot cast visible sunlight; everything else is one
+    // draw per 4x4 chunk region instead of one per 16^3 section.
+    for (const region of this.regions.values()) {
+      if (region.dirty || region.opaqueCount === 0) continue;
+      const cx1 = region.rx * REGION_CHUNKS;
+      const cz1 = region.rz * REGION_CHUNKS;
+      if (Math.abs(cx1 - camCX) > r + REGION_CHUNKS || Math.abs(cz1 - camCZ) > r + REGION_CHUNKS) continue;
+      const minX = cx1 << 4, minZ = cz1 << 4;
+      if (!boxInFrustum(this.shadow.frustum, minX, region.minY, minZ,
+        minX + REGION_CHUNKS * 16, region.maxY, minZ + REGION_CHUNKS * 16)) continue;
+      let surface = 32767;
+      for (let dz = 0; dz < REGION_CHUNKS; dz++) {
+        for (let dx = 0; dx < REGION_CHUNKS; dx++) {
+          const ck = chunkKey(cx1 + dx, cz1 + dz);
+          let s2 = minSurface.get(ck);
+          if (s2 === undefined) {
+            const chunk = level.getChunk(cx1 + dx, cz1 + dz);
+            s2 = chunk ? chunk.surfaceHeight.reduce((a, b) => Math.min(a, b), 32767) : level.minY;
+            minSurface.set(ck, s2);
+          }
+          surface = Math.min(surface, s2);
         }
-        minSurface.set(ck, surface);
       }
-      if (minY + 16 <= surface) continue;
+      if (region.maxY <= surface) continue;
       shadowSections++;
-      program.set3f('uChunkOrigin', minX, minY, minZ);
-      for (const layer of [RenderLayer.SOLID]) {
-        const count = section.counts[layer];
-        const vao = section.vaos[layer];
-        if (!count || !vao) continue;
-        gl.bindVertexArray(vao);
-        gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, 0);
-        shadowDraws++;
-      }
+      program.set3f('uChunkOrigin', minX, 0, minZ);
+      gl.bindVertexArray(region.opaqueVao);
+      gl.drawElements(gl.TRIANGLES, region.opaqueCount, gl.UNSIGNED_INT, 0);
+      shadowDraws++;
     }
     this.shadowStats.sections = shadowSections;
     this.shadowStats.draws = shadowDraws;
@@ -787,22 +952,36 @@ export class LevelRenderer {
     // Depth-difference post effects need the same clip planes the projection was built with.
     this.post.setDepthRange(0.05, 1024);
 
-    // collect visible sections
-    const opaque: SectionGpu[] = [];
-    const translucent: SectionGpu[] = [];
+    // Rebuild dirty regions first (bounded per frame so streaming never stalls a frame long),
+    // then collect the visible ones. One region = 4x4 chunks = one draw call per layer.
+    const dirty: RegionGpu[] = [];
+    for (const region of this.regions.values()) if (region.dirty) dirty.push(region);
+    const budget = dirty.length > 12 ? 6 : 3;
+    for (let i = 0; i < Math.min(budget, dirty.length); i++) this.rebuildRegion(dirty[i]);
+
+    const opaque: RegionGpu[] = [];
+    const translucent: RegionGpu[] = [];
     const r = this.renderDistance;
     const camCX = Math.floor(camera.x) >> 4;
     const camCZ = Math.floor(camera.z) >> 4;
+    const half = (REGION_CHUNKS * 16) / 2;
 
-    for (const section of this.sections.values()) {
-      if (section.empty) continue;
-      if (Math.abs(section.cx - camCX) > r + 1 || Math.abs(section.cz - camCZ) > r + 1) continue;
-      const minX = section.cx << 4, minZ = section.cz << 4, minY = section.sy << 4;
-      if (!boxInFrustum(this.frustum, minX, minY, minZ, minX + 16, minY + 16, minZ + 16)) continue;
-      const dx = minX + 8 - camera.x, dy = minY + 8 - camera.y, dz = minZ + 8 - camera.z;
-      section.dist = dx * dx + dy * dy + dz * dz;
-      opaque.push(section);
-      if (section.counts[RenderLayer.TRANSLUCENT] > 0) translucent.push(section);
+    for (const region of this.regions.values()) {
+      if (region.dirty) continue;
+      if (region.opaqueCount === 0 && region.transCount === 0) continue;
+      const centreCX = region.rx * REGION_CHUNKS + REGION_CHUNKS / 2;
+      const centreCZ = region.rz * REGION_CHUNKS + REGION_CHUNKS / 2;
+      if (Math.abs(centreCX - camCX) > r + REGION_CHUNKS + 1 || Math.abs(centreCZ - camCZ) > r + REGION_CHUNKS + 1) continue;
+      const minX = region.rx * REGION_CHUNKS * 16;
+      const minZ = region.rz * REGION_CHUNKS * 16;
+      if (!boxInFrustum(this.frustum, minX, region.minY, minZ,
+        minX + REGION_CHUNKS * 16, region.maxY, minZ + REGION_CHUNKS * 16)) continue;
+      const dx = minX + half - camera.x;
+      const dy = (region.minY + region.maxY) / 2 - camera.y;
+      const dz = minZ + half - camera.z;
+      region.dist = dx * dx + dy * dy + dz * dz;
+      if (region.opaqueCount > 0) opaque.push(region);
+      if (region.transCount > 0) translucent.push(region);
     }
 
     opaque.sort((a, b) => a.dist - b.dist);
@@ -813,13 +992,16 @@ export class LevelRenderer {
     this.updateSunLight(sky, rainLevel);
     this.shadowsActive = this.post.enabled && this.post.shadowsEnabled && this.post.shadowSize > 0;
     if (this.shadowsActive) {
-      const moved =
-        Math.abs(camera.x - this.shadowCam.x) + Math.abs(camera.y - this.shadowCam.y) + Math.abs(camera.z - this.shadowCam.z) > 2;
-      const lightMoved =
-        Math.abs(this.lightDir[0] - this.shadowLight[0]) +
-        Math.abs(this.lightDir[1] - this.shadowLight[1]) +
-        Math.abs(this.lightDir[2] - this.shadowLight[2]) > 0.002;
-      if (!this.shadowCacheValid || moved || lightMoved || this.shadow.size !== this.lastShadowSize) {
+      // The shadow matrix is texel-snapped, so compare the *matrix* instead of the camera
+      // position: the old 2-block threshold reused a stale depth map with a fresh matrix, which
+      // made shadow edges crawl/flicker while walking.
+      this.shadow.update(camera, this.lightDir);
+      let matrixChanged = this.shadow.size !== this.lastShadowSize;
+      for (let i = 0; i < 16 && !matrixChanged; i++) {
+        if (Math.abs(this.shadow.lightViewProjection[i] - this.lastShadowMatrix[i]) > 1e-6) matrixChanged = true;
+      }
+      if (!this.shadowCacheValid || matrixChanged) {
+        this.lastShadowMatrix.set(this.shadow.lightViewProjection);
         this.renderShadowPass(camera, level);
         this.shadowCacheValid = true;
         this.lastShadowSize = this.shadow.size;
@@ -896,8 +1078,8 @@ export class LevelRenderer {
     gl.disable(gl.BLEND);
 
     // solid + cutout (vanilla CUTOUT_TERRAIN alpha threshold is 0.5; solid keeps the default 0.1)
-    for (const section of opaque) {
-      this.drawSection(section, RenderLayer.SOLID, 0.5);
+    for (const region of opaque) {
+      this.drawRegion(region, RenderLayer.SOLID, 0.5);
     }
 
     // Entities / particles / block-breaking go here (vanilla order).
@@ -939,21 +1121,22 @@ export class LevelRenderer {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
     this.terrain.set1f('uTranslucent', 1);
-    for (const section of translucent) {
-      this.drawSection(section, RenderLayer.TRANSLUCENT, 0.1);
+    for (const region of translucent) {
+      this.drawRegion(region, RenderLayer.TRANSLUCENT, 0.1);
     }
     gl.depthMask(true);
     gl.disable(gl.BLEND);
     gl.enable(gl.CULL_FACE);
   }
 
-  private drawSection(section: SectionGpu, layer: RenderLayer, alphaTest: number): void {
-    const count = section.counts[layer];
-    if (!count) return;
-    const vao = section.vaos[layer];
-    if (!vao) return;
+  /** One draw call for a whole 4x4 chunk region (positions are region-local). */
+  private drawRegion(region: RegionGpu, layer: RenderLayer, alphaTest: number): void {
     const gl = this.gl;
-    this.terrain.set3f('uChunkOrigin', section.cx << 4, section.sy << 4, section.cz << 4);
+    const translucent = layer === RenderLayer.TRANSLUCENT;
+    const count = translucent ? region.transCount : region.opaqueCount;
+    const vao = translucent ? region.transVao : region.opaqueVao;
+    if (!count || !vao) return;
+    this.terrain.set3f('uChunkOrigin', region.rx * REGION_CHUNKS * 16, 0, region.rz * REGION_CHUNKS * 16);
     this.terrain.set1f('uAlphaTest', alphaTest);
     gl.bindVertexArray(vao);
     gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, 0);

@@ -88,6 +88,8 @@ export interface ParticleSpec {
   blockLayer?: number;
   spriteFrame?: number;
   frameCount?: number;
+  /** Pre-computed packed light level (0..15); when set, no world sampling is done. */
+  lightOverride?: number;
 }
 
 /**

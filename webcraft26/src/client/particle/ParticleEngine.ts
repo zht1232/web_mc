@@ -17,6 +17,9 @@ import { ParticleSpriteAtlas, type SpriteUv } from './ParticleSprites.js';
 const FLOATS_PER_INSTANCE = 14;   // center3 + size1 + uvRect4 + color4 + misc2
 const QUAD_FLOATS = 4;            // corner2 + quadUV2
 const FALLBACK_UV: SpriteUv = { u0: 0, v0: 0, u1: 1, v1: 1 };
+const NEIGHBOURS: ReadonlyArray<readonly [number, number, number]> = [
+  [0.55, 0, 0], [-0.55, 0, 0], [0, 0.55, 0], [0, -0.55, 0], [0, 0, 0.55], [0, 0, -0.55],
+];
 
 const PARTICLE_VS = `#version 300 es
 precision highp float;
@@ -173,7 +176,16 @@ export class ParticleEngine {
     }
     const idx = this.pool.add(spec);
     if (idx >= 0 && this.lightAt && !info.glow) {
-      const l = Math.max(0, Math.min(15, this.lightAt(spec.x, spec.y, spec.z))) / 15;
+      // A block's own cell stores light 0 (opaque), so a particle spawned inside it would be
+      // black; sample the brightest neighbouring cell (the exposed face) like vanilla does.
+      let packed = spec.lightOverride ?? -1;
+      if (packed < 0) {
+        packed = this.lightAt(spec.x, spec.y, spec.z);
+        for (const [dx, dy, dz] of NEIGHBOURS) {
+          packed = Math.max(packed, this.lightAt(spec.x + dx, spec.y + dy, spec.z + dz));
+        }
+      }
+      const l = Math.max(0, Math.min(15, packed)) / 15;
       // Lightmap curve (core/lightmap.fsh): b = l / (4 - 3l), clamped to a small ambient floor.
       const b = Math.max(0.05, l / (4 - 3 * l));
       this.pool.r[idx] *= b;

@@ -171,6 +171,8 @@ export abstract class AbstractContainerScreen extends Screen {
   protected menu: ContainerMenuLike;
   protected hoveredSlot = -1;
   private containerDragButton = -1;
+  /** Slot the current press started on (used to place a stack on release). */
+  private pressedSlot = -1;
   private dragStartSlot = -1;
   private dragMoved = false;
   private doubleClick = false;
@@ -338,6 +340,7 @@ export abstract class AbstractContainerScreen extends Screen {
   // ------------------------------------------------------------- input
   private cancelDrag(): void {
     this.containerDragButton = -1;
+    this.pressedSlot = -1;
     this.quickCraftSlots.clear();
     this.doubleClick = false;
   }
@@ -376,6 +379,7 @@ export abstract class AbstractContainerScreen extends Screen {
       const shift = (this.env.mods & 1) !== 0;
       const now = performance.now();
       this.cancelDrag();
+      this.pressedSlot = idx;
       this.doubleClick = button === 0 && !shift && idx >= 0 && idx === this.lastClickSlot
         && button === this.lastClickButton && now - this.lastClickTime < 250;
       this.lastClickSlot = idx;
@@ -401,6 +405,17 @@ export abstract class AbstractContainerScreen extends Screen {
       this.addQuickCraftSlot(idx);
       return true;
     }
+    // Press on one slot, release on another: vanilla turns that into a one-slot quick-craft,
+    // which ends with the carried stack placed in the slot under the cursor. Without this the
+    // stack stayed glued to the pointer until the next click ("放下物品后指针上还悬浮物品").
+    if (action === 'up' && this.containerDragButton < 0 && this.pressedSlot >= 0
+        && idx !== this.pressedSlot && this.menu.getCarried()) {
+      const target = idx >= 0 ? idx : this.hasClickedOutside(mx, my) ? -999 : -1;
+      if (target !== -1) this.menu.click(target, button, false, 'PICKUP');
+      this.pressedSlot = -1;
+      return true;
+    }
+    if (action === 'up') this.pressedSlot = -1;
     if (action === 'up' && this.containerDragButton >= 0) {
       if (button !== this.containerDragButton) { this.cancelDrag(); return true; }
       // Double-click with a carried stack collects every matching stack from the inventory

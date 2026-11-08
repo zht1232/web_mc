@@ -49,6 +49,10 @@ export interface WorldListProvider {
   create(options: CreateWorldOptions): Promise<WorldSummary>;
   delete(id: string): Promise<void>;
   load?(id: string): Promise<void>;
+  /** Serialises a world to a downloadable archive (local backup). */
+  exportWorld?(id: string): Promise<Uint8Array>;
+  /** Imports an archive produced by exportWorld(); resolves with the new world id. */
+  importWorld?(data: ArrayBuffer): Promise<string>;
 }
 
 export interface CreateWorldOptions {

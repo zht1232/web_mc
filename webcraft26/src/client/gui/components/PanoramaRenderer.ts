@@ -1,17 +1,18 @@
 // Port of net.minecraft.client.renderer.Panorama / CubeMap and the
 // TitleScreen#extractPanorama path (26.2).
 //
-// This resource pack ships the six textures/gui/title/background/panorama_N.png
-// as 1x1 colour placeholders (no real cube-map photography is present), so the
-// renderer samples each face colour, builds a seamless 6-face horizontal
-// gradient and slowly rotates it, then applies the vanilla blur + fade-in and
-// the panorama_overlay vignette. All colours come from the original textures.
+// The six faces are real 1024x1024 panorama photos in this pack. Rendering them as a blurred
+// colour gradient (the old behaviour) made the title background look empty and the moving
+// gradient stops shimmered; instead the four side faces are drawn as a slowly panning strip,
+// which is the flat-screen equivalent of vanilla's rotating cube map.
 
 import type { GuiGraphics } from '../GuiGraphics.js';
 import type { GuiTextures } from '../Hud.js';
 
 const FACE_COUNT = 6;
-const PANORAMA_SPIN_SPEED = 0.0015; // radians per second (vanilla slow spin)
+/** The four horizontal faces; 4/5 are top/bottom and only matter with a real cube map. */
+const SIDE_FACES = 4;
+const PANORAMA_SPIN_SPEED = 0.035; // rad/s (~2 deg/s, vanilla Panorama#tick)
 
 export class PanoramaRenderer {
   private faces: HTMLImageElement[] = [];
@@ -78,32 +79,55 @@ export class PanoramaRenderer {
   }
 
   render(g: GuiGraphics, width: number, height: number, alpha = 1): void {
-    this.sample();
     const ctx = g.ctx;
-    const n = Math.max(1, this.colors.length);
-    // Rotation offset in [0,1) across the whole 6-face loop.
-    const shift = ((this.angle / (Math.PI * 2)) % 1 + 1) % 1;
-    const grad = ctx.createLinearGradient(0, 0, width, 0);
-    // Sample the rotating 6-face band at fixed positions so the strip is
-    // always continuous and the ends are covered (blur hides the banding).
-    const STEPS = 24;
-    for (let s = 0; s <= STEPS; s++) {
-      const t = s / STEPS;
-      const pos = (((t + shift) % 1) + 1) % 1 * n;
-      grad.addColorStop(t, this.colors[Math.floor(pos) % n]);
-    }
-    const prevFilter = ctx.filter;
     const prevAlpha = ctx.globalAlpha;
-    ctx.filter = 'blur(4px)';
-    ctx.globalAlpha = alpha * this.fadeAlpha();
-    ctx.fillStyle = grad;
-    ctx.fillRect(-8, -8, width + 16, height + 16);
-    ctx.filter = prevFilter;
-    ctx.globalAlpha = prevAlpha;
+    const prevSmoothing = ctx.imageSmoothingEnabled;
+    const prevFilter = ctx.filter;
+    ctx.filter = 'none';
+    ctx.imageSmoothingEnabled = true;
+    const fade = this.fadeAlpha();
 
-    // Vanilla darkens the panorama before drawing the menu (0x60000000-ish).
-    g.fill(0, 0, width, height, 0x60000000);
-    if (this.overlay) {
+    const sides = this.faces.slice(0, SIDE_FACES);
+    if (sides.length === 0) {
+      // Assets not decoded yet: a flat sky colour beats a black screen.
+      this.sample();
+      ctx.globalAlpha = alpha * fade;
+      ctx.fillStyle = '#3a5a7a';
+      ctx.fillRect(0, 0, width, height);
+      ctx.globalAlpha = prevAlpha;
+      ctx.imageSmoothingEnabled = prevSmoothing;
+      return;
+    }
+
+    // One face per 90 degrees of yaw; the strip is 50% wider than the screen so panning
+    // never exposes an edge.
+    const stripW = width * 1.5;
+    const faceW = stripW / sides.length;
+    const shift = ((this.angle / (Math.PI / 2)) % 1 + 1) % 1;
+    const offset = -shift * faceW + (width - stripW) / 2;
+
+    ctx.globalAlpha = alpha * fade;
+    for (let i = -1; i <= sides.length; i++) {
+      const img = sides[((i % sides.length) + sides.length) % sides.length];
+      const dx = Math.round(offset + i * faceW);
+      if (dx > width || dx + faceW < 0) continue;
+      // Cover-fit the square face into the slice, keeping the horizon near the middle.
+      const scale = Math.max((faceW + 1) / img.width, height / img.height);
+      const sw = Math.min(img.width, (faceW + 1) / scale);
+      const sh = Math.min(img.height, height / scale);
+      const sx = (img.width - sw) / 2;
+      const sy = (img.height - sh) * 0.42;
+      ctx.drawImage(img, sx, sy, sw, sh, dx, 0, faceW + 1, height);
+    }
+    ctx.globalAlpha = prevAlpha;
+    ctx.imageSmoothingEnabled = prevSmoothing;
+    ctx.filter = prevFilter;
+
+    // Vanilla darkens the panorama under the menu (GuiGraphics#drawTitleBackground).
+    // Light shading only: the panorama photos are already menu-friendly and the old 31% black
+    // overlay made the background read as empty.
+    g.fill(0, 0, width, height, 0x2a000000);
+    if (this.overlay && this.overlay.width > 8) {
       const a = g.getAlpha();
       g.setAlpha(a * 0.5);
       g.blitFull('gui/title/background/panorama_overlay', 0, 0, width, height);

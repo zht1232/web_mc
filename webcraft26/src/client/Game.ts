@@ -174,6 +174,7 @@ export class Game {
   /** Recent chat/system lines, newest last (vanilla keeps 100). */
   private readonly chatLines: { text: string; time: number }[] = [];
   private fpsTimer = 0;
+  private chunksAppliedThisFrame = 0;
   private fps = 0;
   private tickCount = 0;
 
@@ -328,14 +329,18 @@ export class Game {
     this.renderer.shaderQuality = this.options.shaderQuality;
     await this.renderer.init();
 
-    this.onStatus?.('Finding spawn point', 0.68);
-    // Pick the spawn column BEFORE generating terrain: the generator can answer "what is the surface
-    // height here" without building a chunk, so searching hundreds of blocks costs ~100 ms and the
-    // loading screen only ever generates chunks around the real spawn.
-    this.spawnSpot = this.findSpawnSpot();
+    // Vanilla does not create a level for the title screen: the world is generated only once the
+    // player enters one. `?play` / `?world=` boots straight into a world (tests, world selection).
+    if (this.bootPlay) {
+      this.onStatus?.('Finding spawn point', 0.68);
+      // Pick the spawn column BEFORE generating terrain: the generator can answer "what is the
+      // surface height here" without building a chunk, so searching hundreds of blocks costs
+      // ~100 ms and the loading screen only ever generates chunks around the real spawn.
+      this.spawnSpot = this.findSpawnSpot();
 
-    this.onStatus?.('Generating terrain', 0.7);
-    await this.generateSpawnArea();
+      this.onStatus?.('Generating terrain', 0.7);
+      await this.generateSpawnArea();
+    }
 
     this.onStatus?.('Rendering item icons', 0.9);
     this.icons = new ItemIconAtlas(this.gl, this.mc, this.models, this.textures);
@@ -515,6 +520,8 @@ export class Game {
     const save = this.saveManager;
     return {
       list: () => (save ? save.list() : Promise.resolve([])),
+      exportWorld: (id) => (save ? save.exportWorld(id) : Promise.reject(new Error('no persistence'))),
+      importWorld: (data) => (save ? save.importWorld(data) : Promise.reject(new Error('no persistence'))),
       create: (options) => (save ? save.create(options) : Promise.reject(new Error('no persistence'))),
       delete: (id) => (save ? save.delete(id) : Promise.resolve()),
       load: async (id) => {
@@ -898,7 +905,11 @@ export class Game {
             if (carried.isEmpty()) active.setCarried(stack);
             else if (ItemStack.isSameItemSameComponents(carried, stack)) {
               carried.setCount(Math.max(0, Math.min(max, carried.getCount() + (button === 1 ? -1 : 1))));
-            } else active.setCarried(ItemStack.EMPTY);
+            } else {
+              // Creative: clicking a different item replaces what you are carrying instead of
+              // silently emptying the cursor.
+              active.setCarried(stack);
+            }
           }
           return;
         }
@@ -960,6 +971,12 @@ export class Game {
         minY: this.level.minY,
         height: this.level.height,
       });
+
+      // Title-screen boot: open the store so the world list has a provider, but do not touch any
+      // save. The previous version restored the newest world (and created one on first run)
+      // before the player had chosen anything, which also meant the list always showed a world
+      // the player never created.
+      if (!this.bootPlay) return;
 
       const worlds = await this.saveManager.list();
       // ?world=<id> wins (world selection / after Create World); otherwise resume the newest world.
@@ -1623,6 +1640,8 @@ export class Game {
   private respawnPlayer(): void {
     this.survival.respawn();
     this.spawnPlayer();
+    // A respawn is a teleport: the previous frame's depth/colour history would smear.
+    this.renderer.post.invalidateHistory();
     this.playerFireTicks = 0;
     this.keys.clear();
     // The entity manager holds a PlayerTarget proxy that points at the old Player instance.
@@ -1999,7 +2018,9 @@ export class Game {
     // keep the ring of chunks around the player loaded; generation happens on the workers and
     // finished chunks are applied here under a time budget
     this.ensureChunksAround();
-    this.chunkProvider.drain(this.level, 6);
+    // Applying a generated chunk (palette decode + full relight) is ~10 ms of main thread, so
+    // remember whether this frame already paid it and shrink the mesh budget accordingly.
+    this.chunksAppliedThisFrame = this.chunkProvider.drain(this.level, 3);
     // ...and drop the chunks that fell out of the retention band behind us (vanilla
     // ClientChunkCache), so a long trip does not keep the whole visited world in memory
     this.unloadFarChunks();
@@ -2185,7 +2206,7 @@ export class Game {
     this.renderer.beginScene();
 
     // chunks are rebuilt lazily; do it before drawing
-    this.renderer.update(this.level, camera.x, camera.z, 6);
+    this.renderer.update(this.level, camera.x, camera.z, this.chunksAppliedThisFrame > 0 ? 3 : 6, camera.y);
 
     // Sky / clouds replace LevelRenderer.renderSky(): the old pass is NOT called any more, so the
     // sky is drawn exactly once. They use the matrices of the previous frame (renderer.render()

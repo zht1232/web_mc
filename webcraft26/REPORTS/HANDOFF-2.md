@@ -369,3 +369,101 @@ test-gui 90/90 · test-hud 123/123 · test-containers ALL PASS · test-menu ALL 
    生成点桥）、沙漠/针叶林变体。
 3. 区块 apply 尖峰（§9.5-3）：worker 化或增量光照。
 4. 更多结构：沙漠神殿/沉船/废弃传送门（RandomSpreadPlacement 直接复用）。
+
+---
+
+# 11. 第六轮（2026-11-13 ~ 11-15，未提交批次 + 待办问题清单）
+
+> 仓库位置注意：2026-11-15 项目被归档到 `D:\G-Archive\web_mc`（原来在
+> `G:\web_mc`）。git 仓库根是 `D:\G-Archive\web_mc`，子目录 `webcraft26/` 是客户端。
+> 本轮提交时工作区还包含大量**未跟踪的临时探针脚本**（`.tmp-*` / `scripts/_*`）与
+> 构建产物 `dist/`，按既有约定不提交；Mojang 素材 `public/mc/**` 的改动也不入库。
+
+## 11.1 分支
+
+- `feature/webgpu-renderer` 已从 `main` 的 `99e10247` 创建，**未切换**，指向当前 HEAD。
+  WebGPU 迁移留到该分支单独做（建议先加 `RenderBackend` 抽象，再逐 pass 迁移）。
+
+## 11.2 OpusMC 调研结论（用户提问）
+
+- 线上最新版：`https://www.bilibilitoy.com/toy/OpusMC/47455601425408-v47877/index.html`
+  （B 站 `bilibili.com/toy/OpusMC` 的 iframe 实际地址），比本地 `G:\opusmc-ref`
+  的 11-08 副本新：`render.js` 1767 → 1950 行，新增 `modapi.js` / `render2.js` /
+  `vmodels.js` / `shaders.js` 等。
+- **没有混淆**：99 个独立 `<script src="js/*.js">`，未打包；`class Renderer` /
+  `class FramePacer` / `class VertexArena` / `Renderer.prototype.playerPreview` /
+  `Game.prototype.perfReport` / `function swimLimbs` 等语义化命名；
+  `render.js` 279 行注释、`game.js` 549 行注释（含中文）；
+  `sourceMappingURL` / `eval(` / `_0x` / `atob(` / `fromCharCode` / webpack 运行时
+  全部为 0。局部变量大量单字母（avg_ident≈2.4）是手写紧凑风格，不是混淆。
+- **仍是 WebGL2**（`#version 300 es`、`getContext('webgl2')`），**不是 WebGPU**。
+- 流畅的真正来源（已据此改造，见 §11.3）：
+  - `perf.js` 的 `FramePacer.budget()`：`clamp((T - rest - max(1,T*0.15)) * backoff,
+    0.5, 12)`，用主线程非区块开销的 EMA 动态算区块预算 + 迟到帧 backoff；
+  - 动态分辨率（升档后两个窗口不快 7% 就回退）、AFK 限帧；
+  - draw call 合批（约 3830 → 1870/帧，render 0.72 → 0.33 ms）、共享 VAO / 矩阵池、
+    洞穴 flood-fill 剔除、`chunk_worker.js` / `gen_worker.js`；
+  - **后处理链极轻**（只有轻量 bloom），没有 TAA / SSAO / FXAA / 两级级联阴影。
+    这正是它「没有渲染问题」的一大原因，而不是 API 更先进。
+
+## 11.3 本轮已落地的修复（编译通过 `tsc --noEmit`；部分未经实拍验证）
+
+| # | 问题 | 根因 | 改动 |
+|---|---|---|---|
+| 1 | 加载页 | 黑底细条 | `main.ts` / `style.css`：Mojang 红 `#ef3239` + 白 logo + 原版细进度条 + 百分比，横屏/竖屏 media query + `dvh` + safe-area |
+| 2 | 转视角卡顿 | pointermove 事件里直接改 yaw，500–1000Hz 与 rAF 竞争 | `Game.ts`：`pendingLookX/Y` 累积，`applyPendingLook()` 每帧消费一次（MouseHandler#turnPlayer 语义） |
+| 3 | ESC 暂停抽搐 | 暂停后 `tick()` 空转但 `accum` 仍推进，`partial` 在 0..1 循环，相机在两个冻结位置间来回插值；`level.time+partial` 也每帧变 | `Game.ts`：暂停/标题时 `accum=0`、`render(partial=1)`、丢弃 catch-up 积压 |
+| 4 | 全屏浅灰噪点/细线闪烁 | `PostShaders` 的 dither 用了每帧变化的 `uTime` | `PostShaders.ts`：改静态 `hash12(floor(vUV*uResolution))`，幅度 1/255 |
+| 5 | 方块边缘影子闪烁 | TAA 在相机静止时仍每帧 Halton jitter | `PostProcessor.advanceJitter(cameraMoved)` + `LevelRenderer` 比较上一帧相机，静止时冻结 jitter |
+| 6 | 光照不平滑 | 16×16 lightmap 用 NEAREST，把插值后的顶点光量化成 16 级硬台阶 | `TextureManager.ts`：lightmap 改 `gl.LINEAR`（原版 LightTexture 行为） |
+| 7 | 营火烟雾未像素化 | 粒子 atlas 用 LINEAR，且用 8×8 `generic_*` 拉伸成模糊十字 | `ParticleSprites.ts` 改 NEAREST；`Particle.ts` 新增 `CAMPFIRE_SMOKE` 用 16×16 `campfire_cosy_smoke`(big_smoke_0..11)；`AmbientParticles.ts` 营火分支改用它 |
+| 8 | 挖掘裂缝泛白 | destroy_stage 贴图是白底(alpha≈0)+深灰裂纹，用 SRC_ALPHA 混合把半透明白边合成成白雾 | `BreakingOverlay.ts`：alphaTest 0.1→0.5、关 blend 改 cutout、polygonOffset、`uColor` 略压暗 |
+| 9 | 配方书 UI 不像原版 | 纯灰面板 + 黑搜索条 + 英文 "Recipe Book" 占位实现 | `RecipeBookComponent.ts` 重写：`gui/recipe_book.png` 147×166 真实面板 + 5 个 tab sprite + 中文搜索 hint + slot 精灵 + 翻页箭头/页码；`ScreenManager` 预载贴图、`GuiSpriteAtlas` 补 16 个 sprite |
+| 10 | Steve 离屏预览 | 黑底、正面近距离、比例过大 | `EntityRenderDispatcher.ts`：FBO 清成不透明 `#c6c6c6`（原版 GUI 灰）、3/4 视角(-0.52rad)+鼠标跟随、略微俯视、dist 3.95→4.55 |
+| 11 | 标题背景拼接缝 + 卡顿 | 每帧把 4 张 1024² 各自 cover-fit 绘制，硬拼必然竖缝 | `PanoramaRenderer.ts` 重写：一次性预合成 4 面长条 + 逐列线性 cross-fade(40px)，每帧只 1–2 次 drawImage |
+| 12 | 存档加载慢 | `restoreWorld` 对每个存档区块调 `addChunk` → `lightChunk` 全量重算（~6ms/块），而存档本身已含 BlockLight/SkyLight | `ClientLevel.addChunksBulk()` 批量直接放入 + 统一标脏；`Game.restoreWorld` 改用它并打日志 |
+| 13 | 退出游戏瞬间黑线 | 标题界面下仍渲染整套 3D 世界，半透明全景覆盖 + 旧 TAA/HDR 历史 | `Game.render()` 加 `titleMode` 早退：清 GL 成纯色 + `invalidateHistory()` + 只画 GUI（原版标题界面没有 level） |
+| 14 | 物品栏方块「像素化」 | `ItemIconAtlas.CELL=16` 固定烘焙，再按 guiScale=3 硬放大成 3×3 像素块；之前把 CELL 从 48 改 16 修「灰裂痕」是修错方向 | `ItemIconAtlas.ts`：按 `guiScale` 烘焙（16×scale，≤64），40×40=1600 格覆盖 1537 物品，`build(scale)` 幂等、`Game.resize()` 重建；另修白亮边：alphaTest 0.02→0.5、`blendFuncSeparate`、readback 反预乘 |
+| 15 | 帧预算 | 硬编码 mesh 预算 3/6ms，不看上一帧实际开销 | 新增 `src/client/FramePacer.ts`（OpusMC `budget()` 移植）；`Game.ts` 接进 frame 循环，测量 drain+mesh 耗时，动态预算 + backoff |
+
+实拍验证：图标修复后 `guiScale=3`、`iconCanvas=1920`、无 console error，
+`shots/diag/icons-hotbar.png` 中木板/草方块细节清晰、白边消失。
+**其余 14 项多数只做了 `tsc` 编译验证，未逐项截图回归**（时间被打断）。
+
+## 11.4 用户最新一轮明确「先别修」的问题（2026-11-15，务必带上）
+
+1. **初次打开网页进入游戏慢**，怀疑是启动时预载存档。目标 **~1 秒**。
+   - 存档位置：**浏览器 IndexedDB**，库名 `webcraft26` version 1
+     （`SaveDatabase.openIDB(name='webcraft26', version=1)`），object stores：
+     `worlds` / `chunks` / `players` / `regions`。不是磁盘文件；清站点数据即丢档。
+   - 另有「导出/导入存档」为 `.mcworld` 文件（`SelectWorldScreen`）。
+   - 待查：`Game.init()` 里 `?play` 分支的 `findSpawnSpot()` + `generateSpawnArea()`
+     （同步等 25 区块）、`initSave()` 的 `loadWorld()` 全量读取、图标 atlas
+     `build()` 的 1920² readPixels 反预乘循环、字体/纹理预载。
+2. **帧率低**：自然环境、开关光影、移动时都约 **25 FPS**，目标 **100 FPS 以上**。
+   - 注意：OpusMC 同机可流畅，说明瓶颈在我们自己的后处理链/主线程，
+     不在 WebGL2 API。优先剖析 TAA/SSAO/bloom/FXAA 全链路 GPU 时间、
+     region 合批 draw 数、区块 apply/mesh 尖峰、以及 `FramePacer` 是否反而
+     把预算压得过低。
+3. **Mojang 加载页**：`mojangstudios.png` 是**竖排堆叠**的（MOJ / STUI / ANG / DIOS 四行），
+   用户要求**横排一行**；加载进度条要在 **logo 正下方**且**大得多**（当前是贴屏幕底部的
+   6px 细条）。参考图：纯红底、白色横排 MOJANG STUDIOS、下方宽进度条 + 状态文字/百分比。
+4. **物品栏中方块色彩/光影与原版不一样**（不是像素化、不是白边，是色调/明暗）。
+   待查 `ItemIconAtlas` 的 `faceShade()` / `guiLight` front/side 判定、
+   `itemIconTint()` 固定默认色、以及图标 pass 是否缺 diffuse 光照。
+5. 用户澄清：**白边和数字不是问题**（不要再改数字位置/描边）；
+   **群系颜色可能是他看错了** —— 实测 `BiomeColors` 链路完全正常
+   （沙漠 `bfb755`、森林 `79c05a`、海洋 `8eb971`、恶地 `90814d`；
+   模型 quad `tint=0`；`tintSource → blockTint → generator.getBiome` 含 5×5 混合）。
+   物品栏手持图标用固定默认色是**原版正确行为**。此项标「疑似误判，不改」。
+6. 用户要求「要有质疑精神」：对本轮反馈中数据层能自证正常的部分先反证再动手。
+
+## 11.5 更早一轮遗留（第五批，状态沿用）
+
+- 雾边界/泛光白幕（`§10.3`，复现坐标默认种子 `(-9579,-6694)`）——未修。
+- 区块 apply 尖峰（p90≈30ms）——`FramePacer` 部分缓解，未根除。
+- 村民实体生成、屋顶山墙、更多结构（沙漠神殿/沉船）——未做。
+- 移动/跳跃手感：物理实测水平速度**未**被重置（`vz` 全程 0.2158），
+  已改帧循环与鼠标累积；若仍有手感问题需重新录帧分析。
+- 挖掘裂缝、ESC 抽搐、退出黑线、首页拼接、Steve 预览、配方书、存档加载、
+  烟雾、噪点、阴影闪烁——本轮已改代码但未逐项实拍确认，需回归。

@@ -679,10 +679,20 @@ export class LevelRenderer {
 
   // ---------------------------------------------------------------- drawing
 
+  /** Previous camera used only to detect a still view (TAA jitter freeze). */
+  private prevCameraForJitter: Camera | null = null;
+
   private updateMatrices(camera: Camera): void {
     mat4Perspective((camera.fov * Math.PI) / 180, camera.aspect, 0.05, 1024, this.proj);
     // TAA: sub-pixel projection jitter ([0,0] when disabled, keeping the Off path pixel identical).
-    const [jx, jy] = this.post.advanceJitter();
+    // Freeze the jitter while the view is still so thin edges and shadow boundaries do not crawl.
+    const prev = this.prevCameraForJitter;
+    const cameraMoved = !prev
+      || Math.abs(prev.x - camera.x) > 1e-4 || Math.abs(prev.y - camera.y) > 1e-4
+      || Math.abs(prev.z - camera.z) > 1e-4 || Math.abs(prev.yaw - camera.yaw) > 1e-3
+      || Math.abs(prev.pitch - camera.pitch) > 1e-3 || Math.abs(prev.fov - camera.fov) > 1e-3;
+    this.prevCameraForJitter = { ...camera };
+    const [jx, jy] = this.post.advanceJitter(cameraMoved);
     if (jx !== 0 || jy !== 0) {
       const w = this.gl.drawingBufferWidth || 1;
       const h = this.gl.drawingBufferHeight || 1;

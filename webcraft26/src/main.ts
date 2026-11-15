@@ -1,7 +1,10 @@
-// Entry point: boots the client, shows the vanilla-style loading overlay, then hands over to the game.
+// Entry point: boots the client behind the vanilla Mojang Studios loading screen.
 //
-// The overlay mirrors LoadingOverlay in 26.2: a black screen, the Mojang Studios logo centred, and
-// a thin progress bar at the bottom with a percentage on the right.
+// Sources (26.2): net.minecraft.client.gui.screens.LoadingOverlay /
+// net.minecraft.client.MojangStudiosLogo / net.minecraft.client.gui.screens.TitleScreen.
+// The Mojang splash is a flat red (#EF3239) background with the white MOJANG STUDIOS
+// wordmark centred, and LoadingOverlay's progress bar at the bottom: a hairline white
+// bordered track with a filled portion and a percentage on the right.
 
 import './client/style.css';
 import './client/touch/touch.css';
@@ -17,13 +20,17 @@ loading.innerHTML = `
   </div>
   <div class="loading-bottom">
     <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
-    <div class="loading-status" id="loading-status">正在启动…</div>
+    <div class="loading-row">
+      <div class="loading-status" id="loading-status">正在加载…</div>
+      <div class="loading-percent" id="loading-percent">0%</div>
+    </div>
   </div>
 `;
 app.appendChild(loading);
 
 const fill = loading.querySelector('#loading-fill') as HTMLDivElement;
 const status = loading.querySelector('#loading-status') as HTMLDivElement;
+const percent = loading.querySelector('#loading-percent') as HTMLDivElement;
 
 async function boot() {
   const params = new URLSearchParams(location.search);
@@ -32,7 +39,9 @@ async function boot() {
   const seed = params.get('seed') ?? undefined;
   const game = new Game(app, seed, workers);
   game.onStatus = (text, progress) => {
-    fill.style.width = `${Math.round(progress * 100)}%`;
+    const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+    fill.style.width = `${pct}%`;
+    percent.textContent = `${pct}%`;
     status.textContent = text;
   };
 
@@ -44,7 +53,7 @@ async function boot() {
     (window as unknown as { __mc: unknown }).__mc = game;
   } catch (err) {
     console.error(err);
-    status.textContent = `Load failed: ${(err as Error).message}`;
+    status.textContent = `加载失败: ${(err as Error).message}`;
     const detail = document.createElement('pre');
     detail.className = 'loading-error';
     detail.textContent = (err as Error).stack ?? '';

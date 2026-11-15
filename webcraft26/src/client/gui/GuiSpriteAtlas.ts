@@ -285,6 +285,14 @@ export const CORE_SPRITES = [
   'container/slot/helmet', 'container/slot/chestplate',
   'container/slot/leggings', 'container/slot/boots', 'container/slot/shield',
   'recipe_book/button', 'recipe_book/button_highlighted',
+  'recipe_book/tab', 'recipe_book/tab_selected',
+  'recipe_book/slot_craftable', 'recipe_book/slot_uncraftable',
+  'recipe_book/slot_many_craftable', 'recipe_book/slot_many_uncraftable',
+  'recipe_book/page_forward', 'recipe_book/page_backward',
+  'recipe_book/page_forward_highlighted', 'recipe_book/page_backward_highlighted',
+  'recipe_book/crafting_overlay', 'recipe_book/furnace_overlay',
+  'recipe_book/filter_enabled', 'recipe_book/filter_disabled',
+  'recipe_book/furnace_filter_enabled', 'recipe_book/furnace_filter_disabled',
   // Title-screen icon buttons (CommonButtons: language / accessibility / friends).
   'icon/language', 'icon/accessibility', 'icon/invite',
 ] as const;

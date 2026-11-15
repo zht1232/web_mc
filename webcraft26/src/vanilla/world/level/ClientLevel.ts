@@ -124,6 +124,23 @@ export class ClientLevel {
   }
 
   /**
+   * Bulk restore of saved chunks. ChunkSerializer persists both BlockLight and SkyLight, so
+   * re-running LightEngine.lightChunk() for every restored chunk is wasted work (~6 ms each,
+   * i.e. seconds for a few hundred chunks) and was the dominant cost of loading a save.
+   * addChunk() also marks all 8 neighbours dirty per chunk (O(8N) map lookups); here we mark
+   * the whole restored set once at the end.
+   */
+  addChunksBulk(chunks: Iterable<LevelChunk>): number {
+    let count = 0;
+    for (const chunk of chunks) {
+      this.chunks.set(chunkKey(chunk.x, chunk.z), chunk);
+      chunk.dirty = true;
+      count++;
+    }
+    return count;
+  }
+
+  /**
    * A chunk that just arrived changes what the border faces of its 8 neighbours should look like
    * (water/leaf walls, ambient occlusion, smooth light), so they must remesh (vanilla: LevelRenderer.onChunkLoaded).
    */

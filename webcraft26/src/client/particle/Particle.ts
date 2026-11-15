@@ -26,9 +26,10 @@ export enum ParticleType {
   COMPOSTER,
   SNOWFLAKE,
   DRIP,
+  CAMPFIRE_SMOKE,
 }
 
-export const PARTICLE_TYPE_COUNT = 19;
+export const PARTICLE_TYPE_COUNT = 20;
 
 export interface ParticleTypeInfo {
   name: string;
@@ -70,6 +71,10 @@ export const PARTICLE_TYPES: readonly ParticleTypeInfo[] = [
   { name: 'composter',     spriteKey: 'composter',       gravity: 0.5,  friction: 0.98, lifetime: 20, size: 0.10, speed: 0.10, color: [0.5, 0.9, 0.3], alpha: 1,    animated: false, blockAtlas: false, glow: true  }, // SuspendedTownParticle
   { name: 'snowflake',     spriteKey: 'snowflake',       gravity: 0.10, friction: 0.98, lifetime: 40, size: 0.08, speed: 0.02, color: [1, 1, 1],       alpha: 0.9, animated: false, blockAtlas: false, glow: true  }, // SnowflakeParticle
   { name: 'drip',          spriteKey: 'dripping_water',  gravity: 1.0,  friction: 0.98, lifetime: 30, size: 0.10, speed: 0.01, color: [0.5, 0.7, 1],   alpha: 1,    animated: false, blockAtlas: false, glow: false }, // DripParticle
+  // CampfireBlock.animateTick -> CAMPFIRE_COSY_SMOKE / CAMPFIRE_SIGNAL_SMOKE: big_smoke_0..11,
+  // a 16x16 PIXEL puff that rises slowly for 60+ ticks. The generic 8x8 "large_smoke" sprites
+  // (one lit texel) were being stretched into the blurry cross in the report.
+  { name: 'campfire_smoke', spriteKey: 'campfire_cosy_smoke', gravity: -0.02, friction: 0.98, lifetime: 70, size: 0.32, speed: 0.02, color: [0.62, 0.62, 0.62], alpha: 0.85, animated: true, blockAtlas: false, glow: false },
 ];
 
 export const DEFAULT_POOL_CAPACITY = 10000;

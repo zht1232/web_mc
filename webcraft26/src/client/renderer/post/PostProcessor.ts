@@ -171,9 +171,18 @@ export class PostProcessor {
     this.cameraReady = true;
   }
 
-  /** Sub-pixel projection offset in pixels for this frame ([0,0] when TAA is off). */
-  advanceJitter(): readonly [number, number] {
-    if (!this.taaEnabled) return [0, 0];
+  /**
+   * Sub-pixel projection offset in pixels for this frame ([0,0] when TAA is off).
+   * `cameraMoved === false` freezes the jitter: with a still camera, re-jittering every frame
+   * makes thin geometry (grass, leaves, block edges, shadow boundaries) crawl and shimmer even
+   * though nothing in the world changed. Vanilla/OpusMC only accumulate new samples while the
+   * view actually moves. OpusMC-style frame pacing relies on this to keep a static scene stable.
+   */
+  advanceJitter(cameraMoved = true): readonly [number, number] {
+    if (!this.taaEnabled || !cameraMoved) {
+      if (!cameraMoved) this.jitterIndex = 0;
+      return [0, 0];
+    }
     const j = PostProcessor.JITTER[this.jitterIndex % PostProcessor.JITTER.length];
     this.jitterIndex++;
     // Halton values are in (0,1); centre them around 0.

@@ -63,7 +63,10 @@ export class TextureManager {
     this.itemNames.forEach((n, i) => this.itemLayer.set(n, i));
     this.animations = blockMeta.animated ?? {};
 
-    this.lightmap = createTexture2D(gl, 16, 16, this.lightmapData, gl.NEAREST);
+    // Vanilla LightTexture uses GL_LINEAR on the 16x16 lightmap. NEAREST quantises the
+    // interpolated per-vertex light back to 16 hard steps, which is what made the
+    // "shader lighting not smooth" banding visible on large flat faces.
+    this.lightmap = createTexture2D(gl, 16, 16, this.lightmapData, gl.LINEAR);
   }
 
   /** Loads a loose PNG once (celestial bodies, clouds, GUI). */

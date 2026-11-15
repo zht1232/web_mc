@@ -9,6 +9,7 @@ import { ModelSource } from './renderer/model/ModelSource.js';
 import { TextureManager } from './renderer/TextureManager.js';
 import { BiomeColors } from './renderer/BiomeColors.js';
 import { LevelRenderer, type Camera } from './renderer/LevelRenderer.js';
+import { FramePacer } from './FramePacer.js';
 import { LevelChunk as Chunk } from '../vanilla/world/level/chunk/LevelChunk.js';
 import { buildLightmap, computeSkyState, DAY_PERIOD, type SkyState } from './EnvironmentLighting.js';
 import { FontRenderer } from './gui/FontRenderer.js';
@@ -195,6 +196,13 @@ export class Game {
 
   private keys = new Set<string>();
   private mouseLocked = false;
+  /** OpusMC-style frame pacer: measured, adaptive chunk/mesh budget. */
+  private readonly pacer = new FramePacer();
+  private frameChunkBudget = 6;
+  private frameChunkMs = 0;
+  /** MouseHandler.accumulatedDX/DY: applied once per frame, not per pointermove event. */
+  private pendingLookX = 0;
+  private pendingLookY = 0;
   private lastJumpPress = 0;
   private lastWPress = 0;
   private sprintTap = false;
@@ -345,7 +353,9 @@ export class Game {
     this.onStatus?.('Rendering item icons', 0.9);
     this.icons = new ItemIconAtlas(this.gl, this.mc, this.models, this.textures);
     await this.icons.loadModels('/mc');
-    this.icons.build();
+    // Bake at the device's GUI scale so a 3x HUD gets 48x48 icons instead of a 16x16
+    // texture stretched into chunky blocks.
+    this.icons.build(this.guiScale);
 
     // Survival facade: owns health/hunger/XP, the recipe+loot tables and the player inventory.
     this.onStatus?.('Loading survival data', 0.9);
@@ -1021,13 +1031,18 @@ export class Game {
 
   /** Replaces generated chunks with the saved ones and restores player/level state. */
   private restoreWorld(loaded: LoadedWorld): void {
+    const started = performance.now();
+    const decoded: LevelChunk[] = [];
     for (const bytes of loaded.chunks.values()) {
       try {
-        this.level.addChunk(ChunkSerializer.fromBytes(bytes, this.mc, this.chunkCodec));
+        decoded.push(ChunkSerializer.fromBytes(bytes, this.mc, this.chunkCodec));
       } catch (err) {
         console.warn('[save] unreadable chunk:', err);
       }
     }
+    // Saved chunks already carry their light data; skip the per-chunk full relight.
+    const count = this.level.addChunksBulk(decoded);
+    console.log(`[save] restored ${count} chunks in ${Math.round(performance.now() - started)} ms`);
 
     if (loaded.player) {
       PlayerData.applyToPlayer(loaded.player, this.player);
@@ -1126,9 +1141,9 @@ export class Game {
         return;
       }
       if (!this.mouseLocked) return;
-      const sens = 0.15 * (this.zooming ? 0.25 : 1);
-      this.player.yaw -= e.movementX * sens;
-      this.player.pitch = Math.max(-90, Math.min(90, this.player.pitch + e.movementY * sens));
+      // Vanilla MouseHandler accumulates deltas; turnPlayer() applies them once per frame.
+      this.pendingLookX += e.movementX;
+      this.pendingLookY += e.movementY;
     });
     document.addEventListener('wheel', (e) => {
       if (e.ctrlKey) e.preventDefault();
@@ -1841,6 +1856,13 @@ export class Game {
     if (!this.running) return;
     const dt = Math.min(100, now - this.lastFrame);
     this.lastFrame = now;
+    const frameStart = performance.now();
+    // OpusMC FramePacer: budget this frame's chunk/mesh work from the measured cost of the
+    // previous frame instead of a constant. This is the single biggest lever on movement
+    // smoothness (a hard-coded 6 ms budget could push a busy frame past the 16.7 ms deadline).
+    const chunkBudget = this.pacer.beginFrame(dt);
+    this.frameChunkBudget = chunkBudget;
+    this.frameChunkMs = 0;
 
     this.frames++;
     this.fpsTimer += dt;
@@ -1850,18 +1872,49 @@ export class Game {
       this.fpsTimer = 0;
     }
 
-    this.accum += dt;
-    let ticks = 0;
-    while (this.accum >= TICK_MS && ticks < 5) {
-      this.tick();
-      this.accum -= TICK_MS;
-      ticks++;
+    // Vanilla MouseHandler accumulates movementX/Y and MouseHandler#turnPlayer applies it
+    // ONCE per rendered frame. Writing yaw/pitch from every pointermove event (which can fire
+    // at 500-1000 Hz under pointer lock) made the camera race the rAF loop: some frames saw
+    // several deltas, some none, which reads as stutter while turning.
+    this.applyPendingLook();
+
+    // A paused/title world must not advance the fixed-step accumulator. Previously tick() bailed
+    // out but `accum` kept draining, so partial still cycled 0->1->0 while prevPos/pos were
+    // frozen: the camera oscillated between the last two positions (the "pause twitch" bug) and
+    // sky/lightmap were re-derived every frame from time+partial, making the whole scene shimmer.
+    const worldTicking = this.worldActive;
+    if (worldTicking) {
+      this.accum += dt;
+      let ticks = 0;
+      while (this.accum >= TICK_MS && ticks < 5) {
+        this.tick();
+        this.accum -= TICK_MS;
+        ticks++;
+      }
+      // If we hit the catch-up cap, drop the backlog instead of letting partial drift > 1.
+      if (this.accum >= TICK_MS) this.accum = TICK_MS - 0.001;
+    } else {
+      this.accum = 0;
     }
 
     this.syncTouchUi();
-    this.render(this.accum / TICK_MS);
+    this.render(worldTicking ? this.accum / TICK_MS : 1);
+    this.pacer.endFrame(performance.now() - frameStart, this.frameChunkMs);
     requestAnimationFrame(this.frame);
   };
+
+  /** MouseHandler#turnPlayer: consume the accumulated pointer delta once per frame. */
+  private applyPendingLook(): void {
+    if (this.pendingLookX === 0 && this.pendingLookY === 0) return;
+    const dx = this.pendingLookX;
+    const dy = this.pendingLookY;
+    this.pendingLookX = 0;
+    this.pendingLookY = 0;
+    if (this.screens.current || !this.worldActive) return;
+    const sens = 0.15 * (this.zooming ? 0.25 : 1);
+    this.player.yaw -= dx * sens;
+    this.player.pitch = Math.max(-90, Math.min(90, this.player.pitch + dy * sens));
+  }
 
   private daylightCycle = true;
 
@@ -2022,9 +2075,11 @@ export class Game {
     // keep the ring of chunks around the player loaded; generation happens on the workers and
     // finished chunks are applied here under a time budget
     this.ensureChunksAround();
-    // Applying a generated chunk (palette decode + full relight) is ~10 ms of main thread, so
-    // remember whether this frame already paid it and shrink the mesh budget accordingly.
+    // Applying a generated chunk (palette decode + full relight) is ~6-10 ms of main thread.
+    // Measure it and charge it to the pacer; the mesh budget below is whatever is LEFT.
+    const drainStart = performance.now();
     this.chunksAppliedThisFrame = this.chunkProvider.drain(this.level, 1);
+    this.frameChunkMs += performance.now() - drainStart;
     // ...and drop the chunks that fell out of the retention band behind us (vanilla
     // ClientChunkCache), so a long trip does not keep the whole visited world in memory
     this.unloadFarChunks();
@@ -2141,6 +2196,9 @@ export class Game {
     this.guiCanvas.style.height = `${h}px`;
     // resizing the backing store resets 2D context state
     this.guiCtx.imageSmoothingEnabled = false;
+    // GUI scale can change with the viewport (or when moving between DPI screens): re-bake
+    // item icons at the new physical slot size so they are never nearest-upscaled blobs.
+    this.icons?.build(this.guiScale);
     this.gl.viewport(0, 0, this.glCanvas.width, this.glCanvas.height);
     this.renderer?.resize(this.glCanvas.width, this.glCanvas.height);
     this.screens?.resize(w, h);
@@ -2157,6 +2215,20 @@ export class Game {
 
   private render(partial: number): void {
     const gl = this.gl;
+    // Vanilla has NO level while the title screen owns the client: the panorama is drawn over
+    // a solid colour, not over a live 3D scene. Rendering the world behind a semi-transparent
+    // title overlay produced a one-frame black line on quit (stale HDR/TAA history) and made
+    // the menu background shimmer. Skip the whole 3D chain but keep clearing the GL canvas.
+    if (this.titleMode) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.glCanvas.width, this.glCanvas.height);
+      gl.disable(gl.SCISSOR_TEST);
+      gl.clearColor(0.08, 0.09, 0.12, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      this.renderer.post.invalidateHistory();
+      this.screens.render(partial);
+      return;
+    }
     // Time of day timeline (Timelines.OVERWORLD_DAY) + weather attribute layers +
     // per-biome visual attributes. `options.brightness` is the vanilla gamma slider
     // (LightmapRenderStateExtractor.java:68 -> core/lightmap.fsh BrightnessFactor).
@@ -2210,7 +2282,12 @@ export class Game {
     this.renderer.beginScene();
 
     // chunks are rebuilt lazily; do it before drawing
-    this.renderer.update(this.level, camera.x, camera.z, this.chunksAppliedThisFrame > 0 ? 3 : 6, camera.y);
+    // OpusMC frame pacing: spend only the measured spare time on meshing. When a chunk was just
+    // applied, drain() already consumed part of the budget, so subtract it instead of guessing.
+    const meshBudget = Math.max(0.6, this.frameChunkBudget - this.frameChunkMs);
+    const meshStart = performance.now();
+    this.renderer.update(this.level, camera.x, camera.z, meshBudget, camera.y);
+    this.frameChunkMs += performance.now() - meshStart;
 
     // Sky / clouds replace LevelRenderer.renderSky(): the old pass is NOT called any more, so the
     // sky is drawn exactly once. They use the matrices of the previous frame (renderer.render()

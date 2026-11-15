@@ -259,30 +259,37 @@ export class EntityRenderDispatcher {
       this.previewH = h;
     }
 
-    // Camera: orbit around the entity at ~35 deg, looking slightly down at chest height.
+    // InventoryScreen#extractEntityInInventoryFollowsMouse(x0,y0,x1,y1, 30, 0.0625, mouseX, mouseY):
+    // the figure is a 3/4 view (vanilla applies ~30 deg of body yaw plus the mouse delta), seen
+    // slightly from above, and fills about 70% of the 49x70 box. A straight-on, head-cropped
+    // close-up is what made the preview look unlike vanilla.
     const cx = entity.x;
     const cy = entity.y;
     const cz = entity.z;
-    const targetY = cy + 0.88;
-    // The whole 1.8 block figure must fit: visible height = 2*d*tan(fov/2).
-    const dist = 3.95;
-    const camX = cx + Math.sin(yawRad) * dist;
-    const camZ = cz + Math.cos(yawRad) * dist;
-    const camY = targetY + 0.30;
+    const targetY = cy + 0.95;
+    const dist = 4.55;
+    const bodyYaw = -0.52 + yawRad; // ~30 deg three-quarter view + mouse follow
+    const camX = cx + Math.sin(bodyYaw) * dist;
+    const camZ = cz + Math.cos(bodyYaw) * dist;
+    const camY = targetY + 0.42; // look down a little, like the vanilla inventory camera
     lookAt(this.previewView, camX, camY, camZ, cx, targetY, cz);
     perspective(this.previewProj, (30 * Math.PI) / 180, w / h, 0.05, 16);
     mul4(this.previewVp, this.previewProj, this.previewView);
 
     // Face the camera: body yaw points away from it (the model is rotated by 180 - bodyRot).
     const stub = entity as unknown as { yBodyRot: number; yHeadRot: number };
-    entity.yaw = (yawRad * 180) / Math.PI;
+    entity.yaw = (bodyYaw * 180) / Math.PI;
     stub.yBodyRot = entity.yaw;
     stub.yHeadRot = entity.yaw;
 
     const pixels = new Uint8Array(w * h * 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFbo);
     gl.viewport(0, 0, w, h);
-    gl.clearColor(0, 0, 0, 0);
+    // Vanilla InventoryScreen draws the player over the light-grey container panel; clearing
+    // to transparent black left an opaque black rectangle when the alpha channel had been
+    // masked by the previous pass. An opaque #c6c6c6 base matches the GUI and is stable.
+    gl.colorMask(true, true, true, true);
+    gl.clearColor(0xc6 / 255, 0xc6 / 255, 0xc6 / 255, 1);
     gl.depthMask(true);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     try {

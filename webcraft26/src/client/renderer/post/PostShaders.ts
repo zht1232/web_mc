@@ -198,9 +198,12 @@ void main() {
   float vignette = 1.0 - dot(d, d) * (1.0 - dot(color, LUMA));
   color *= vignette;
 
-  // final.glsl:161-162 - dither before the 8-bit write.
-  float dither = hash12(vUV * uResolution + uTime);
-  color += vec3((dither - 0.25) / 128.0);
+  // final.glsl:161-162 - dither before the 8-bit write. The noise MUST be a
+  // static function of the pixel coordinate: vanilla uses gl_FragCoord only.
+  // Feeding uTime (which changes every frame) made the whole screen shimmer
+  // with faint grey speckle/lines under TAA, the "global noise flicker" bug.
+  float dither = hash12(floor(vUV * uResolution));
+  color += vec3((dither - 0.5) / 255.0);
 
   fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }`;

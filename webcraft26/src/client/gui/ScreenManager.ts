@@ -48,7 +48,7 @@ const PRELOAD_TEXTURES = [
   'gui/menu_background', 'gui/inworld_menu_background',
   'gui/header_separator', 'gui/footer_separator',
   'gui/container/inventory', 'gui/container/crafting_table', 'gui/container/furnace',
-  'gui/container/generic_54',
+  'gui/container/generic_54', 'gui/recipe_book',
   'gui/container/creative_inventory/tab_items',
   'gui/container/creative_inventory/tab_inventory',
   'gui/container/creative_inventory/tab_item_search',

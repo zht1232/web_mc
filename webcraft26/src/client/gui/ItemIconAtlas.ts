@@ -19,12 +19,18 @@ export interface ItemModelEntry {
   parts?: { model: number; translation?: number[] }[];
 }
 
-// Vanilla bakes GUI item icons at the slot's own 16x16 resolution (GuiItemAtlas draws straight
-// into the slot framebuffer). Baking at 48 and blitting down to 16 with nearest-neighbour threw
-// away 2 of every 3 texels, which is what produced the grey "cracks" inside every block icon.
-const CELL = 16;
-const COLS = 40;
-const ATLAS = CELL * COLS;
+// Vanilla GuiItemAtlas renders each item into a framebuffer sized to the SLOT IN PHYSICAL
+// PIXELS: 16 logical px * guiScale. Baking at a fixed 16x16 and then drawing that into a
+// 16*guiScale box with imageSmoothingEnabled=false turns every texel into a 3x3 (or 4x4)
+// hard block - the "icons look like chunky pixelated cubes" report. The old fix (bake at 48,
+// nearest-downscale to 16) instead threw away 2 of every 3 texels and made grey "cracks".
+// Correct fix: bake at the device resolution and draw 1:1, with NEAREST only used for the
+// (integer) scale so no texels are lost or duplicated.
+const BASE_CELL = 16;
+/** 1537 items in this pack; a 40x40 grid (1600 cells) is the vanilla-sized atlas. */
+const DEFAULT_COLS = 40;
+/** Hard cap per atlas side so high GUI scales do not blow up VRAM. */
+const MAX_ATLAS = 4096;
 
 export class ItemIconAtlas {
   private readonly program: GlProgram;
@@ -33,6 +39,11 @@ export class ItemIconAtlas {
   private whiteLightmap: WebGLTexture;
   /** item index -> cell index */
   private cellOf = new Int32Array(0);
+  /** Physical pixels per atlas cell (16 * guiScale, clamped). */
+  private cellSize = BASE_CELL;
+  private atlasSize = BASE_CELL * DEFAULT_COLS;
+  private atlasCols = DEFAULT_COLS;
+  private builtScale = 0;
 
   constructor(
     private readonly gl: WebGL2RenderingContext,
@@ -58,9 +69,28 @@ export class ItemIconAtlas {
     this.itemModels = json.items;
   }
 
-  /** Draws every item once into the atlas. Call after loadModels(). */
-  build(): void {
+  /**
+   * Bakes every item once into the atlas, at the GUI's physical resolution. Re-bakes only when
+   * the scale changed (window resize / moving to a different-DPI screen / video settings).
+   */
+  build(guiScale = 1): number {
+    const scale = Math.max(1, Math.min(4, Math.round(guiScale)));
+    if (this.canvas && this.builtScale === scale) return scale;
+    this.builtScale = scale;
     const gl = this.gl;
+    const wantCell = Math.min(64, BASE_CELL * scale);
+    // Keep all ~1537 items: 40 columns x 40 rows. Only shrink the cell (not the cell count)
+    // if the atlas would exceed the GPU cap, so no item silently disappears at high DPI.
+    let cols = DEFAULT_COLS;
+    let cellPx = wantCell;
+    while (cols * cellPx > MAX_ATLAS && cellPx > BASE_CELL) cellPx = Math.max(BASE_CELL, cellPx >> 1);
+    if (cols * cellPx > MAX_ATLAS) cols = Math.floor(MAX_ATLAS / cellPx);
+    this.cellSize = cellPx;
+    this.atlasCols = cols;
+    this.atlasSize = cellPx * cols;
+    const ATLAS = this.atlasSize;
+    const CELL = this.cellSize;
+    const columns = cols;
     this.cellOf = new Int32Array(this.mc.items.length).fill(-1);
 
     const fb = gl.createFramebuffer()!;
@@ -105,7 +135,10 @@ export class ItemIconAtlas {
     this.program.set3f('uFogColor', 0, 0, 0);
     this.program.set3f('uCameraPos', 0, 0, 0);
     this.program.set3f('uChunkOrigin', 0, 0, 0);
-    this.program.set1f('uAlphaTest', 0.02);
+    // GUI item icons are CUTOUT (vanilla RenderType.cutout uses alpha test 0.5). A 0.02
+    // threshold let the near-white, near-transparent texels of cutout textures survive and
+    // blend into a bright rim around every block icon.
+    this.program.set1f('uAlphaTest', 0.5);
     this.program.set1f('uTranslucent', 0);
 
     // Block items: vanilla display.gui rotation [30, 225, 0] => eye-space basis
@@ -124,7 +157,9 @@ export class ItemIconAtlas {
 
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // Alpha must accumulate separately: with SRC_ALPHA on the alpha channel, overlapping
+    // semi-transparent geometry writes a*a and leaves a dark/white halo after readback.
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
 
@@ -154,9 +189,9 @@ export class ItemIconAtlas {
       const name = this.mc.items[itemId].name;
       const entry = this.itemModels[`minecraft:${name}`];
       if (!entry || entry.kind === 'none') continue;
-      if (cell >= COLS * COLS) break;
-      const cx = (cell % COLS) * CELL;
-      const cy = Math.floor(cell / COLS) * CELL;
+      if (cell >= columns * columns) break;
+      const cx = (cell % columns) * CELL;
+      const cy = Math.floor(cell / columns) * CELL;
       this.cellOf[itemId] = cell;
       cell++;
 
@@ -186,10 +221,31 @@ export class ItemIconAtlas {
     canvas.height = ATLAS;
     const ctx = canvas.getContext('2d')!;
     const imageData = ctx.createImageData(ATLAS, ATLAS);
-    // flip vertically: GL origin is bottom left
+    // Flip vertically (GL origin is bottom left) AND un-premultiply. The FBO was rendered with
+    // SRC_ALPHA blending, so its RGB is already multiplied by alpha; putImageData/Canvas2D
+    // expects straight alpha. Without this, an almost-transparent white texel (255,255,255,4)
+    // reads back as a solid white rim around every icon - the bright outline in the report.
     for (let y = 0; y < ATLAS; y++) {
       const src = (ATLAS - y - 1) * ATLAS * 4;
-      imageData.data.set(pixels.subarray(src, src + ATLAS * 4), y * ATLAS * 4);
+      const dst = y * ATLAS * 4;
+      for (let x = 0; x < ATLAS; x++) {
+        const s = src + x * 4;
+        const d = dst + x * 4;
+        const a = pixels[s + 3];
+        if (a === 0) {
+          imageData.data[d] = 0; imageData.data[d + 1] = 0;
+          imageData.data[d + 2] = 0; imageData.data[d + 3] = 0;
+        } else if (a === 255) {
+          imageData.data[d] = pixels[s]; imageData.data[d + 1] = pixels[s + 1];
+          imageData.data[d + 2] = pixels[s + 2]; imageData.data[d + 3] = 255;
+        } else {
+          const k = 255 / a;
+          imageData.data[d] = Math.min(255, pixels[s] * k);
+          imageData.data[d + 1] = Math.min(255, pixels[s + 1] * k);
+          imageData.data[d + 2] = Math.min(255, pixels[s + 2] * k);
+          imageData.data[d + 3] = a;
+        }
+      }
     }
     ctx.putImageData(imageData, 0, 0);
     this.canvas = canvas;
@@ -198,6 +254,7 @@ export class ItemIconAtlas {
     gl.deleteFramebuffer(fb);
     gl.deleteRenderbuffer(depth);
     gl.deleteTexture(color);
+    return scale;
   }
 
   private drawModel(
@@ -322,13 +379,15 @@ export class ItemIconAtlas {
     }
   }
 
-  /** Draws an item icon at GUI pixel coordinates. */
+  /** Draws an item icon at GUI (logical) pixel coordinates; 1:1 with the baked physical texels. */
   draw(ctx: CanvasRenderingContext2D, itemId: number, x: number, y: number, size: number): void {
     if (!this.canvas || itemId < 0 || itemId >= this.cellOf.length) return;
     const cell = this.cellOf[itemId];
     if (cell < 0) return;
-    const cx = (cell % COLS) * CELL;
-    const cy = Math.floor(cell / COLS) * CELL;
+    const CELL = this.cellSize;
+    const columns = this.atlasCols;
+    const cx = (cell % columns) * CELL;
+    const cy = Math.floor(cell / columns) * CELL;
     ctx.drawImage(this.canvas, cx, cy, CELL, CELL, x, y, size, size);
   }
 

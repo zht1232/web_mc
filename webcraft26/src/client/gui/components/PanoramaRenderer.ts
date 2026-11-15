@@ -1,28 +1,38 @@
-// Port of net.minecraft.client.renderer.Panorama / CubeMap and the
-// TitleScreen#extractPanorama path (26.2).
+// Port of net.minecraft.client.renderer.Panorama / CubeMap (26.2).
 //
-// The six faces are real 1024x1024 panorama photos in this pack. Rendering them as a blurred
-// colour gradient (the old behaviour) made the title background look empty and the moving
-// gradient stops shimmered; instead the four side faces are drawn as a slowly panning strip,
-// which is the flat-screen equivalent of vanilla's rotating cube map.
+// Vanilla renders the six 1024x1024 faces as a rotating cube map, so neighbouring faces are
+// continuous by construction. Two problems with the previous flat-screen approximation here:
+//   * it drew 4-6 independently cover-fitted 1024x1024 images EVERY frame (the title-screen
+//     stutter), and each face had its own crop, so a hard vertical seam appeared at every
+//     quarter of the screen (the "obvious stitching" report);
+//   * `Math.round(offset + i * faceW)` plus a 1px overlap left hairline gaps.
+//
+// This version pre-composites the four side faces ONCE into an offscreen strip, with a
+// per-column linear cross-fade at each face boundary, then performs a single drawImage per
+// frame. The strip is 1.5x the screen width so the slow pan never exposes an edge.
 
 import type { GuiGraphics } from '../GuiGraphics.js';
 import type { GuiTextures } from '../Hud.js';
 
 const FACE_COUNT = 6;
-/** The four horizontal faces; 4/5 are top/bottom and only matter with a real cube map. */
 const SIDE_FACES = 4;
 const PANORAMA_SPIN_SPEED = 0.035; // rad/s (~2 deg/s, vanilla Panorama#tick)
+/** Half-width of the cross-fade used to hide the discontinuity between two cube faces. */
+const BLEND = 40;
 
 export class PanoramaRenderer {
   private faces: HTMLImageElement[] = [];
   private overlay?: HTMLImageElement;
-  private colors: string[] = [];
   private angle = 0;
   private elapsed = 0;
   private fadingStart = 0;
   private fading = false;
-  private sampled = false;
+
+  /** Pre-composited side-face strip. Rebuilt only when the viewport size changes. */
+  private strip: HTMLCanvasElement | null = null;
+  private stripW = 0;
+  private stripH = 0;
+  private stripFaceW = 0;
 
   async load(textures: GuiTextures): Promise<void> {
     const paths: string[] = [];
@@ -31,6 +41,7 @@ export class PanoramaRenderer {
     await textures.preload(paths);
     this.faces = paths.slice(0, FACE_COUNT).map((p) => textures.get(p)).filter((x): x is HTMLImageElement => !!x);
     this.overlay = textures.get(paths[FACE_COUNT]);
+    this.strip = null; // force a rebuild with the newly decoded images
   }
 
   /** TitleScreen calls panorama.startSpin() on construction. */
@@ -44,32 +55,6 @@ export class PanoramaRenderer {
     this.angle += (deltaMs / 1000) * PANORAMA_SPIN_SPEED;
   }
 
-  private sample(): void {
-    if (this.sampled) return;
-    // The six faces load asynchronously; before they are decoded the gradient must still be valid
-    // (an undefined colour makes createLinearGradient throw, which used to kill the frame loop).
-    if (this.faces.length === 0) {
-      this.colors = ['#4a6b8a', '#5a7c9a', '#6d8eaa', '#5a7c9a', '#3a5a7a', '#2a3a5a'];
-      return; // not sampled yet: try the real face colours again next frame
-    }
-    this.sampled = true;
-    this.colors = [];
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 1;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
-    for (const img of this.faces) {
-      ctx.clearRect(0, 0, 1, 1);
-      ctx.drawImage(img, 0, 0, 1, 1);
-      const d = ctx.getImageData(0, 0, 1, 1).data;
-      this.colors.push(`rgb(${d[0]}, ${d[1]}, ${d[2]})`);
-    }
-    if (this.colors.length === 0) this.colors = ['#4a6b8a', '#5a7c9a', '#6d8eaa', '#5a7c9a', '#3a5a7a', '#2a3a5a'];
-    // Guarantee a seamless loop by repeating the first colour at the end.
-    while (this.colors.length < FACE_COUNT) this.colors.push('#3a5a7a');
-  }
-
   /** Fade-in envelope from Screen.FADE_IN_TIME = 2000 ms. */
   fadeAlpha(): number {
     if (!this.fading) return 1;
@@ -78,54 +63,95 @@ export class PanoramaRenderer {
     return Math.max(0, Math.min(1, t));
   }
 
+  /**
+   * Bake the four side faces into one strip at the target resolution, then blend a band of
+   * `2*BLEND` columns around every seam. On the left of a seam the next face fades in; on the
+   * right the previous face fades out. Doing it in ImageData avoids drawImage clip/scale
+   * ambiguity and runs once per resize instead of once per frame.
+   */
+  private buildStrip(height: number, faceW: number): HTMLCanvasElement | null {
+    const sides = this.faces.slice(0, SIDE_FACES);
+    if (sides.length < SIDE_FACES) return null;
+    const w = Math.max(1, Math.ceil(faceW * SIDE_FACES));
+    const h = Math.max(1, Math.ceil(height));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.imageSmoothingEnabled = true;
+
+    const scale = h / sides[0].height;
+    for (let i = 0; i < SIDE_FACES; i++) {
+      const img = sides[i];
+      // Keep the FULL horizontal extent (no centre crop) so the cube faces stay continuous.
+      ctx.drawImage(img, 0, 0, img.width, img.height, i * faceW, 0, img.width * scale, h);
+    }
+
+    const fade = Math.min(BLEND, Math.floor(faceW / 2), Math.floor(1024 * scale / 2));
+    if (fade > 0) {
+      const data = ctx.getImageData(0, 0, w, h);
+      const px = data.data;
+      for (let i = 0; i < SIDE_FACES - 1; i++) {
+        const seam = (i + 1) * faceW;
+        for (let k = 0; k < fade; k++) {
+          const t = (k + 1) / (fade + 1);
+          // Left of the seam: mix in the first `fade` columns of the NEXT face.
+          const nextSrcX = (i + 1) * faceW + k;
+          const leftDstX = seam - fade + k;
+          // Right of the seam: mix in the last `fade` columns of the PREVIOUS face.
+          const prevSrcX = (i + 1) * faceW - fade + k;
+          const rightDstX = seam + k;
+          for (let y = 0; y < h; y++) {
+            mixPixel(px, y * w + leftDstX, y * w + nextSrcX, t);
+            mixPixel(px, y * w + rightDstX, y * w + prevSrcX, 1 - t);
+          }
+        }
+      }
+      ctx.putImageData(data, 0, 0);
+    }
+
+    this.stripW = w;
+    this.stripH = h;
+    this.stripFaceW = faceW;
+    return canvas;
+  }
+
   render(g: GuiGraphics, width: number, height: number, alpha = 1): void {
     const ctx = g.ctx;
     const prevAlpha = ctx.globalAlpha;
     const prevSmoothing = ctx.imageSmoothingEnabled;
     const prevFilter = ctx.filter;
     ctx.filter = 'none';
-    ctx.imageSmoothingEnabled = true;
     const fade = this.fadeAlpha();
 
-    const sides = this.faces.slice(0, SIDE_FACES);
-    if (sides.length === 0) {
-      // Assets not decoded yet: a flat sky colour beats a black screen.
-      this.sample();
+    const faceW = Math.max(1, Math.ceil((width * 1.5) / SIDE_FACES));
+    if (!this.strip || this.stripH !== Math.ceil(height) || this.stripFaceW !== faceW) {
+      this.strip = this.buildStrip(height, faceW);
+    }
+
+    if (this.strip) {
+      ctx.imageSmoothingEnabled = false; // strip is already at target resolution
+      ctx.globalAlpha = alpha * fade;
+      const stripW = this.stripW;
+      const shift = (((this.angle / (Math.PI / 2)) % 1) + 1) % 1;
+      const pan = shift * this.stripFaceW;
+      // start far enough left that the first tile covers the viewport, then wrap
+      let offset = -((pan + (stripW - width) / 2) % stripW);
+      if (offset > 0) offset -= stripW;
+      for (let x = offset; x < width; x += stripW) {
+        ctx.drawImage(this.strip, Math.round(x), 0, stripW, height);
+      }
+    } else {
       ctx.globalAlpha = alpha * fade;
       ctx.fillStyle = '#3a5a7a';
       ctx.fillRect(0, 0, width, height);
-      ctx.globalAlpha = prevAlpha;
-      ctx.imageSmoothingEnabled = prevSmoothing;
-      return;
-    }
-
-    // One face per 90 degrees of yaw; the strip is 50% wider than the screen so panning
-    // never exposes an edge.
-    const stripW = width * 1.5;
-    const faceW = stripW / sides.length;
-    const shift = ((this.angle / (Math.PI / 2)) % 1 + 1) % 1;
-    const offset = -shift * faceW + (width - stripW) / 2;
-
-    ctx.globalAlpha = alpha * fade;
-    for (let i = -1; i <= sides.length; i++) {
-      const img = sides[((i % sides.length) + sides.length) % sides.length];
-      const dx = Math.round(offset + i * faceW);
-      if (dx > width || dx + faceW < 0) continue;
-      // Cover-fit the square face into the slice, keeping the horizon near the middle.
-      const scale = Math.max((faceW + 1) / img.width, height / img.height);
-      const sw = Math.min(img.width, (faceW + 1) / scale);
-      const sh = Math.min(img.height, height / scale);
-      const sx = (img.width - sw) / 2;
-      const sy = (img.height - sh) * 0.42;
-      ctx.drawImage(img, sx, sy, sw, sh, dx, 0, faceW + 1, height);
     }
     ctx.globalAlpha = prevAlpha;
     ctx.imageSmoothingEnabled = prevSmoothing;
     ctx.filter = prevFilter;
 
     // Vanilla darkens the panorama under the menu (GuiGraphics#drawTitleBackground).
-    // Light shading only: the panorama photos are already menu-friendly and the old 31% black
-    // overlay made the background read as empty.
     g.fill(0, 0, width, height, 0x2a000000);
     if (this.overlay && this.overlay.width > 8) {
       const a = g.getAlpha();
@@ -134,4 +160,13 @@ export class PanoramaRenderer {
       g.setAlpha(a);
     }
   }
+}
+
+/** Linear blend of pixel `src` into pixel `dst` with weight `t` (0..1). */
+function mixPixel(px: Uint8ClampedArray, dst: number, src: number, t: number): void {
+  const d = dst * 4, s = src * 4;
+  px[d] = px[d] * (1 - t) + px[s] * t;
+  px[d + 1] = px[d + 1] * (1 - t) + px[s + 1] * t;
+  px[d + 2] = px[d + 2] * (1 - t) + px[s + 2] * t;
+  px[d + 3] = 255;
 }

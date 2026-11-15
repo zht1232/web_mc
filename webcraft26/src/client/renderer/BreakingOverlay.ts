@@ -140,8 +140,13 @@ export class BreakingOverlay {
     this.program.use();
     this.program.setMat4('uProjModel', viewProj);
     this.program.set1i('uMode', 3);
-    this.program.set1f('uAlphaTest', 0.1);
-    this.program.set4f('uColor', 1, 1, 1, 1);
+    // The destroy_stage sheet is a WHITE background with near-zero alpha and DARK cracks at
+    // alpha 1. Vanilla's crumbling render type is a cutout (alpha test), not a blend: with
+    // SRC_ALPHA blending the anti-aliased, half-transparent white rim of every crack was
+    // composited over the block as a bright fog, which is the reported "cracks look white".
+    // Discard instead, and darken the crack slightly so it reads like the vanilla decal.
+    this.program.set1f('uAlphaTest', 0.5);
+    this.program.set4f('uColor', 0.82, 0.82, 0.82, 1);
     // Unused by mode 3 but keep the samplers bound to something valid.
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.textures.lightmap);
@@ -163,12 +168,15 @@ export class BreakingOverlay {
     gl.depthMask(true);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // Cutout, not blended translucent: ALPHA_TEST discards the white rim in the fragment
+    // shader. Keep polygon offset so the decal does not z-fight with the block face.
+    gl.disable(gl.BLEND);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(-1, -1);
 
     gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_INT, 0);
 
-    gl.disable(gl.BLEND);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.depthMask(true);
     void level;
     void camera;

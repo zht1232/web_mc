@@ -122,8 +122,10 @@ export class AmbientParticles {
           });
         }
         if (e.nextInt(6) === 0) {
+          // Vanilla uses the 16x16 big_smoke sheet for campfires (CAMPFIRE_COSY_SMOKE), not the
+          // 8x8 generic large_smoke sprites. The latter rendered as a soft blurry cross.
           engine.add({
-            type: ParticleType.LARGE_SMOKE,
+            type: ParticleType.CAMPFIRE_SMOKE,
             x: x + 0.5 + e.nextDouble() / 3 * (e.nextBoolean() ? 1 : -1), y: y + e.nextDouble() + e.nextDouble(),
             z: z + 0.5 + e.nextDouble() / 3 * (e.nextBoolean() ? 1 : -1),
             vx: 0, vy: 0.07, vz: 0,

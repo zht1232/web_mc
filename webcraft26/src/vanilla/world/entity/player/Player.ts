@@ -91,6 +91,11 @@ export class Player {
     return new AABB(pos.x - half, pos.y, pos.z - half, pos.x + half, pos.y + height, pos.z + half);
   }
 
+  /** Piston displacement (vanilla MoverType.PISTON) through the normal collision sweep. */
+  moveByPiston(level: ClientLevel, dx: number, dy: number, dz: number): void {
+    this.move(level, dx, dy, dz);
+  }
+
   /** Vanilla Player.tick -> LivingEntity.travel, one 1/20 s step. */
   tick(level: ClientLevel, input: PlayerInput): void {
     this.prevPos = this.pos;

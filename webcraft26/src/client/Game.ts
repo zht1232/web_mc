@@ -543,6 +543,41 @@ export class Game {
         }
         return feet;
       },
+      // PistonMovingBlockEntity.moveCollidedEntities/moveStuckEntities: entities in the
+      // path of a pushed block are displaced with it; honey drags standing entities and
+      // slime blocks bounce along the movement axis.
+      pushPistonEntities: (boxes, direction, amount, sticky, slime) => {
+        const [dx, dy, dz] = direction === 'east' ? [1, 0, 0]
+          : direction === 'west' ? [-1, 0, 0]
+          : direction === 'up' ? [0, 1, 0]
+          : direction === 'down' ? [0, -1, 0]
+          : direction === 'south' ? [0, 0, 1] : [0, 0, -1];
+        const areas = boxes.map((box) => {
+          const swept = box.expandTowards(dx * amount, dy * amount, dz * amount);
+          return sticky
+            ? new AABB(swept.minX, swept.minY, swept.minZ, swept.maxX, swept.maxY + 1.5, swept.maxZ)
+            : swept;
+        });
+        const hit = (box: AABB) => areas.some((area) => area.intersects(box));
+        const move = (e: Entity) => {
+          if (e.isRemoved() || !e.isAlive() || !hit(e.getBoundingBox())) return;
+          e.moveByPiston(dx * amount, dy * amount, dz * amount);
+          if (slime) {
+            if (dx !== 0) e.vx = dx;
+            else if (dy !== 0) e.vy = dy;
+            else e.vz = dz;
+          }
+        };
+        if (hit(this.player.boundingBox())) {
+          this.player.moveByPiston(this.level, dx * amount, dy * amount, dz * amount);
+          if (slime) {
+            const v = this.player.vel;
+            this.player.vel = dx !== 0 ? new Vec3(dx, v.y, v.z)
+              : dy !== 0 ? new Vec3(v.x, dy, v.z) : new Vec3(v.x, v.y, dz);
+          }
+        }
+        for (const e of this.entityManager.getEntities()) move(e);
+      },
       // Container.getRedstoneSignalFromContainer: full slots raise the signal, each stack's
       // fill fraction adds up to 14, and any item at all adds the final point.
       containerSignal: (name, x, y, z) => {

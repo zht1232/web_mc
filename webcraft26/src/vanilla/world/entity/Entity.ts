@@ -193,6 +193,14 @@ export class Entity {
     this.xo = x; this.yo = y; this.zo = z;
   }
 
+  /**
+   * Piston displacement (vanilla Entity.move(MoverType.PISTON, ...)).
+   * Uses the normal per-axis collision sweep so a pushed entity cannot enter blocks.
+   */
+  moveByPiston(dx: number, dy: number, dz: number): void {
+    this.move(dx, dy, dz);
+  }
+
   getBoundingBox(): AABB {
     const half = this.getWidth() / 2;
     return new AABB(this.x - half, this.y, this.z - half, this.x + half, this.y + this.getHeight(), this.z + half);

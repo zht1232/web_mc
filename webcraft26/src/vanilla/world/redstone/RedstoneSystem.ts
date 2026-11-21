@@ -90,6 +90,13 @@ export interface RedstoneHooks {
   countEntities(box: AABB): number;
   /** Entity feet positions for pressure-plate/tripwire discovery. */
   entityFeet(): readonly { x: number; y: number; z: number }[];
+  /**
+   * PistonMovingBlockEntity.moveCollidedEntities/moveStuckEntities: move entities hit by
+   * the swept block boxes by `amount` blocks along `direction`. `sticky` also drags
+   * entities standing on honey; `slime` applies the slime bounce on the movement axis.
+   */
+  pushPistonEntities(boxes: readonly AABB[], direction: DirName, amount: number,
+    sticky: boolean, slime: boolean): void;
   /** Container.getRedstoneSignalFromContainer for the cached block container at the position. */
   containerSignal(name: string, x: number, y: number, z: number): number;
 }
@@ -1322,15 +1329,28 @@ export class RedstoneSystem {
     const { toPush, toDestroy, pushDirection } = resolved;
     const [px, py, pz] = DIRS[pushDirection];
 
+    const saved = toPush.map((pos) => ({
+      pos, state: this.state(pos.x, pos.y, pos.z),
+    }));
+    const hasHoney = saved.some((b) => this.name(b.state) === 'honey_block');
+    const hasSlime = saved.some((b) => this.name(b.state) === 'slime_block');
+    const boxes: AABB[] = saved.map((b) =>
+      new AABB(b.pos.x, b.pos.y, b.pos.z, b.pos.x + 1, b.pos.y + 1, b.pos.z + 1));
+    if (extending) {
+      boxes.push(new AABB(x + dx, y + dy, z + dz, x + dx + 1, y + dy + 1, z + dz + 1));
+    }
+    // Entities move first (into the space the blocks are about to vacate) so their
+    // collision sweep does not start inside a block that has already been placed.
+    if (boxes.length > 0) {
+      this.hooks.pushPistonEntities(boxes, pushDirection, 1.01, hasHoney, hasSlime);
+    }
+
     for (const pos of toDestroy) {
       this.level.setBlockState(pos.x, pos.y, pos.z, 0);
       this.notifyObservers(pos.x, pos.y, pos.z);
       this.enqueueAround(pos.x, pos.y, pos.z);
     }
 
-    const saved = toPush.map((pos) => ({
-      pos, state: this.state(pos.x, pos.y, pos.z),
-    }));
     for (let i = saved.length - 1; i >= 0; i--) {
       const block = saved[i];
       const dest = { x: block.pos.x + px, y: block.pos.y + py, z: block.pos.z + pz };

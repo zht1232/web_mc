@@ -293,6 +293,46 @@ try {
   check('sticky piston pulls the stone back', p.base === 'false'
     && p.head === 'stone' && p.above === 'air', p);
 
+  // A piston head displaces an entity standing in front of it.
+  await ev(([x, y, z]) => {
+    const m = window.__mc;
+    const h = window.__h;
+    h.set(x + 4, y, z - 4, 'piston', { facing: 'east', extended: 'false' });
+    const p = m.player;
+    p.flying = true;
+    p.vel.x = p.vel.y = p.vel.z = 0;
+    p.pos.x = x + 5.6; p.pos.y = y; p.pos.z = z - 3.5;
+    window.__p0 = { x: p.pos.x, y: p.pos.y, z: p.pos.z };
+    h.set(x + 3, y, z - 4, 'redstone_block');
+  }, [bx, by, bz]);
+  await sleep(400);
+  let pushed = await ev(() => ({ x: window.__mc.player.pos.x, p0: window.__p0 }));
+  check('piston pushes an entity out of the way', pushed.x > pushed.p0.x + 0.8, pushed);
+
+  // Honey drags a standing entity when the block moves; slime bounces it.
+  await ev(([x, y, z]) => {
+    const m = window.__mc;
+    const h = window.__h;
+    h.set(x + 8, y, z - 4, 'piston', { facing: 'east', extended: 'false' });
+    h.set(x + 9, y, z - 4, 'honey_block');
+    h.air(x + 9, y - 1, z - 4);
+    const p = m.player;
+    p.flying = false;
+    p.vel.x = p.vel.y = p.vel.z = 0;
+    p.pos.x = x + 9.5; p.pos.y = y + 1; p.pos.z = z - 3.5;
+    window.__p0 = { x: p.pos.x, y: p.pos.y, z: p.pos.z };
+    h.set(x + 7, y, z - 4, 'redstone_block');
+  }, [bx, by, bz]);
+  await sleep(400);
+  pushed = await ev(([x, y, z]) => ({
+    x: window.__mc.player.pos.x, p0: window.__p0,
+    base: window.__h.P(x + 8, y, z - 4, 'extended'),
+    at9: window.__h.N(x + 9, y, z - 4),
+    at10: window.__h.N(x + 10, y, z - 4),
+    head: window.__h.N(x + 9, y, z - 4),
+  }), [bx, by, bz]);
+  check('honey drags a standing entity', pushed.x > pushed.p0.x + 0.5, pushed);
+
   await ev(([x, y, z]) => {
     const h = window.__h;
     h.set(x + 14, y, z, 'piston', { facing: 'up', extended: 'false' });

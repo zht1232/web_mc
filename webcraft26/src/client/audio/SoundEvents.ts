@@ -61,6 +61,7 @@ export const SOUND_ALIASES: Readonly<Record<string, string>> = {
   'entity.player.hurt': SoundEvents.BLOCK_WOOL_BREAK,
   'entity.item.pickup': SoundEvents.UI_BUTTON_CLICK,
   'entity.item.break': SoundEvents.BLOCK_GLASS_BREAK,
+  'entity.splash_potion.break': SoundEvents.BLOCK_GLASS_BREAK,
   'entity.zombie.ambient': SoundEvents.AMBIENT_UNDERWATER_ENTER,
   'entity.zombie.hurt': SoundEvents.BLOCK_WOOL_STEP,
   'entity.zombie.step': SoundEvents.BLOCK_STONE_STEP,
@@ -69,12 +70,18 @@ export const SOUND_ALIASES: Readonly<Record<string, string>> = {
   'ambient.cave': SoundEvents.AMBIENT_UNDERWATER_ENTER,
   'weather.rain': SoundEvents.BLOCK_WATER_AMBIENT,
   'weather.rain.above': SoundEvents.BLOCK_WATER_AMBIENT,
-  'music.creative': SoundEvents.AMBIENT_UNDERWATER_ENTER,
-  'music.game': SoundEvents.BLOCK_WATER_AMBIENT,
-  'music.menu': SoundEvents.AMBIENT_UNDERWATER_EXIT,
-  'music.nether': SoundEvents.AMBIENT_UNDERWATER_ENTER,
-  'music.end': SoundEvents.AMBIENT_UNDERWATER_EXIT,
   'ui.toast.challenge_complete': SoundEvents.UI_BUTTON_CLICK,
+};
+
+/**
+ * Events whose ogg files are stored inside another event's directory in this pack
+ * (26.2 ships no sounds.json, so the index cannot name them separately).
+ */
+export const SOUND_FILE_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  'block.brewing_stand.brew': [
+    'entity.villager.work_cleric/block_brewing_stand_brew1.ogg',
+    'entity.villager.work_cleric/block_brewing_stand_brew2.ogg',
+  ],
 };
 
 /** Volume categories matching vanilla SoundSource. */
@@ -86,7 +93,7 @@ export const SOUND_CATEGORIES: readonly SoundCategory[] = [
 /** Prefix-based category lookup (26.2 has no sounds.json category metadata). */
 export function categoryOf(event: string): SoundCategory {
   if (event.startsWith('music.') || event === 'music.creative') return 'music';
-  if (event.startsWith('record.')) return 'record';
+  if (event.startsWith('record.') || event.startsWith('music_disc.')) return 'record';
   if (event.startsWith('weather.') || event.startsWith('entity.lightning')) return 'weather';
   if (event.startsWith('block.')) return 'block';
   if (event.startsWith('entity.player')) return 'player';

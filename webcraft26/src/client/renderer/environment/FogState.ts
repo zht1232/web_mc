@@ -1,6 +1,6 @@
 // Pure port of the Minecraft 26.2 client fog pipeline.
 //
-// Sources (all paths relative to the decompiled vanilla tree G:/ck-web26):
+// Sources (all paths relative to the decompiled vanilla tree ck-web26):
 //   src-vanilla/net/minecraft/client/renderer/fog/FogRenderer.java
 //   src-vanilla/net/minecraft/client/renderer/fog/FogData.java
 //   src-vanilla/net/minecraft/client/renderer/fog/environment/*.java

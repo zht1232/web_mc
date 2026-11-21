@@ -43,6 +43,8 @@ export class ShadowMap {
   private readonly cascades: Cascade[] = [];
   /** Far cascade is rendered at half resolution: its texels are large anyway. */
   private baseSize = 0;
+  /** Wind clock for the swaying plants; set by the renderer before the pass (see SHADOW_VERT). */
+  swayTime = 0;
 
   constructor(private readonly gl: WebGL2RenderingContext, size = 2048) {
     this.program = new GlProgram(gl, SHADOW_VERT, SHADOW_FRAG, 'shadow');
@@ -187,6 +189,7 @@ export class ShadowMap {
     this.program.use();
     this.program.setMat4('uLightViewProj', c.viewProj);
     this.program.set1f('uAlphaTest', 0.1);
+    this.program.set1f('uSwayTime', this.swayTime);
   }
 
   end(): void {

@@ -23,7 +23,10 @@ export interface Container {
 export class ContainerHelper {
   static removeItem(items: ItemStack[], slot: number, count: number): ItemStack {
     if (slot >= 0 && slot < items.length && !items[slot].isEmpty() && count > 0) {
-      return items[slot].split(count);
+      const stack = items[slot];
+      const removed = stack.split(count);
+      if (stack.isEmpty()) items[slot] = ItemStack.EMPTY;
+      return removed;
     }
     return ItemStack.EMPTY;
   }

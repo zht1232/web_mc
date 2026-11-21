@@ -2,7 +2,7 @@
 // Real Minecraft 26.2 client reference-screenshot capture (repeatable).
 //
 // Why this exists: the webcraft26 renderer is validated against real vanilla
-// frames. This script boots the untouched 26.2 client from G:/ck-web26 with a
+// frames. This script boots the untouched 26.2 client from ck-web26 with a
 // clean gameDir, auto-joins a prepared superflat world, and drives the in-game
 // chat/scene setup through scripts/ref-scenes.ps1 (PostMessage input + F2).
 //
@@ -17,21 +17,24 @@
 //   node scripts/ref-capture.mjs --attach=12345  # reuse a running client
 //   node scripts/ref-capture.mjs --no-close      # leave client running
 //
-// Prerequisites (already on disk): G:/ck-web26/{client-26.2.jar,launch.args,nat},
+// Prerequisites (already on disk): ck-web26/{client-26.2.jar,launch.args,nat},
 // Java 25 at .minecraft/runtime/java-runtime-epsilon, and a world named
-// "New World" in G:/ck-web26/shotdir/saves (created once through the vanilla GUI).
+// "New World" in ck-web26/shotdir/saves (created once through the vanilla GUI).
 
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
-const JAVA = process.env.REF_JAVA
-  || 'C:\\Users\\zht\\AppData\\Roaming\\.minecraft\\runtime\\java-runtime-epsilon\\bin\\java.exe';
-const CK = 'G:/ck-web26';
-const SHOTDIR = `${CK}/shotdir`;
-const WORK = 'G:/tmp';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const JAVA = process.env.REF_JAVA || 'java';
+const CK = process.env.CK_DIR || path.join(ROOT, '..', 'ck-web26');
+const SHOTDIR = path.join(CK, 'shotdir');
+const WORK = process.env.REF_WORK || path.join(os.tmpdir(), 'webcraft-ref');
 const WORLD = process.env.REF_WORLD || 'New World';
-const OUT = 'G:/web_mc/webcraft26/shots/ref';
-const SCRIPTS = 'G:/web_mc/webcraft26/scripts';
+const OUT = process.env.REF_OUT || path.join(ROOT, 'shots', 'ref');
+const SCRIPTS = path.join(ROOT, 'scripts');
 
 const argv = process.argv.slice(2);
 const opt = (name, def = null) => {
@@ -49,7 +52,7 @@ const LOG4J = `<?xml version="1.0" encoding="UTF-8"?>
     <Console name="SysOut" target="SYSTEM_OUT">
       <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level]: %msg%n" />
     </Console>
-    <File name="File" fileName="G:/ck-web26/shotdir/logs/latest.log" append="false">
+    <File name="File" fileName="ck-web26/shotdir/logs/latest.log" append="false">
       <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level]: %msg%n" />
     </File>
   </Appenders>
@@ -113,7 +116,7 @@ function waitForWorld(pid, timeoutMs = 300000) {
 
 async function main() {
   if (!existsSync(JAVA)) throw new Error(`Java not found: ${JAVA}`);
-  if (!existsSync(`${CK}/launch.args`)) throw new Error('missing G:/ck-web26/launch.args');
+  if (!existsSync(`${CK}/launch.args`)) throw new Error('missing ck-web26/launch.args');
 
   let pid = Number(attach) || 0;
   if (!pid) {

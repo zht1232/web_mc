@@ -17,6 +17,10 @@ uniform float uTime;
 // bob by two sines. x = water_still layer, y = water_flow layer (-1 disables), uWaveTime is frameTimeCounter in seconds.
 uniform ivec2 uWaterLayers;
 uniform float uWaveTime;
+// Complementary WAVING_BLOCKS: aColor.a packs the per-vertex wind weight (255 = static), written by
+// SectionMesher for grass/flowers/crops/leaves. 0 keeps the displacement off in programs that never
+// set it (the item icon atlas shares this vertex shader).
+uniform float uSwayTime;
 
 out vec2 vUV;
 flat out uint vLayer;
@@ -33,6 +37,15 @@ void main() {
     vec2 p = world.xz * 14.0;
     float wave = sin(t * 0.7 - p.y * 0.14 + p.x * 0.07) + sin(t * 0.5 - p.y * 0.10 + p.x * 0.05);
     world.y += (wave * 0.1) * 0.125 - 0.05;
+  }
+  // Wind: two sines with a world-space phase so neighbouring plants move together, weighted by the
+  // vertex's height inside its block (root stays planted). Leaves carry a smaller weight.
+  float sway = 1.0 - aColor.a;
+  if (uSwayTime > 0.0 && sway > 0.004) {
+    float gust = sin(uSwayTime * 1.6 + world.x * 0.35 + world.z * 0.27)
+      + 0.5 * sin(uSwayTime * 3.3 - world.z * 0.6 + world.x * 0.12);
+    world.x += gust * 0.06 * sway;
+    world.z += cos(uSwayTime * 1.25 + world.z * 0.42 + world.x * 0.1) * 0.05 * sway;
   }
   vec4 clip = uViewProj * vec4(world, 1.0);
   gl_Position = clip;
@@ -85,6 +98,18 @@ uniform float uCascadeSplit;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
 uniform float uShadowTexel;
+/** Shadow strength gate: 1 with the sun up, 0 at night (vanilla has no moon shadows). */
+uniform float uShadowDay;
+
+// Screen-space reflections for water (OpusMC/Complementary look). LevelRenderer snapshots the
+// opaque scene into uSceneColor/uSceneDepth right before the translucent pass; uWaterReflect = 0
+// disables the whole branch (icon atlas, shaders off, low quality).
+uniform int uWaterReflect;
+uniform sampler2D uSceneColor;
+uniform sampler2D uSceneDepth;
+// highp to match the same uniform in TERRAIN_VERT (precision must agree on link).
+uniform highp ivec2 uWaterLayers;
+uniform mat4 uViewProj;
 
 out vec4 fragColor;
 
@@ -92,20 +117,29 @@ out vec4 fragColor;
  * Manual depth compare with 5x5 PCF. The old 3x3 at 1.5 texel spacing left visible stair-steps
  * on large flat surfaces ("banded" shadows); 5x5 at 1.0 texel plus the normal offset below is
  * smooth at the same tap count per axis budget.
+ *
+ * texel is the cascade's world size of one shadow texel (uShadowTexel). It must NOT be used as
+ * the PCF step: it is ~0.04 blocks, and treating that as a UV offset spread the 25 taps over
+ * ±80 shadow texels, which painted faint stippled stripes over every lit surface (more visible
+ * at higher shadow resolutions). The step comes from textureSize() so it follows the bound map.
  */
 float sampleShadow(sampler2D smap, mat4 lvp, vec3 wp, vec3 n, float ndl, float texel) {
   float slope = clamp(1.0 - ndl, 0.0, 1.0);
-  vec4 sc = lvp * vec4(wp + n * (0.06 + 0.40 * slope), 1.0);
+  // Normal-offset bias in world units: grows with the texel footprint so a low shadow resolution
+  // (big texels) does not leave acne while a high one stays tight.
+  float offset = 0.03 + texel * 1.5 * (0.5 + slope);
+  vec4 sc = lvp * vec4(wp + n * offset, 1.0);
   if (sc.w <= 0.0) return 1.0;
   vec3 ndc = sc.xyz / sc.w;
   vec2 suv = ndc.xy * 0.5 + 0.5;
   if (suv.x < 0.005 || suv.x > 0.995 || suv.y < 0.005 || suv.y > 0.995) return 1.0;
   float sdepth = ndc.z * 0.5 + 0.5;
-  float ref = sdepth - 0.00035;
+  float ref = sdepth - mix(0.00018, 0.0009, slope);
+  vec2 texelUV = 1.0 / vec2(textureSize(smap, 0));
   float sum = 0.0;
   for (int sx = -2; sx <= 2; sx++) {
     for (int sy = -2; sy <= 2; sy++) {
-      float stored = texture(smap, suv + vec2(float(sx), float(sy)) * texel).r;
+      float stored = texture(smap, suv + vec2(float(sx), float(sy)) * texelUV).r;
       sum += ref <= stored ? 1.0 : 0.0;
     }
   }
@@ -118,20 +152,27 @@ void main() {
   // Vanilla uses sampleNearest/RGSS for cutout terrain; LOD 0 is the equivalent fix here.
   vec4 tex = uAlphaTest >= 0.25
     ? textureLod(uAtlas, vec3(vUV, float(vLayer)), 0.0)
-    : texture(uAtlas, vec3(vUV, float(vLayer)));
+    // Slight negative LOD bias on the opaque path: the mip chain is chosen for the steepest axis,
+    // so distant ground washed out ("远处糊"). A 0.8 derivative scale is ≈ -0.3 mip - visibly
+    // sharper at distance while still far away from the shimmer of raw minification.
+    : textureGrad(uAtlas, vec3(vUV, float(vLayer)), dFdx(vUV) * 0.8, dFdy(vUV) * 0.8);
   if (uDebug == 1) { fragColor = vec4(vColor.rgb, 1.0); return; }
   if (uDebug == 2) { fragColor = vec4(vUV, float(vLayer) / 64.0, 1.0); return; }
   if (uDebug == 3) { fragColor = vec4(tex.rgb, 1.0); return; }
   if (uDebug == 4) { fragColor = vec4(vLight / 15.0, 0.0, 1.0); return; }
   if (tex.a < uAlphaTest) discard;
 
-  // vLight = (sky, block); the lightmap texture is x = block light, y = sky light (core/lightmap.fsh)
+  // vLight = (sky, block); the lightmap texture is x = block light, y = sky light (core/lightmap.fsh).
+  // Split the combined lightmap into its block and sky parts: the shadow map may only dim the
+  // sky/sun contribution, otherwise torch light inside a shadow was multiplied down too.
   vec2 lightUV = (vLight.yx + 0.5) / 16.0;
   vec3 light = texture(uLightmap, lightUV).rgb;
+  vec3 skyLight = texture(uLightmap, vec2(0.5 / 16.0, (vLight.x + 0.5) / 16.0)).rgb;
+  vec3 blockLight = max(light - skyLight, vec3(0.0));
+  vec3 albedo = tex.rgb * vColor.rgb;
+  vec3 color = albedo * (blockLight + skyLight);
   if (uDebug == 9) { fragColor = vec4(light, 1.0); return; }
   if (uDebug == 10) { fragColor = vec4(vColor.rgb, 1.0); return; }
-
-  vec3 color = tex.rgb * vColor.rgb * light;
   float alpha = tex.a * (uTranslucent > 0.5 ? vColor.a : 1.0);
 
   // Direct sun / moon with a PCF shadow term. Only active in shader mode; translucent water
@@ -154,7 +195,68 @@ void main() {
       // deep shade / caves keep the lightmap value only, like the vanilla direct term.
       // vLight.x is the SKY light (vLight = (sky, block)); the lightmap sample uses vLight.yx.
       float skyMask = smoothstep(0.0, 0.55, vLight.x / 15.0);
-      color += tex.rgb * vColor.rgb * uSunColor * ndl * lit * skyMask;
+      // The vanilla lightmap ALREADY contains the sun's brightness and colour. Adding a second
+      // sun on top made every lit surface ~50% brighter than vanilla, which read as oversaturated
+      // neon ("the shader makes all colours too vivid"). The shadow map now only attenuates the
+      // direct/sky component: lit = 1, shadow keeps 55% ambient. uShadowDay is computed from the
+      // SUN's elevation (not uSunDir, which is the moon at night), so the night lightmap is untouched.
+      float sunUp = uShadowDay;
+      float shadow = mix(1.0, mix(0.55, 1.0, lit), skyMask * ndl * sunUp);
+      color = albedo * (blockLight + skyLight * shadow);
+    }
+  }
+
+  // Water: screen-space reflections against the pre-water colour/depth snapshots. Ray-marches the
+  // reflected view ray in clip space; a hit is the first step that lands behind opaque geometry.
+  // Fresnel keeps the reflection subtle head-on and strong at grazing angles, like Complementary.
+  if (uDebug == 14) {
+    bool dbgWater = uTranslucent > 0.5 && uWaterLayers.x >= 0
+      && (int(vLayer) == uWaterLayers.x || int(vLayer) == uWaterLayers.y);
+    fragColor = vec4(uWaterReflect == 1 ? 1.0 : 0.0, dbgWater ? 1.0 : 0.0, 0.0, 1.0);
+    return;
+  }
+  if (uWaterReflect == 1 && uTranslucent > 0.5 && uWaterLayers.x >= 0
+      && (int(vLayer) == uWaterLayers.x || int(vLayer) == uWaterLayers.y)) {
+    vec3 n = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+    if (n.y < 0.0) n = -n;
+    vec3 v = normalize(vWorldPos - uCameraPos);
+    vec3 r = reflect(v, n);
+    float dbgRayD = 0.0;
+    float dbgSceneD = 0.0;
+    if (r.y > 0.0) {
+      vec3 pos = vWorldPos;
+      float stepLen = 0.4;
+      vec2 hitUV = vec2(-1.0);
+      float hitFade = 0.0;
+      for (int i = 0; i < 16; i++) {
+        pos += r * stepLen;
+        stepLen *= 1.32;
+        vec4 c = uViewProj * vec4(pos, 1.0);
+        if (c.w <= 0.0) break;
+        vec2 uv = (c.xy / c.w) * 0.5 + 0.5;
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
+        float sceneD = texture(uSceneDepth, uv).r;
+        float rayD = c.z / c.w * 0.5 + 0.5;
+        dbgRayD = rayD;
+        dbgSceneD = sceneD;
+        if (rayD > sceneD && rayD - sceneD < 0.06) {
+          hitUV = uv;
+          hitFade = 1.0 - float(i) / 16.0;
+          break;
+        }
+      }
+      if (uDebug == 16) {
+        fragColor = vec4(hitUV.x >= 0.0 ? 1.0 : 0.0, dbgRayD, dbgSceneD, 1.0);
+        return;
+      }
+      if (hitUV.x >= 0.0) {
+        float fres = 0.03 + 0.97 * pow(1.0 - max(dot(-v, n), 0.0), 5.0);
+        float strength = clamp(fres * 0.9, 0.0, 0.8) * hitFade;
+        color = mix(color, texture(uSceneColor, hitUV).rgb, strength);
+      }
+    } else if (uDebug == 16) {
+      fragColor = vec4(0.0, 0.0, 1.0, 1.0); // reflected ray points down
+      return;
     }
   }
 

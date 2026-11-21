@@ -15,6 +15,8 @@ import { canCreateEntity, createEntity } from '../src/vanilla/world/entity/Entit
 import { MobCategory } from '../src/vanilla/world/entity/MobCategory.ts';
 import { setSpawnBlockTags } from '../src/vanilla/world/entity/SpawnPlacements.ts';
 import { ItemEntity } from '../src/vanilla/world/entity/item/ItemEntity.ts';
+import { ItemStack } from '../src/vanilla/world/item/ItemStack.ts';
+import type { Item } from '../src/vanilla/world/item/Item.ts';
 import type { ClientLevel } from '../src/vanilla/world/level/ClientLevel.ts';
 import type { Entity } from '../src/vanilla/world/entity/Entity.ts';
 import {
@@ -108,8 +110,12 @@ function run(seed: number): RunResult {
   manager.spawn('creeper', 40, GROUND, 40);
 
   const items: ItemEntity[] = [];
+  // EntityType.ITEM.create leaves the stack empty (vanilla /summon item with no
+  // Item tag spawns nothing visible), so the harness assigns a real stack.
+  const stoneItem = { name: 'stone', maxStack: 64 } as unknown as Item;
   for (let i = 0; i < 10; i++) {
     const it = manager.spawn('item', (i % 5 - 2) * 0.6, GROUND + 2, (Math.floor(i / 5) - 1) * 0.6) as ItemEntity;
+    it.item = new ItemStack(stoneItem, 1);
     it.push((i % 3 - 1) * 0.02, -0.05, (Math.floor(i / 3) - 1) * 0.02);
     items.push(it);
   }

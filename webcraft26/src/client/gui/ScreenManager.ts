@@ -35,6 +35,7 @@ import { ControlsScreen } from './screens/options/ControlsScreen.js';
 import { LanguageSelectScreen } from './screens/options/LanguageSelectScreen.js';
 import { SoundOptionsScreen } from './screens/options/SoundOptionsScreen.js';
 import { PauseScreen } from './screens/PauseScreen.js';
+import { StatisticsScreen } from './screens/StatisticsScreen.js';
 import { DeathScreen } from './screens/DeathScreen.js';
 import { ChatScreen } from './screens/ChatScreen.js';
 import { InventoryScreen } from './screens/inventory/InventoryScreen.js';
@@ -42,13 +43,16 @@ import { CreativeModeInventoryScreen } from './screens/inventory/CreativeModeInv
 import { CraftingScreen } from './screens/inventory/CraftingScreen.js';
 import { FurnaceScreen } from './screens/inventory/FurnaceScreen.js';
 import { ChestScreen } from './screens/inventory/ChestScreen.js';
+import { EnchantingScreen } from './screens/inventory/EnchantingScreen.js';
+import { BrewingScreen } from './screens/inventory/BrewingScreen.js';
 
 /** Textures that must be decoded before the first screen is drawn. */
 const PRELOAD_TEXTURES = [
   'gui/menu_background', 'gui/inworld_menu_background',
   'gui/header_separator', 'gui/footer_separator',
   'gui/container/inventory', 'gui/container/crafting_table', 'gui/container/furnace',
-  'gui/container/generic_54', 'gui/recipe_book',
+  'gui/container/generic_54', 'gui/container/enchanting_table', 'gui/container/brewing_stand',
+  'gui/recipe_book',
   'gui/container/creative_inventory/tab_items',
   'gui/container/creative_inventory/tab_inventory',
   'gui/container/creative_inventory/tab_item_search',
@@ -128,6 +132,7 @@ export class ScreenManager {
       language: () => new LanguageSelectScreen(e),
       sound: () => new SoundOptionsScreen(e),
       pause: () => new PauseScreen(e),
+      stats: () => new StatisticsScreen(e),
       death: (cause?: unknown, score?: unknown) => new DeathScreen(e, String(cause ?? ''), String(score ?? '')),
       chat: (initial?: unknown) => new ChatScreen(e, String(initial ?? '')),
       inventory: () => new InventoryScreen(e),
@@ -135,6 +140,8 @@ export class ScreenManager {
       crafting: () => new CraftingScreen(e),
       furnace: () => new FurnaceScreen(e),
       chest: (rows?: unknown) => new ChestScreen(e, typeof rows === 'number' ? rows : 3),
+      enchanting: () => new EnchantingScreen(e),
+      brewing: () => new BrewingScreen(e),
     };
   }
 

@@ -16,6 +16,8 @@ export interface ItemComponents {
   /** Enchantment id (short, e.g. "silk_touch") -> level. */
   enchantments?: Record<string, number>;
   unbreakable?: boolean;
+  /** Potion item component: potion id ("water", "swiftness", "long_swiftness", ...). */
+  potion?: string;
 }
 
 export interface ItemStackNBT {
@@ -48,9 +50,15 @@ export class ItemStack {
   // ---- core state ---------------------------------------------------------
 
   isEmpty(): boolean { return this.item === null || this.count <= 0; }
-  getItem(): Item | null { return this.item; }
+  /** ItemStack.getItem(): an empty stack reports AIR, even if a stale item ref remains. */
+  getItem(): Item | null { return this.isEmpty() ? null : this.item; }
   getCount(): number { return this.isEmpty() ? 0 : this.count; }
-  setCount(count: number): void { this.count = count; }
+  setCount(count: number): void {
+    this.count = Math.max(0, count);
+    // Reaching zero clears the item reference so holders of the old stack see a real
+    // empty stack (the old code kept `item` set, which produced the "empty-stack zombie").
+    if (this.count <= 0) this.item = null;
+  }
   grow(amount: number): void { this.setCount(this.getCount() + amount); }
   shrink(amount: number): void { this.grow(-amount); }
   getPopTime(): number { return this.popTime; }
@@ -166,6 +174,7 @@ export class ItemStack {
     if ((a.damage ?? 0) !== (b.damage ?? 0)) return false;
     if ((a.customName ?? '') !== (b.customName ?? '')) return false;
     if ((a.unbreakable ?? false) !== (b.unbreakable ?? false)) return false;
+    if ((a.potion ?? '') !== (b.potion ?? '')) return false;
     const ea = a.enchantments ?? {};
     const eb = b.enchantments ?? {};
     const ka = Object.keys(ea), kb = Object.keys(eb);
@@ -198,7 +207,8 @@ export class ItemStack {
       count: this.getCount(),
     };
     if (this.components.damage !== undefined || this.components.customName !== undefined
-      || this.components.enchantments !== undefined || this.components.unbreakable !== undefined) {
+      || this.components.enchantments !== undefined || this.components.unbreakable !== undefined
+      || this.components.potion !== undefined) {
       out.components = { ...this.components };
     }
     return out;

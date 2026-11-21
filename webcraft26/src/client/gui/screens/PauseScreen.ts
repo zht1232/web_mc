@@ -38,16 +38,18 @@ export class PauseScreen extends Screen {
       this.addRenderableWidget(new Button(left + col * (halfW + gap), y, halfW, BUTTON_DEFAULT_HEIGHT, label, action));
     };
 
-    addHalf(this.t('menu.advancements'), () => this.toast('Advancements'), 0);
-    addHalf(this.t('menu.stats'), () => this.toast('Statistics'), 1);
+    addHalf(this.t('menu.advancements'), () => this.toast(this.t('menu.advancements')), 0);
+    addHalf(this.t('menu.stats'), () => this.open('stats'), 1);
     y += BUTTON_DEFAULT_HEIGHT + PAUSE_BUTTON_PADDING;
 
     addHalf(this.t('menu.options'), () => this.open('options'), 0);
-    addHalf(this.t('menu.multiplayerOptions.button'), () => this.toast('Multiplayer Options'), 1);
+    addHalf(this.t('menu.multiplayerOptions.button'), () => this.toast(this.t('menu.multiplayerOptions.button')), 1);
     y += BUTTON_DEFAULT_HEIGHT + PAUSE_BUTTON_PADDING * 2;
 
+    // Singleplayer pause menu: PauseScreen uses menu.returnToMenu ("Save and Quit to Title"),
+    // not menu.disconnect (that label belongs to a remote server connection).
     this.addRenderableWidget(new Button(left, y, PAUSE_BUTTON_WIDTH_FULL, BUTTON_DEFAULT_HEIGHT,
-      this.t('menu.disconnect'), () => this.env.deps.callbacks.onQuit?.()));
+      this.t('menu.returnToMenu'), () => this.env.deps.callbacks.onQuit?.()));
   }
 
   protected renderForeground(g: GuiGraphics, _mx: number, _my: number, _pt: number): void {

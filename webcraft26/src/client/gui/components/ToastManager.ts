@@ -44,6 +44,9 @@ export class ToastManager {
     }
   }
 
+  /** Toasts are drawn on top of the shared canvas, so the HUD must keep repainting while any are up. */
+  get activeCount(): number { return this.active.length + this.queue.length; }
+
   render(g: GuiGraphics, screenWidth: number): void {
     const x = screenWidth - ToastManager.RIGHT_MARGIN - TOAST_WIDTH;
     let y = ToastManager.TOP_MARGIN;

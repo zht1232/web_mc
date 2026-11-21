@@ -84,6 +84,9 @@ export class PostProcessor {
   private depthCopyTex: WebGLTexture | null = null;
   private depthCopyFbo: WebGLFramebuffer | null = null;
   private depthCopied = false;
+  /** Opaque-scene colour snapshot for the water pass's screen-space reflections. */
+  private waterColorTex: WebGLTexture | null = null;
+  private waterColorFbo: WebGLFramebuffer | null = null;
   private ldrTex: WebGLTexture | null = null;
   private ldrFbo: WebGLFramebuffer | null = null;
   private mips: BloomMip[] = [];
@@ -288,6 +291,10 @@ export class PostProcessor {
     if (this.depthTex) gl.deleteTexture(this.depthTex);
     if (this.depthCopyFbo) gl.deleteFramebuffer(this.depthCopyFbo);
     if (this.depthCopyTex) gl.deleteTexture(this.depthCopyTex);
+    if (this.waterColorFbo) gl.deleteFramebuffer(this.waterColorFbo);
+    if (this.waterColorTex) gl.deleteTexture(this.waterColorTex);
+    this.waterColorFbo = null;
+    this.waterColorTex = null;
     for (const f of this.historyFbo) if (f) gl.deleteFramebuffer(f);
     for (const t of this.historyTex) if (t) gl.deleteTexture(t);
     this.historyFbo = [null, null];
@@ -489,6 +496,9 @@ export class PostProcessor {
    */
   captureDepth(): void {
     if (!this.enabled || !this.depthTextureOk || !this.sceneFbo || !this.depthCopyFbo || !this.depthCopyTex) return;
+    // First capture wins: LevelRenderer snapshots depth before the water pass for the reflection
+    // ray march; capturing again after the hand cleared depth would destroy the usable copy.
+    if (this.depthCopied) return;
     const gl = this.gl;
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.sceneFbo);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.depthCopyFbo);
@@ -500,6 +510,48 @@ export class PostProcessor {
 
   /** True once captureDepth() ran this frame (the composite pass samples the copy). */
   get hasDepthCopy(): boolean { return this.depthCopied && this.depthCopyTex !== null; }
+
+  /** Opaque-scene colour/depth snapshots for the water reflection shader (null when disabled). */
+  get waterColor(): WebGLTexture | null { return this.waterColorTex; }
+  get waterDepth(): WebGLTexture | null { return this.depthCopyTex; }
+  get blackTexture(): WebGLTexture { return this.blackTex; }
+  get targetWidth(): number { return this.width; }
+  get targetHeight(): number { return this.height; }
+
+  /**
+   * Snapshots the opaque scene (colour + depth) right before the translucent water pass so the
+   * water can reflect what is actually on screen (OpusMC/Complementary screen-space reflections)
+   * without sampling the target it is writing into.
+   */
+  captureWaterSource(): void {
+    if (!this.enabled || !this.sceneFbo || !this.sceneTex) return;
+    const gl = this.gl;
+    if (!this.waterColorTex && this.width > 0 && this.height > 0) {
+      this.waterColorTex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.waterColorTex);
+      if (this.useHalfFloat) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, this.width, this.height, 0, gl.RGBA, gl.HALF_FLOAT, null);
+      } else {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.width, this.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      }
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.waterColorFbo = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.waterColorFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.waterColorTex, 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFbo);
+    }
+    if (!this.waterColorFbo) return;
+    this.captureDepth();
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.sceneFbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.waterColorFbo);
+    gl.blitFramebuffer(0, 0, this.width, this.height, 0, 0, this.width, this.height,
+      gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFbo);
+  }
 
   /**
    * Re-binds the HDR scene target after a pass that had to render into its own framebuffer
@@ -533,9 +585,14 @@ export class PostProcessor {
     const bloom = this.mips.length > 0 ? this.runBloomChain(colorTex) : this.blackTex;
     const useFxaa = this.qualityValue !== 'low';
 
-    // Composite -> LDR intermediate (so FXAA can read it), or straight to the screen.
+    // Composite -> LDR intermediate (so FXAA can read it), or straight to the screen. When the
+    // composite writes the default framebuffer with dynamic resolution active, the canvas is
+    // larger than the target: the pass must cover the whole drawing buffer and let the hardware
+    // upscale, otherwise the border stays black.
+    const screenW = gl.drawingBufferWidth;
+    const screenH = gl.drawingBufferHeight;
     gl.bindFramebuffer(gl.FRAMEBUFFER, useFxaa ? this.ldrFbo : null);
-    gl.viewport(0, 0, this.width, this.height);
+    gl.viewport(0, 0, useFxaa ? this.width : screenW, useFxaa ? this.height : screenH);
     this.composite.use();
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, colorTex);
@@ -559,7 +616,7 @@ export class PostProcessor {
 
     if (useFxaa) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, this.width, this.height);
+      gl.viewport(0, 0, screenW, screenH);
       this.fxaa.use();
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.ldrTex);

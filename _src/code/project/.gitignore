@@ -1,5 +1,0 @@
-node_modules/
-dist/
-# Official Minecraft assets are imported from the user's own installation and must never be committed
-public/mc/
-*.jar

@@ -1,0 +1,41 @@
+﻿import path from "node:path";
+import { chromium } from "playwright";
+import { launchOptions } from "./lib/browser.mjs";
+const out = "shots";
+const b = await chromium.launch(launchOptions());
+const p = await (await b.newContext({ viewport: { width: 1024, height: 640 } })).newPage();
+const errors = [];
+p.on("pageerror", (e) => errors.push(String(e)));
+p.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+await p.goto("http://127.0.0.1:5174/?play&perf=0", { waitUntil: "load" });
+await p.waitForFunction(() => !!window.__mc?.running, null, { timeout: 120000 });
+await p.waitForTimeout(7000);
+await p.evaluate(() => { window.__mc.setShaders(true); window.__mc.setShaderQuality("high"); });
+await p.waitForTimeout(1500);
+const setup = await p.evaluate(async () => {
+  const g = window.__mc;
+  const { Vec3 } = await import("/src/vanilla/core/Geometry.ts");
+  g.level.time = 6000;
+  const px = Math.floor(g.player.pos.x), pz = Math.floor(g.player.pos.z);
+  const gy = g.level.getHeight(px, pz);
+  const stone = g.mc.stateOf("stone");
+  for (let dx = -5; dx <= 5; dx++) for (let dz = -5; dz <= 5; dz++) g.level.setBlockState(px + dx, gy + 5, pz + dz, stone);
+  g.player.pos = new Vec3(px + 0.5, gy + 1, pz + 0.5);
+  g.player.pitch = 60; g.player.yaw = 0;
+  return { px, pz, gy };
+});
+await p.waitForTimeout(2500);
+await p.screenshot({ path: path.join(out, "_probe-shadow-roof.png") });
+await p.evaluate(() => { window.__mc.renderer.debugMode = 11; });
+await p.waitForTimeout(800);
+await p.screenshot({ path: path.join(out, "_probe-shadow-term.png") });
+await p.evaluate(() => { window.__mc.renderer.debugMode = 0; });
+// sample the lit-term image: shadowed pixels should be 0, lit pixels 1
+const px = await p.evaluate(() => {
+  const gl = window.__mc.gl;
+  const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+  const read = (fx, fy) => { const b = new Uint8Array(4); gl.readPixels(Math.floor(w * fx), Math.floor(h * fy), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, b); return [...b]; };
+  return { shadowCenter: read(0.5, 0.5), litEdge: read(0.08, 0.15), litMid: read(0.9, 0.5) };
+});
+console.log(JSON.stringify({ setup, px, errors: errors.slice(0, 5) }));
+await b.close();

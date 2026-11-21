@@ -13,15 +13,25 @@ export class CreeperSwellGoal extends Goal {
     this.setFlags(GoalFlag.MOVE, GoalFlag.LOOK);
   }
 
+  /** Creative/spectator players must never make a creeper swell or explode. */
+  private targetIsProtectedPlayer(): boolean {
+    const t = this.mob.getTarget();
+    if (!t || t.getTypeName() !== 'player') return false;
+    const mode = this.mob.getWorld()?.getPlayerGameMode?.() ?? 'survival';
+    return mode === 'creative' || mode === 'spectator';
+  }
+
   canUse(): boolean {
     const t = this.mob.getTarget();
     return t !== null && t.isAlive() && this.mob.swell < 1
+      && !this.targetIsProtectedPlayer()
       && this.mob.distanceToSqr(t.x, t.y, t.z) < 81;
   }
 
   canContinueToUse(): boolean {
     const t = this.mob.getTarget();
-    return t !== null && t.isAlive() && this.mob.swell < 1 && !this.mob.isRemoved();
+    return t !== null && t.isAlive() && this.mob.swell < 1 && !this.mob.isRemoved()
+      && !this.targetIsProtectedPlayer();
   }
 
   start(): void {

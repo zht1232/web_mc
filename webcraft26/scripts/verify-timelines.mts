@@ -4,15 +4,15 @@
 // from the Java source (and cross-checked against the shipped datapack JSON), then
 // compared with the TypeScript port.
 //
-//   cd G:\web_mc\webcraft26 && npx tsx scripts/verify-timelines.mts
+//   cd webcraft26 && npx tsx scripts/verify-timelines.mts
 //
 // Sources parsed here (never trusted from typeScript):
-//   G:/ck-web26/src-vanilla/net/minecraft/world/timeline/Timelines.java
-//   G:/ck-web26/src-vanilla/net/minecraft/world/attribute/EnvironmentAttributes.java
-//   G:/ck-web26/src-vanilla/net/minecraft/util/EasingType.java        (semantics copied)
-//   G:/ck-web26/src-vanilla/net/minecraft/util/KeyframeTrackSampler.java (semantics copied)
-//   G:/ck-web26/src-vanilla/data/minecraft/timeline/day.json + moon.json
-//   G:/ck-web26/src-vanilla/data/minecraft/dimension_type/overworld.json
+//   src-vanilla/net/minecraft/world/timeline/Timelines.java
+//   src-vanilla/net/minecraft/world/attribute/EnvironmentAttributes.java
+//   src-vanilla/net/minecraft/util/EasingType.java        (semantics copied)
+//   src-vanilla/net/minecraft/util/KeyframeTrackSampler.java (semantics copied)
+//   src-vanilla/data/minecraft/timeline/day.json + moon.json
+//   src-vanilla/data/minecraft/dimension_type/overworld.json
 
 import fs from 'node:fs';
 import {
@@ -21,7 +21,7 @@ import {
   argb, alpha8, red8, green8, blue8, srgbLerp,
 } from '../src/client/EnvironmentLighting.ts';
 
-const ROOT = 'G:/ck-web26';
+const ROOT = 'ck-web26';
 const SRC = `${ROOT}/src-vanilla/net/minecraft`;
 const read = (p: string) => fs.readFileSync(p, 'utf8');
 

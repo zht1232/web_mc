@@ -19,6 +19,7 @@ export class BreedGoal extends Goal {
 
   canUse(): boolean {
     if (!this.mob.isInLove()) return false;
+    if (this.mob.getAge() !== 0) return false; // Animal.canFallInLove: adults only
     const world = this.mob.getWorld();
     if (!world) return false;
     let best: Targetable | null = null;
@@ -30,6 +31,7 @@ export class BreedGoal extends Goal {
       if (e.getTypeName() !== this.mob.getTypeName()) continue;
       const m = e as unknown as Mob;
       if (!m.isInLove || !m.isInLove()) continue;
+      if (m.getAge() !== 0) continue;
       const d = this.mob.distanceToSqr(e.x, e.y, e.z);
       if (d < bestD) { best = e; bestD = d; }
     }
@@ -41,7 +43,7 @@ export class BreedGoal extends Goal {
   canContinueToUse(): boolean {
     const p = this.partner;
     if (!p || !p.isAlive() || !this.mob.isInLove()) return false;
-    return this.timer > 0 && this.mob.distanceToSqr(p.x, p.y, p.z) > 4;
+    return this.timer > 0;
   }
 
   start(): void {
@@ -54,9 +56,10 @@ export class BreedGoal extends Goal {
     this.timer--;
     this.mob.getMoveControl().setWantedPosition(p.getX(), p.getY(), p.getZ(), this.speed);
     if (this.mob.distanceToSqr(p.getX(), p.getY(), p.getZ()) < 4) {
-      this.mob.setInLove(false);
-      const partner = p as unknown as Mob;
-      partner.setInLove(false);
+      // Animal.spawnChildFromBreeding: spawns the child, XP and the 6000-tick
+      // cooldown on both parents (the partner's love is reset there too).
+      this.mob.breedWith(p as unknown as Mob);
+      this.timer = 0;
     }
   }
 

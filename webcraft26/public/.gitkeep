@@ -1,0 +1,2 @@
+# Asset placeholder. `npm run assets` writes the imported Minecraft resources into public/mc/,
+# which is intentionally ignored by git (Mojang assets are not distributed with this repository).

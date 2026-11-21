@@ -15,6 +15,9 @@ export class Rabbit extends Animal {
     this.maxHealth = 3; this.health = 3;
   }
 
+  /** ItemTags.RABBIT_FOOD. */
+  protected getTemptingItems(): readonly string[] { return ['carrot', 'golden_carrot', 'dandelion']; }
+
   protected registerGoals(): void {
     super.registerGoals();
     this.goalSelector.addGoal(1, new AvoidEntityGoal(

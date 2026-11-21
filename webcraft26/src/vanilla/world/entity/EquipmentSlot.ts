@@ -9,10 +9,11 @@ export enum EquipmentSlotType { HAND, HUMANOID_ARMOR, ANIMAL_ARMOR }
 export class EquipmentSlot {
   static readonly MAINHAND = new EquipmentSlot('mainhand', EquipmentSlotType.HAND, 0, 0, 'mainhand');
   static readonly OFFHAND = new EquipmentSlot('offhand', EquipmentSlotType.HAND, 1, 0, 'offhand');
-  static readonly FEET = new EquipmentSlot('feet', EquipmentSlotType.HUMANOID_ARMOR, 0, 1, 'feet');
+  // armorIndex selects the equipment[] slot via 2 + armorIndex (feet=2 .. head=5).
+  static readonly FEET = new EquipmentSlot('feet', EquipmentSlotType.HUMANOID_ARMOR, 0, 0, 'feet');
   static readonly LEGS = new EquipmentSlot('legs', EquipmentSlotType.HUMANOID_ARMOR, 1, 1, 'legs');
-  static readonly CHEST = new EquipmentSlot('chest', EquipmentSlotType.HUMANOID_ARMOR, 2, 1, 'chest');
-  static readonly HEAD = new EquipmentSlot('head', EquipmentSlotType.HUMANOID_ARMOR, 3, 1, 'head');
+  static readonly CHEST = new EquipmentSlot('chest', EquipmentSlotType.HUMANOID_ARMOR, 2, 2, 'chest');
+  static readonly HEAD = new EquipmentSlot('head', EquipmentSlotType.HUMANOID_ARMOR, 3, 3, 'head');
   static readonly BODY = new EquipmentSlot('body', EquipmentSlotType.ANIMAL_ARMOR, 0, 1, 'body');
 
   static readonly HUMAN_ARMOR_SLOTS: readonly EquipmentSlot[] = [

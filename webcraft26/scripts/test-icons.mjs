@@ -197,15 +197,8 @@ for (let attempt = 0; attempt < 4 && !hud; attempt++) {
     const ids = hotbar.map((n) => items.findIndex((it) => it.name === n));
     const realItems = ids.map((id) => registry.get(id));
 
-    // instrument ItemIconAtlas.draw as the HUD calls it
-    const calls = [];
-    const orig = g.icons.draw.bind(g.icons);
-    g.icons.draw = (ctx, id, x, y, size) => {
-      if (calls.length < 9) calls.push({ id, cell: g.icons.cellOf[id], x, y, size, gui: ctx.canvas === g.guiCanvas });
-      return orig(ctx, id, x, y, size);
-    };
-    await frame();
-    g.icons.draw = orig;
+    // The HUD is dirty-tracked, so instrument ItemIconAtlas.draw right before a state change that
+    // forces a repaint (filling the hotbar below) instead of relying on an every-frame draw.
 
     const scale = g.guiScale;
     const logicalW = window.innerWidth / scale;
@@ -228,7 +221,16 @@ for (let attempt = 0; attempt < 4 && !hud; attempt++) {
     }
     inv.setSelectedSlot(0);
     g.selectedSlot = 0;
-    await frame(); await frame();
+    // The hotbar change above invalidates the dirty HUD: capture the draw calls it produces.
+    const calls = [];
+    const orig = g.icons.draw.bind(g.icons);
+    g.icons.draw = (ctx, id, x, y, size) => {
+      if (calls.length < 9) calls.push({ id, cell: g.icons.cellOf[id], x, y, size, gui: ctx.canvas === g.guiCanvas });
+      return orig(ctx, id, x, y, size);
+    };
+    await frame();
+    await frame();
+    g.icons.draw = orig;
     const filled = read();
 
     // per slot (20 logical px apart, 16 logical icons): did pixels change?

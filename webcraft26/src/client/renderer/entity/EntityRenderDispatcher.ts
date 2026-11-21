@@ -25,9 +25,13 @@ import { GlProgram, createTexture2D, loadImage } from '../gl/Gl.js';
 import { ENTITY_VERT, ENTITY_FRAG, SHADOW_VERT, SHADOW_FRAG } from './EntityShaders.js';
 import { EntityBatch, EntityRenderer, FLOATS_PER_VERTEX } from './EntityRenderer.js';
 import { MobRenderer } from './MobRenderer.js';
-import { ItemEntityRenderer } from './ItemEntityRenderer.js';
+import { SkeletonRenderer } from './SkeletonRenderer.js';
+import { ItemEntityRenderer, type ItemIconSource } from './ItemEntityRenderer.js';
 import { ArrowRenderer } from './ArrowRenderer.js';
-import { ALL_TEXTURE_KEYS, WHITE_TEXTURE, MODEL_REGISTRY } from './model/ModelRegistry.js';
+import { TntRenderer } from './TntRenderer.js';
+import { FishingBobberRenderer } from './FishingBobberRenderer.js';
+import { ThrownEggRenderer } from './ThrownEggRenderer.js';
+import { ALL_TEXTURE_KEYS, WHITE_TEXTURE, ITEM_ICON_TEXTURE, MODEL_REGISTRY } from './model/ModelRegistry.js';
 import { computeFog, argbFromRgb } from '../environment/FogState.js';
 import type { SkyState } from '../../EnvironmentLighting.js';
 import type { Entity } from '../../../vanilla/world/entity/Entity.js';
@@ -50,6 +54,12 @@ export class EntityRenderDispatcher {
   private combined: Float32Array = new Float32Array(4096 * FLOATS_PER_VERTEX);
   private readonly n: number;
   private loading: Promise<void> | null = null;
+
+  /** Dropped-item icons come from the GUI atlas; uploaded lazily when it (re)builds. */
+  private itemIconAtlas: ItemIconSource | null = null;
+  private itemIconCanvas: HTMLCanvasElement | null = null;
+  private itemIconTexture: WebGLTexture | null = null;
+  private readonly itemEntityRenderer: ItemEntityRenderer;
 
   // entity shadows (ShadowFeatureRenderer): one program + one 1-float-per-vertex VBO
   private readonly shadowProgram: GlProgram;
@@ -134,11 +144,24 @@ export class EntityRenderDispatcher {
     // one renderer per renderable entity type
     for (const name of Object.keys(MODEL_REGISTRY)) {
       if (name === 'quadruped') continue;
-      this.renderers.set(name, new MobRenderer(name));
+      // The skeleton family draws its bow as an equipment layer (only when held).
+      if (name === 'skeleton' || name === 'stray' || name === 'bogged'
+        || name === 'parched' || name === 'wither_skeleton') {
+        this.renderers.set(name, new SkeletonRenderer(name));
+      } else {
+        this.renderers.set(name, new MobRenderer(name));
+      }
     }
-    this.renderers.set('item', new ItemEntityRenderer());
-    this.renderers.set('experience_orb', new ItemEntityRenderer());
+    this.itemEntityRenderer = new ItemEntityRenderer();
+    this.renderers.set('item', this.itemEntityRenderer);
+    this.renderers.set('experience_orb', this.itemEntityRenderer);
     this.renderers.set('arrow', new ArrowRenderer());
+    this.renderers.set('tnt', new TntRenderer());
+    this.renderers.set('fishing_bobber', new FishingBobberRenderer());
+    this.renderers.set('egg', new ThrownEggRenderer());
+    // ThrownItemRenderer: splash/lingering potions draw their item sprite while in flight.
+    this.renderers.set('splash_potion', this.itemEntityRenderer);
+    this.renderers.set('lingering_potion', this.itemEntityRenderer);
 
     // kick off texture loading; render() simply skips textures not ready yet
     void this.init(base).catch(() => { /* headless / missing assets are non-fatal */ });
@@ -146,6 +169,33 @@ export class EntityRenderDispatcher {
 
   /** True when this entity type has a renderer (types without one would spawn invisible). */
   canRender(typeName: string): boolean { return this.renderers.has(typeName); }
+
+  /** Supplies the GUI's baked item-icon atlas; dropped items then draw real icons. */
+  setItemIconAtlas(atlas: ItemIconSource): void {
+    this.itemIconAtlas = atlas;
+    this.itemEntityRenderer.setIconAtlas(atlas);
+  }
+
+  /** Uploads/refreshes the atlas texture only when ItemIconAtlas produced a new canvas. */
+  private syncItemIconTexture(): void {
+    const atlas = this.itemIconAtlas;
+    const canvas = atlas?.bakedCanvas ?? null;
+    const slot = this.texIdByKey.get(ITEM_ICON_TEXTURE);
+    if (!atlas || !canvas || slot === undefined) return;
+    if (this.itemIconCanvas === canvas && this.textures[slot]) return;
+    const gl = this.gl;
+    if (!this.itemIconTexture) this.itemIconTexture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.itemIconTexture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    this.textures[slot] = this.itemIconTexture;
+    this.itemIconCanvas = canvas;
+  }
 
   /** Loads all entity textures. Safe to call multiple times (idempotent). */
   init(base = '/mc/textures/entity'): Promise<void> {
@@ -185,9 +235,13 @@ export class EntityRenderDispatcher {
     const gl = this.gl;
     for (let i = 0; i < this.n; i++) {
       const key = ALL_TEXTURE_KEYS[i];
-      if (key === WHITE_TEXTURE || this.textures[i]) continue;
+      if (key === WHITE_TEXTURE || key === ITEM_ICON_TEXTURE || this.textures[i]) continue;
       try {
-        const img = await loadImage(`${base}/${key}.png`);
+        // `block/...` keys (PrimedTnt) live under textures/block, not textures/entity.
+        const url = key.startsWith('block/')
+          ? `${base.slice(0, base.lastIndexOf('/'))}/${key}.png`
+          : `${base}/${key}.png`;
+        const img = await loadImage(url);
         const tex = gl.createTexture()!;
         gl.bindTexture(gl.TEXTURE_2D, tex);
         // vanilla entity textures: UV (0,0) is the top-left texel, no Y flip
@@ -212,6 +266,9 @@ export class EntityRenderDispatcher {
   private previewW = 0;
   private previewH = 0;
   private previewCanvas: HTMLCanvasElement | null = null;
+  /** Cache key + time of the last preview bake (see renderPreview). */
+  private previewKey = '';
+  private previewAt = 0;
   private readonly previewView = new Float32Array(16);
   private readonly previewProj = new Float32Array(16);
   private readonly previewVp = new Float32Array(16);
@@ -259,6 +316,18 @@ export class EntityRenderDispatcher {
       this.previewH = h;
     }
 
+    // The readPixels below is a GPU sync point. Running it every frame while an inventory is open
+    // showed up as `screens` 30 ms spikes and a 35 fps dip. The preview only changes with the
+    // size and the mouse-follow yaw, so reuse the last canvas unless the yaw moved ~1.4 degrees
+    // (or 200 ms passed, which covers an equipment change).
+    const key = `${w}x${h}|${Math.round(yawRad * 40)}`;
+    const now = performance.now();
+    if (this.previewCanvas && key === this.previewKey && now - this.previewAt < 200) {
+      return this.previewCanvas;
+    }
+    this.previewKey = key;
+    this.previewAt = now;
+
     // InventoryScreen#extractEntityInInventoryFollowsMouse(x0,y0,x1,y1, 30, 0.0625, mouseX, mouseY):
     // the figure is a 3/4 view (vanilla applies ~30 deg of body yaw plus the mouse delta), seen
     // slightly from above, and fills about 70% of the 49x70 box. A straight-on, head-cropped
@@ -285,11 +354,11 @@ export class EntityRenderDispatcher {
     const pixels = new Uint8Array(w * h * 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFbo);
     gl.viewport(0, 0, w, h);
-    // Vanilla InventoryScreen draws the player over the light-grey container panel; clearing
-    // to transparent black left an opaque black rectangle when the alpha channel had been
-    // masked by the previous pass. An opaque #c6c6c6 base matches the GUI and is stable.
+    // InventoryScreen's preview box is BLACK in the vanilla 26.2 inventory texture (the
+    // entity is drawn into that black window), not the grey container panel. Clearing to an
+    // opaque black keeps the alpha channel stable and matches the reference screenshot.
     gl.colorMask(true, true, true, true);
-    gl.clearColor(0xc6 / 255, 0xc6 / 255, 0xc6 / 255, 1);
+    gl.clearColor(0, 0, 0, 1);
     gl.depthMask(true);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     try {
@@ -317,6 +386,7 @@ export class EntityRenderDispatcher {
   render(entities: Iterable<Entity>, viewProj: Float32Array, camera: EntityCamera, partialTick: number): void {
     const gl = this.gl;
     this.batch.reset();
+    this.syncItemIconTexture();
     const maxDist2 = this.renderDistance * this.renderDistance;
 
     for (const e of entities) {
@@ -328,6 +398,14 @@ export class EntityRenderDispatcher {
       const texId = this.texIdByKey.get(renderer.getTextureKey(e));
       if (texId === undefined || !this.textures[texId]) continue;
       renderer.append(e, this.batch, texId, partialTick);
+      // Extra render layers (e.g. SheepRenderer's tinted wool over the skin).
+      const layers = renderer.getLayers(e);
+      for (let i = 0; i < layers.length; i++) {
+        const layer = layers[i];
+        const layerTex = this.texIdByKey.get(layer.texture);
+        if (layerTex === undefined || !this.textures[layerTex]) continue;
+        renderer.appendModel(e, layer.model, layer.tint, this.batch, layerTex, partialTick);
+      }
     }
 
     // total float count

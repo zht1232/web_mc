@@ -54,6 +54,12 @@ export class Player {
   sprinting = false;
   flying = false;
   swimming = false;
+  /** Status-effect movement multiplier (speed/slowness), set by Game each tick. */
+  speedMultiplier = 1;
+  /** Status-effect jump multiplier (jump_boost), set by Game each tick. */
+  jumpMultiplier = 1;
+  /** MobEffects.SLOW_FALLING: clamp descent and ignore fall distance. */
+  slowFalling = false;
   inWater = false;
   /** accumulates fall distance for damage */
   fallDistance = 0;
@@ -95,7 +101,9 @@ export class Player {
     const waterTravel = this.inWater && !this.flying;
     this.sneaking = input.sneak && !this.flying && !this.inWater;
     if (input.sprint && (input.forward > 0 || this.flying)) this.sprinting = true;
-    if (input.forward <= 0 && !this.flying) this.sprinting = false;
+    // LocalPlayer.aiStep: sprint ends as soon as the forward impulse is gone - the flying
+    // exception made double-tap sprint stick while hovering, which felt different from vanilla.
+    if (input.forward <= 0) this.sprinting = false;
 
     let targetSpeed: number;
     if (this.flying) {
@@ -107,6 +115,7 @@ export class Player {
     } else {
       targetSpeed = SPEED.walk;
     }
+    targetSpeed *= this.speedMultiplier;
 
     // desired horizontal velocity in world space
     const yawRad = (this.yaw * Math.PI) / 180;
@@ -151,7 +160,7 @@ export class Player {
         if (waterTravel && (!this.onGround || waterDepth > 0.4)) {
           vy += 0.04;
         } else if (this.onGround) {
-          vy = Math.max(vy, JUMP_VELOCITY);
+          vy = Math.max(vy, JUMP_VELOCITY * this.jumpMultiplier);
           this.onGround = false;
         }
       }
@@ -168,13 +177,17 @@ export class Player {
       this.vel = new Vec3(this.vel.x * drag,
         this.vel.y * 0.8 - (this.sprinting ? 0 : GRAVITY / 16), this.vel.z * drag);
     } else if (!this.flying) {
-      const nextY = Math.max(-TERMINAL_FALL, (this.vel.y - GRAVITY) * VERTICAL_DRAG);
+      let nextY = Math.max(-TERMINAL_FALL, (this.vel.y - GRAVITY) * VERTICAL_DRAG);
+      // LivingEntity.travel: slow falling multiplies downward velocity by 0.01.
+      if (this.slowFalling && nextY < 0) nextY *= 0.01;
       this.vel = new Vec3(this.vel.x, nextY, this.vel.z);
     }
 
     this.inWater = getWaterDepth(level, this.boundingBox()) > 0;
     const movedY = this.pos.y - before;
     if (this.flying || waterTravel || this.inWater || this.onGround) {
+      this.fallDistance = 0;
+    } else if (this.slowFalling) {
       this.fallDistance = 0;
     } else if (movedY < 0) {
       this.fallDistance -= movedY;
@@ -198,27 +211,29 @@ export class Player {
     const boxes = collectCollisionBoxes(level, this.boundingBox().expandTowards(dx, dy, dz).inflateAll(0.5));
     let moveX = dx, moveY = dy, moveZ = dz;
 
+    // Entity.move -> collideWithShapes: resolve Y, then X, then Z, moving the collision box by the
+    // ALREADY CLIPPED amount after each axis. The previous version re-applied the requested delta
+    // (`afterY.move(0, moveY, 0)` / `afterX.move(moveX, moveY, 0)`), so on any tick with vertical
+    // motion the horizontal test box was shifted by up to twice the jump/fall distance. It then
+    // overlapped the block under the feet, clipX/clipZ returned a shortened distance and the
+    // horizontal velocity was zeroed: the "speed resets mid-run" feel while running-jumping.
     if (moveY !== 0) {
-      for (const b of boxes) moveY = clipY(b, this.boundingBox().move(moveX, 0, moveZ), moveY);
+      for (const b of boxes) moveY = clipY(b, this.boundingBox(), moveY);
       this.pos = this.pos.add(0, moveY, 0);
-    }
-    const afterY = this.boundingBox();
-    if (this.sneaking && moveY < 0) {
-      // vanilla: sneaking prevents walking off edges (handled after horizontal move)
     }
 
     if (moveX !== 0) {
-      for (const b of boxes) moveX = clipX(b, afterY.move(0, moveY, 0), moveX);
+      for (const b of boxes) moveX = clipX(b, this.boundingBox(), moveX);
       this.pos = this.pos.add(moveX, 0, 0);
     }
     if (moveZ !== 0) {
-      const afterX = this.boundingBox();
-      for (const b of boxes) moveZ = clipZ(b, afterX.move(moveX, moveY, 0), moveZ);
+      for (const b of boxes) moveZ = clipZ(b, this.boundingBox(), moveZ);
       this.pos = this.pos.add(0, 0, moveZ);
     }
 
     // Entity.move step-up: a 0.6 block step (stairs/slabs/snow) must not require a jump.
     const blockedHorizontally = moveX !== dx || moveZ !== dz;
+    let steppedUp = false;
     if (blockedHorizontally && !this.flying && this.onGround) {
       const stepHeight = 0.6;
       const raised = this.pos.add(0, stepHeight, 0);
@@ -238,13 +253,16 @@ export class Player {
           let sy = -stepHeight;
           for (const b of dropBoxes) sy = clipY(b, this.boundingBox(), sy);
           this.pos = this.pos.add(0, sy, 0);
-          this.onGround = true;
+          steppedUp = true;
         }
       }
     }
 
     const collidedY = moveY !== dy;
-    this.onGround = dy < 0 && collidedY;
+    // Preserve the step-up landing: that branch already put the player on top of the step, but the
+    // vertical clip of this tick is 0 (no floor hit), so the old unconditional assignment cleared
+    // onGround and the following tick applied air friction on the stairs.
+    this.onGround = steppedUp || (dy < 0 && collidedY);
     if (collidedY) this.vel = new Vec3(this.vel.x, 0, this.vel.z);
     if (moveX !== dx || moveZ !== dz) {
       this.vel = new Vec3(moveX !== dx ? 0 : this.vel.x, this.vel.y, moveZ !== dz ? 0 : this.vel.z);

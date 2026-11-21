@@ -1,0 +1,38 @@
+﻿import { chromium } from "playwright";
+import { launchOptions } from "./lib/browser.mjs";
+const b = await chromium.launch(launchOptions());
+const p = await (await b.newContext({ viewport: { width: 1699, height: 901 }, deviceScaleFactor: 1.5 })).newPage();
+const errors = [];
+p.on("pageerror", (e) => errors.push(String(e)));
+p.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+await p.goto("http://127.0.0.1:5174/?play&perf=0", { waitUntil: "load" });
+await p.waitForFunction(() => !!window.__mc?.running, null, { timeout: 120000 });
+await p.waitForTimeout(7000);
+await p.evaluate(() => { window.__mc.setShaders(true); window.__mc.setShaderQuality("high"); });
+await p.waitForTimeout(1200);
+const given = await p.evaluate(() => {
+  const g = window.__mc;
+  const give = g.commandHost().give;
+  const ok = give("oak_stairs", 64);
+  g.selectedSlot = 0;
+  g.player.pitch = 20; g.player.yaw = 30;
+  return { ok, slot: g.selectedSlot };
+});
+await p.waitForTimeout(1200);
+await p.screenshot({ path: "shots/_fix2-hotbar.png" });
+await p.evaluate(() => window.__mc.openScreen("inventory"));
+await p.waitForTimeout(900);
+await p.screenshot({ path: "shots/_fix2-inv.png" });
+const diag = await p.evaluate(() => window.__mc.perfDiagnostics());
+await p.evaluate(() => window.__mc.closeScreen());
+await p.waitForTimeout(800);
+await p.screenshot({ path: "shots/_fix2-sat.png" });
+const hud = await p.evaluate(() => new Promise((res) => {
+  const g = window.__mc; const orig = g.renderHud.bind(g); const t = [];
+  g.renderHud = () => { const s = performance.now(); orig(); t.push(performance.now() - s); };
+  let n = 0; const t0 = performance.now();
+  const loop = () => { if (++n < 90) requestAnimationFrame(loop); else { g.renderHud = orig; const s = t.sort((a,b)=>a-b); res({ p50: +s[45].toFixed(2), max: +s[s.length-1].toFixed(2), fps: +(n*1000/(performance.now()-t0)).toFixed(1) }); } };
+  requestAnimationFrame(loop);
+}));
+console.log(JSON.stringify({ given, diag, hud, errors: errors.slice(0, 5) }, null, 2));
+await b.close();

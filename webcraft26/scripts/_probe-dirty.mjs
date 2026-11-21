@@ -1,0 +1,22 @@
+import { chromium } from 'playwright';
+import { launchOptions } from './lib/browser.mjs';
+const b = await chromium.launch(launchOptions());
+const p = await (await b.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
+await p.goto('http://127.0.0.1:5174/?play', { waitUntil: 'load' });
+await p.waitForFunction(() => !!window.__mc?.running, null, { timeout: 120000 });
+await p.waitForTimeout(40000);
+const info = await p.evaluate(async () => {
+  const g = window.__mc;
+  const r = g.renderer;
+  let dirty = 0;
+  for (const c of g.level.chunks.values()) if (c.dirty) dirty++;
+  const before = r.meshCountTotal ?? 0;
+  const origBuild = r.buildSection.bind(r);
+  let built = 0;
+  r.buildSection = (...a) => { built++; return origBuild(...a); };
+  await new Promise((res) => setTimeout(res, 3000));
+  r.buildSection = origBuild;
+  return { dirtyChunks: dirty, chunks: g.level.chunks.size, builtIn3s: built, queue: r.rebuildQueue?.length };
+});
+console.log(JSON.stringify(info));
+await b.close();

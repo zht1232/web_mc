@@ -13,6 +13,7 @@
 import type { GuiGraphics } from '../../GuiGraphics.js';
 import type { CreativeTabData, ItemStack, MouseAction } from '../../Types.js';
 import { AbstractContainerScreen, type SlotDef } from './AbstractContainerScreen.js';
+import { inventoryMenuSlotXY, MENU_OFFHAND_SLOT } from './SlotLayout.js';
 import { EditBox } from '../../components/EditBox.js';
 import {
   DEFAULT_CREATIVE_TABS,
@@ -32,6 +33,7 @@ import {
   CREATIVE_SEARCH_Y,
   CREATIVE_SEARCH_WIDTH,
   CREATIVE_SEARCH_HEIGHT,
+  INVENTORY_LOCATION,
   SLOT_GRID,
 } from '../../GuiConstants.js';
 
@@ -42,6 +44,21 @@ const TAB_TOP_OFFSET = 28;
 const SCROLLER_X = 175;
 const SCROLLER_Y = 18;
 const HOTBAR_TOP = 112;
+
+/** Item tabs use the 195x136 creative sheet; Survival Inventory grows to the 166-tall inventory. */
+const CREATIVE_IMAGE_WIDTH = 195;
+const CREATIVE_IMAGE_HEIGHT = 136;
+const SURVIVAL_IMAGE_HEIGHT = 166;
+const SURVIVAL_INVENTORY_WIDTH = 176;
+const DESTROY_X = 173;
+const DESTROY_Y = 112;
+const CREATIVE_TEXTURE = 'gui/container/creative_inventory/tab_items';
+
+/** InventoryMenu armor slots 5..8 and the offhand slot, with their empty-slot sprites. */
+const EMPTY_SLOT_SPRITES: Record<number, string> = {
+  5: 'container/slot/helmet', 6: 'container/slot/chestplate', 7: 'container/slot/leggings', 8: 'container/slot/boots',
+  [MENU_OFFHAND_SLOT]: 'container/slot/shield',
+};
 
 export class CreativeModeInventoryScreen extends AbstractContainerScreen {
   /** Authoritative tab list (used by the Node test suite). */
@@ -54,9 +71,12 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
   private allItemNames: string[] = [];
   private scrollOffs = 0;
   private scrolling = false;
+  private xMouse = 0;
+  private yMouse = 0;
+  private previewCache: { yaw: number; canvas: HTMLCanvasElement } | null = null;
 
   constructor(env: ConstructorParameters<typeof AbstractContainerScreen>[0]) {
-    super(env, 'container.creative', 195, 136, 'gui/container/creative_inventory/tab_items');
+    super(env, 'container.creative', CREATIVE_IMAGE_WIDTH, CREATIVE_IMAGE_HEIGHT, CREATIVE_TEXTURE);
     this.allItemNames = readItemNames(env.deps.mc);
     const supplied = env.deps.creativeTabs;
     this.tabs = supplied && supplied.length
@@ -74,12 +94,30 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     return typeof v === 'number' ? v : -1;
   }
 
+  private isSurvivalTab(): boolean { return this.selectedTab === TAB_SURVIVAL; }
+
+  /**
+   * The Survival Inventory tab swaps the 9x5 item grid for the real InventoryMenu layout
+   * (armor / offhand / 2x2 crafting / player preview) and grows the panel to 166 px.
+   */
+  private configureLayout(): void {
+    const survival = this.isSurvivalTab();
+    this.imageWidth = CREATIVE_IMAGE_WIDTH;
+    this.imageHeight = survival ? SURVIVAL_IMAGE_HEIGHT : CREATIVE_IMAGE_HEIGHT;
+    this.backgroundTexture = survival ? INVENTORY_LOCATION : CREATIVE_TEXTURE;
+    this.relayout();
+    if (this.searchBox) {
+      this.searchBox.setPosition(this.leftPos + CREATIVE_SEARCH_X, this.topPos + CREATIVE_SEARCH_Y);
+    }
+  }
+
   private setTab(index: number): void {
     if (index < 0 || index >= this.tabs.length) return;
     this.selectedTab = index;
     this.scrollOffs = 0;
     // CreativeModeInventoryScreen: the search box only exists on the Search tab.
     if (this.searchBox) this.searchBox.visible = index === TAB_SEARCH;
+    this.configureLayout();
     this.refreshItems();
   }
 
@@ -104,6 +142,14 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
 
   protected buildSlots(): SlotDef[] {
     const out: SlotDef[] = [];
+    if (this.isSurvivalTab()) {
+      // InventoryMenu: result, 2x2 craft, 4 armor, 27 main, 9 hotbar, offhand.
+      for (let menuSlot = 0; menuSlot <= MENU_OFFHAND_SLOT; menuSlot++) {
+        const r = inventoryMenuSlotXY(menuSlot, 0, 0);
+        out.push({ index: menuSlot, x: r.x, y: r.y });
+      }
+      return out;
+    }
     for (let row = 0; row < CREATIVE_NUM_ROWS; row++) {
       for (let col = 0; col < CREATIVE_NUM_COLS; col++) {
         out.push({ index: row * CREATIVE_NUM_COLS + col, x: GRID_LEFT + col * SLOT_GRID, y: GRID_TOP + row * SLOT_GRID });
@@ -128,17 +174,47 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     this.refreshItems();
   }
 
+  protected emptySlotSprite(menuSlot: number): string | undefined {
+    return this.isSurvivalTab() ? EMPTY_SLOT_SPRITES[menuSlot] : undefined;
+  }
+
   protected drawLabels(g: GuiGraphics): void {
+    if (this.isSurvivalTab()) {
+      // InventoryScreen: the 2x2 crafting grid is labelled at titleLabelX = 97.
+      g.drawString(this.t('container.crafting'), 97, 6, 0xff404040, false);
+      return;
+    }
     const tab = this.tabs[this.selectedTab];
     // CreativeModeTab#getDisplayName -> translatable "itemGroup.<name>"; drawing the raw
     // tab.key showed English labels even with a Chinese locale.
     if (tab) g.drawString(this.t(tab.key), 8, 6, -12566464, false);
   }
 
+  /**
+   * Survival Inventory: the 176x166 inventory sheet inside the 195-wide creative frame. The
+   * extra 19 px column keeps the vanilla destroy-item slot at (173, 112) reachable.
+   */
+  protected drawContainerBackground(g: GuiGraphics): void {
+    if (!this.isSurvivalTab()) {
+      super.drawContainerBackground(g);
+      return;
+    }
+    g.fill(0, 0, this.imageWidth, this.imageHeight, 0xffc6c6c6);
+    g.outline(0, 0, this.imageWidth, this.imageHeight, 0xff555555);
+    g.blit(INVENTORY_LOCATION, 0, 0, SURVIVAL_INVENTORY_WIDTH, this.imageHeight);
+    this.drawSlotFrame(g, DESTROY_X, DESTROY_Y);
+    this.textureBacked = true;
+  }
+
   protected renderBackground(g: GuiGraphics, mx: number, my: number, pt: number): void {
+    this.xMouse = mx;
+    this.yMouse = my;
     super.renderBackground(g, mx, my, pt);
     g.pushPose();
     g.translate(this.leftPos, this.topPos);
+
+    // InventoryScreen#extractBackground: the survival tab shows the player model at (26,8)-(75,78).
+    if (this.isSurvivalTab()) this.drawEntityPreview(g, 26, 8, 75, 78);
 
     // Tab buttons: 7 on top (y = -28), 7 on bottom (y = imageHeight - 4).
     for (let i = 0; i < this.tabs.length; i++) {
@@ -165,7 +241,7 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     // formula used a 90px track instead of the vanilla 112px one.
     const trackH = 112;
     const maxScroll = this.maxScroll();
-    if (maxScroll > 0) {
+    if (!this.isSurvivalTab() && maxScroll > 0) {
       const sprite = 'container/creative_inventory/scroller';
       const thumbY = SCROLLER_Y + Math.round((trackH - (CREATIVE_SCROLLER_HEIGHT + 2)) * (maxScroll > 0 ? this.scrollOffs / maxScroll : 0));
       g.blitSprite(sprite, SCROLLER_X, thumbY, CREATIVE_SCROLLER_WIDTH, CREATIVE_SCROLLER_HEIGHT);
@@ -175,6 +251,44 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     // Inventory tab, and its frame is part of tab_inventory.png. The old unconditional
     // grey square at (168,111) was the stray button under the scrollbar.
     g.popPose();
+  }
+
+  /** InventoryScreen's mouse-following player model preview (survival tab only). */
+  private drawEntityPreview(g: GuiGraphics, x0: number, y0: number, x1: number, y1: number): void {
+    const render = this.env.deps.renderEntityPreview;
+    const cx = (x0 + x1) / 2;
+    const dx = this.xMouse - (this.leftPos + cx);
+    const yaw = Math.max(-0.7, Math.min(0.7, Math.atan2(dx, 40)));
+    const key = Math.round(yaw * 40) / 40;
+    if (render) {
+      if (!this.previewCache || this.previewCache.yaw !== key) {
+        const canvas = render(120, key);
+        if (canvas) this.previewCache = { yaw: key, canvas };
+      }
+      if (this.previewCache) {
+        g.drawCanvas(this.previewCache.canvas, x0, y0, x1 - x0, y1 - y0);
+        return;
+      }
+    }
+    this.drawFallbackPreview(g, x0, y0, x1, y1);
+  }
+
+  private drawFallbackPreview(g: GuiGraphics, x0: number, y0: number, x1: number, y1: number): void {
+    const cx = Math.floor((x0 + x1) / 2);
+    const lean = Math.max(-3, Math.min(3, Math.round((cx - (this.xMouse - this.leftPos)) / 20)));
+    const x = cx + lean;
+    const y = y0 + 8;
+    g.fill(x - 8, y, x + 8, y + 16, 0xffb57b53);
+    g.fill(x - 8, y + 16, x + 8, y + 40, 0xff26a0b5);
+    g.fill(x - 16, y + 16, x - 8, y + 40, 0xff1e7f90);
+    g.fill(x + 8, y + 16, x + 16, y + 40, 0xff1e7f90);
+    g.fill(x - 8, y + 40, x, y + 62, 0xff37378f);
+    g.fill(x, y + 40, x + 8, y + 62, 0xff2f2f78);
+    g.fill(x - 5, y + 5, x - 3, y + 7, 0xff2b2b2b);
+    g.fill(x + 3, y + 5, x + 5, y + 7, 0xff2b2b2b);
+    g.outline(x - 8, y, 16, 16, 0xff000000);
+    void this.yMouse;
+    void y1;
   }
 
   private maxScroll(): number {
@@ -202,8 +316,8 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
       const tab = this.tabHit(mx, my);
       if (tab >= 0) { this.setTab(tab); return true; }
       const sx = this.leftPos + SCROLLER_X;
-      if (mx >= sx && mx < sx + CREATIVE_SCROLLER_WIDTH && my >= this.topPos + SCROLLER_Y &&
-        my < this.topPos + SCROLLER_Y + 112) {
+      if (!this.isSurvivalTab() && mx >= sx && mx < sx + CREATIVE_SCROLLER_WIDTH &&
+        my >= this.topPos + SCROLLER_Y && my < this.topPos + SCROLLER_Y + 112) {
         this.scrolling = true;
         this.applyScrollbar(mx, my);
         return true;
@@ -221,16 +335,21 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     if (action === 'cancel') this.scrolling = false;
     if (action === 'down' && button >= 0 && button <= 2) {
       const idx = this.getHoveredSlot(mx, my);
-      if (idx >= 0 && idx < CREATIVE_NUM_ROWS * CREATIVE_NUM_COLS) {
+      if (!this.isSurvivalTab() && idx >= 0 && idx < CREATIVE_NUM_ROWS * CREATIVE_NUM_COLS) {
         this.hoveredSlot = idx;
         const shift = (this.env.mods & 1) !== 0;
-        this.menu.click(idx, button, shift, button === 2 ? 'CLONE' : shift ? 'QUICK_MOVE' : 'PICKUP');
+        const actionKind = button === 2 ? 'CLONE' : shift ? 'QUICK_MOVE' : 'PICKUP';
+        this.menu.click(idx, button, shift, actionKind);
+        // A plain PICKUP leaves the stack on the cursor. Remember the source slot so the
+        // parent's release handler treats the following click on the hotbar as a real
+        // PICKUP instead of leaving the stack glued to the pointer.
+        if (actionKind === 'PICKUP') this.pressedSlot = idx;
         return true;
       }
     }
     if (action === 'move' && this.scrolling) { this.applyScrollbar(mx, my); return true; }
     if (action === 'up' && this.scrolling) { this.scrolling = false; return true; }
-    if (action === 'wheel') {
+    if (action === 'wheel' && !this.isSurvivalTab()) {
       this.scrollOffs = Math.max(0, Math.min(this.maxScroll(), this.scrollOffs + (wheelDelta > 0 ? 1 : -1)));
       this.writeMenuItems();
       return true;

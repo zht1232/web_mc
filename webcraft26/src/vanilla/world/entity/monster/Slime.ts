@@ -9,13 +9,14 @@
 
 import { Monster } from './Monster.js';
 import { entityType } from '../EntityType.js';
+import type { EntityType } from '../EntityType.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
 
 export class Slime extends Monster {
   private hopCooldown = 0;
 
-  constructor(level: ClientLevel) {
-    super(entityType('slime'), level);
+  constructor(level: ClientLevel, type: EntityType = entityType('slime')) {
+    super(type, level);
     this.speed = 0.25;
     this.maxHealth = 16; this.health = 16;
     this.attackDamage = 4;

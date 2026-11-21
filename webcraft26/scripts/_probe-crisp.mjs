@@ -1,0 +1,35 @@
+﻿import { chromium } from "playwright";
+import { launchOptions } from "./lib/browser.mjs";
+const b = await chromium.launch(launchOptions());
+const p = await (await b.newContext({ viewport: { width: 1699, height: 901 }, deviceScaleFactor: 1.5 })).newPage();
+const errors = [];
+p.on("pageerror", (e) => errors.push(String(e)));
+p.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+await p.goto("http://127.0.0.1:5174/?play&perf=0", { waitUntil: "load" });
+await p.waitForFunction(() => !!window.__mc?.running, null, { timeout: 120000 });
+await p.waitForTimeout(6500);
+await p.evaluate(() => { window.__mc.setShaders(true); window.__mc.setShaderQuality("high"); window.__mc.renderer.swayEnabled = false; });
+await p.evaluate(async () => {
+  const g = window.__mc;
+  const { Vec3 } = await import("/src/vanilla/core/Geometry.ts");
+  const px = Math.floor(g.player.pos.x), pz = Math.floor(g.player.pos.z);
+  const gy = g.level.getHeight(px, pz);
+  const log = g.mc.stateOf("birch_log");
+  for (let dx = -3; dx <= 3; dx++) for (let dy = 1; dy <= 3; dy++) g.level.setBlockState(px + dx, gy + dy, pz + 2, log);
+  g.player.pos = new Vec3(px + 0.5, gy + 2.2, pz + 0.5);
+  g.player.vel = new Vec3(0, 0, 0);
+  g.player.yaw = 0; g.player.pitch = 0;
+});
+await p.waitForTimeout(2500);
+const diag = await p.evaluate(() => window.__mc.perfDiagnostics());
+const fps = await p.evaluate(() => new Promise((res) => {
+  let n = 0; const t0 = performance.now();
+  const loop = () => { if (++n < 180) requestAnimationFrame(loop); else res((n * 1000) / (performance.now() - t0)); };
+  requestAnimationFrame(loop);
+}));
+await p.screenshot({ path: "shots/_fix-wall-150.png" });
+await p.evaluate(() => { window.__mc.player.pitch = 80; });
+await p.waitForTimeout(1200);
+await p.screenshot({ path: "shots/_fix-ground-150.png" });
+console.log(JSON.stringify({ diag, fps: +fps.toFixed(1), errors: errors.slice(0, 5) }, null, 2));
+await b.close();

@@ -3,7 +3,7 @@
 //   npx tsx scripts/test-biomecolors.mts
 //
 // Everything here is compared against an INDEPENDENT transcription of the Java sources in
-// G:/ck-web26/src-vanilla/net/minecraft (written out below instead of being imported from the
+// src-vanilla/net/minecraft (written out below instead of being imported from the
 // implementation), reading the same colormap PNGs the client ships
 // (public/mc/textures/colormap/*.png, byte-identical to vanilla/assets/minecraft/textures).
 //

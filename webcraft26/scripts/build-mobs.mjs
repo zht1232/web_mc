@@ -7,7 +7,11 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const MC = process.env.MC_ASSETS || 'G:/ck-web26/vanilla/assets/minecraft';
+const MC = process.env.MC_ASSETS;
+if (!MC) {
+  console.error('Set MC_ASSETS to the assets/minecraft directory extracted from your own Minecraft 26.2 client.jar.');
+  process.exit(1);
+}
 const SRC = path.join(MC, 'textures', 'entity');
 const OUT = path.join(root, 'public', 'mc', 'entities');
 

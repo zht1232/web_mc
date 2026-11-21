@@ -4,7 +4,7 @@
 import { MinecraftData, setMinecraftData } from '../vanilla/world/level/block/state/BlockState.js';
 import { ClientLevel, CHUNK_RETAIN_MARGIN, DAY_LENGTH } from '../vanilla/world/level/ClientLevel.js';
 import { LevelChunk } from '../vanilla/world/level/chunk/LevelChunk.js';
-import { Player, TICK_MS, type PlayerInput } from '../vanilla/world/entity/player/Player.js';
+import { Player, TICK_MS, JUMP_VELOCITY, type PlayerInput } from '../vanilla/world/entity/player/Player.js';
 import { ModelSource } from './renderer/model/ModelSource.js';
 import { TextureManager } from './renderer/TextureManager.js';
 import { BiomeColors } from './renderer/BiomeColors.js';
@@ -16,7 +16,7 @@ import { FontRenderer } from './gui/FontRenderer.js';
 import { DEFAULT_I18N } from './gui/Language.js';
 import { calcGuiScale, guiScaledSize } from './gui/GuiScale.js';
 import {
-  GuiTextures, Hud, HUD_SPRITES, layoutDebugScreen,
+  GuiTextures, Hud, HUD_SPRITES, MOB_EFFECT_TEXTURES, layoutDebugScreen,
   type DebugEntryOutput, type HudItemSlot, type HudState, type HudSurvivalExtensions,
 } from './gui/Hud.js';
 import { ItemIconAtlas } from './gui/ItemIconAtlas.js';
@@ -30,29 +30,53 @@ import {
 import { EntityManager } from '../vanilla/world/entity/EntityManager.js';
 import { setSpawnBlockTags } from '../vanilla/world/entity/SpawnPlacements.js';
 import { ExperienceOrb } from '../vanilla/world/entity/ExperienceOrb.js';
+import { Arrow } from '../vanilla/world/entity/projectile/Arrow.js';
+import { FishingBobber } from '../vanilla/world/entity/projectile/FishingBobber.js';
+import { ThrownEgg } from '../vanilla/world/entity/projectile/ThrownEgg.js';
+import { ThrownPotion } from '../vanilla/world/entity/projectile/ThrownPotion.js';
+import { AreaEffectCloud } from '../vanilla/world/entity/AreaEffectCloud.js';
+import { RedstoneSystem } from '../vanilla/world/redstone/RedstoneSystem.js';
+import type { Entity } from '../vanilla/world/entity/Entity.js';
 import { LivingEntity } from '../vanilla/world/entity/LivingEntity.js';
+import { Mob } from '../vanilla/world/entity/Mob.js';
+import { MobCategory } from '../vanilla/world/entity/MobCategory.js';
+import { Sheep } from '../vanilla/world/entity/animal/Sheep.js';
+import { Animal } from '../vanilla/world/entity/animal/Animal.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
+import { cameraBasis } from './renderer/gl/Gl.js';
+import { argbFromRgb, computeFogColor } from './renderer/environment/FogState.js';
 import { ENTITY_TYPES } from '../vanilla/world/entity/EntityType.js';
 import { ScreenManager } from './gui/ScreenManager.js';
 import { TitleScreen } from './gui/screens/TitleScreen.js';
 import { CreativeModeInventoryScreen } from './gui/screens/inventory/CreativeModeInventoryScreen.js';
+import { TAB_SURVIVAL } from '../vanilla/world/inventory/CreativeInventory.js';
 import type {
   ContainerMenuLike, CreateWorldOptions, GuiOptions, ScreenRef, WorldListProvider,
 } from './gui/Types.js';
 import { SurvivalState, loadWorldData, type PlayerMoved } from '../vanilla/gameplay/SurvivalState.js';
 import { SLOT_OFFHAND } from '../vanilla/world/entity/player/Inventory.js';
-import { ItemStack } from '../vanilla/world/item/ItemStack.js';
+import { ItemStack, type ItemComponents } from '../vanilla/world/item/ItemStack.js';
 import { ItemEntity } from '../vanilla/world/entity/item/ItemEntity.js';
+import { PrimedTnt } from '../vanilla/world/entity/item/PrimedTnt.js';
 import { ContainerInput } from '../vanilla/world/inventory/ClickAction.js';
 import type { AbstractContainerMenu } from '../vanilla/world/inventory/AbstractContainerMenu.js';
+import { AbstractCraftingMenu } from '../vanilla/world/inventory/AbstractCraftingMenu.js';
+import { AbstractFurnaceMenu } from '../vanilla/world/inventory/AbstractFurnaceMenu.js';
+import { EnchantingMenu } from '../vanilla/world/inventory/EnchantingMenu.js';
+import { BrewingMenu } from '../vanilla/world/inventory/BrewingMenu.js';
+import { potionEffects } from '../vanilla/world/item/potion/Potions.js';
+import { Statistics } from '../vanilla/world/stats/Statistics.js';
 import { SkyRenderer } from './renderer/environment/SkyRenderer.js';
 import { CloudRenderer } from './renderer/environment/CloudRenderer.js';
 import { WeatherRenderer } from './renderer/environment/WeatherRenderer.js';
 import type { LevelLike } from './renderer/environment/EnvCommon.js';
-import { ParticleEngine, spawnBlockBreakParticles } from './particle/ParticleEngine.js';
+import {
+  ParticleEngine, spawnBlockBreakParticles, spawnExplosion, spawnHearts, spawnPotionCloudParticles,
+} from './particle/ParticleEngine.js';
 import { AmbientParticles } from './particle/AmbientParticles.js';
 import { SoundEngine } from './audio/SoundEngine.js';
 import { MobSounds } from './audio/MobSounds.js';
+import { PerfLog } from './PerfLog.js';
 import { runChatCommand, type CommandHost } from './ChatCommands.js';
 import { WorldSaveManager, type LoadedWorld } from './world/save/WorldSaveManager.js';
 import { Autosave } from './world/save/Autosave.js';
@@ -79,6 +103,14 @@ export interface GameOptions {
   /** worker pool size override (defaults to min(hardwareConcurrency, 4)) */
   workers?: number;
 }
+
+/**
+ * Ceiling for the 3D drawing buffer. It used to be 1080p, which forced a 78% upscale (blurry
+ * blocks) on any 1.5x/2x DPI window wider than ~1400 CSS px even when the GPU had plenty of
+ * headroom (a 3080 renders 3.4 MP at 162 fps). The dynamic-resolution loop still drops the scale
+ * when frames are actually late, so a weak GPU pays the same low-res fallback as before.
+ */
+const MAX_RENDER_PIXELS = 2560 * 1440;
 
 const DEFAULT_OPTIONS: GameOptions = {
   // 12 chunks (192 blocks) matches the reference screenshots much better than the old 8;
@@ -133,6 +165,11 @@ export class Game {
   entityRenderer!: EntityRenderDispatcher;
   screens!: ScreenManager;
   survival!: SurvivalState;
+  /** Vanilla player statistics (StatsCounter): mined/crafted/killed + custom counters. */
+  readonly stats = new Statistics();
+  /** Previous tick position for the distance statistics (walk/sprint/fly/swim/crouch). */
+  private lastStatX = 0;
+  private lastStatZ = 0;
   skyRenderer!: SkyRenderer;
   cloudRenderer!: CloudRenderer;
   weatherRenderer!: WeatherRenderer;
@@ -200,6 +237,45 @@ export class Game {
   private readonly pacer = new FramePacer();
   private frameChunkBudget = 6;
   private frameChunkMs = 0;
+  /** Adaptive 3D resolution (1 = native, capped by MAX_RENDER_PIXELS). See adaptRenderScale. */
+  private renderScale = 1;
+  private maxRenderScale = 1;
+  /**
+   * 3D scene drawing size (viewport + projection aspect). With shaders on this is the HDR target
+   * size, which is the only thing dynamic resolution may change; `glCanvas` itself is allocated
+   * once per window size so the compositor never gets a reallocated (black) frame.
+   */
+  private targetW = 1;
+  private targetH = 1;
+  /** window.resize 事件计数（诊断：全屏切换会连续触发 resize）。 */
+  resizeCount = 0;
+  private resizeTimer = 0;
+  private lastResizeKey = '';
+  /** 上一帧的帧间隔（ms），用于 FOV 平滑。 */
+  private lastDt = 16.7;
+  /** 平滑后的 FOV：疾跑 / 缩放切换时投影不能一帧跳过去（表现为"视角抽动"）。 */
+  private fovSmooth = -1;
+  /** 最近 40 tick 的水平速度采样：跑跳时出现非碰撞原因的骤降会直接体现在 min/paused 上。 */
+  private readonly hSpeedTrace = new Float32Array(40);
+  private hSpeedIndex = 0;
+  /** HUD 分项耗时（诊断 10fps：hotbar 图标 drawImage 曾出现 180ms/帧）。 */
+  private hudMs = 0;
+  /** HUD dirty tracking: the overlay only repaints when something visible actually changed. */
+  private hudSignature = '';
+  private hudValid = false;
+  /** True while chat lines were visible last frame, so the first frame after they expire repaints. */
+  private chatWasLive = false;
+  /** Same handshake for toasts: one repaint is needed after the last one disappears. */
+  private toastsWereActive = false;
+  private chatMs = 0;
+  /** 实测过撑不住的档位上限（随每次降档下移），用来给升档封顶、避免来回抖。 */
+  private scaleCeiling = 1;
+  private scaleQuiet = 0;
+  private scaleProbeMs = 0;
+  private scaleProbeFrames = 0;
+  private scaleProbeMax = 0;
+  /** 手机端性能采样器（仅在 URL 带 ?perf= 时创建，平时为 null，零开销）。 */
+  perfLog: PerfLog | null = null;
   /** MouseHandler.accumulatedDX/DY: applied once per frame, not per pointermove event. */
   private pendingLookX = 0;
   private pendingLookY = 0;
@@ -208,6 +284,8 @@ export class Game {
   private sprintTap = false;
   private attackCooldown = 0;
   private useCooldown = 0;
+  private bowCharging = false;
+  private bowCharge = 0;
   /** left button held: survival mining advances while this is true */
   private mining = false;
   /** walkDist of the last footstep sound */
@@ -246,6 +324,8 @@ export class Game {
   private lightmapKey = '';
   /** Column chosen by findSpawnSpot() before any terrain is generated. */
   private spawnSpot: { x: number; z: number; y: number } | null = null;
+  /** Terrain generation kicked off early in init() and awaited just before the player is placed. */
+  private spawnAreaPromise: Promise<void> | null = null;
   /** Chunk-set signature last handed to the entity manager (see syncEntityChunks). */
   private entityChunkKey = '';
 
@@ -295,29 +375,35 @@ export class Game {
     this.mc = await MinecraftData.load('/mc');
     setMinecraftData(this.mc);
 
+    // Chunk workers fetch + parse their own copy of the block registry and worldgen data, which
+    // takes ~400 ms on a cold HTTP cache. Starting the pool before the client assets means that
+    // warm-up runs in parallel with everything below instead of stalling the first chunk request
+    // (the loading screen used to sit at 0/25 for a third of a second for exactly this reason).
+    this.onStatus?.('Starting chunk workers', 0.07);
+    this.chunkProvider = new ChunkProvider(this.mc, this.seedBig, this.options.workers);
+    void this.chunkProvider.init('/mc');
+
     this.onStatus?.('Loading models', 0.15);
-    this.models = await ModelSource.load('/mc');
-
-    this.onStatus?.('Loading textures', 0.3);
     this.textures = new TextureManager(this.gl);
-    await this.textures.load('/mc');
-
-    this.onStatus?.('Loading fonts', 0.4);
     this.font = new FontRenderer();
-    await this.font.load('/mc');
     this.guiTextures = new GuiTextures('/mc');
-    await this.guiTextures.preload(HUD_SPRITES);
+    // Models, textures, fonts, GUI sprites, worldgen tables and survival data are seven
+    // independent fetches + parses. Loaded one after another they cost ~900 ms of the cold boot;
+    // in one Promise.all the wall time is the slowest single load (~300 ms).
+    this.onStatus?.('Loading client assets', 0.15);
+    const [modelsRes, worldgen, worldData] = await Promise.all([
+      ModelSource.load('/mc'),
+      loadWorldgenData('/mc'),
+      loadWorldData('/mc'),
+      this.textures.load('/mc'),
+      this.font.load('/mc'),
+      this.guiTextures.preload([...HUD_SPRITES, ...MOB_EFFECT_TEXTURES]),
+    ]);
+    this.models = modelsRes;
     this.hud = new Hud(this.font, this.guiTextures);
 
     this.onStatus?.('Preparing world generator', 0.45);
-    const worldgen = await loadWorldgenData('/mc');
     this.generator = new NoiseChunkGenerator(this.mc, worldgen, this.seedBig);
-
-    // Workers fetch blocks.bin/worldgen.json themselves and do it while the rest of the loading
-    // screen runs, so `init` is kicked off here and awaited only right before the first request.
-    this.onStatus?.('Starting chunk workers', 0.5);
-    this.chunkProvider = new ChunkProvider(this.mc, this.seedBig, this.options.workers);
-    void this.chunkProvider.init('/mc');
 
     const biomes = Object.values((worldgen as unknown as { biomes: Record<string, { id: number; name: string; temperature: number; downfall: number; effects?: Record<string, number> }> }).biomes);
     this.biomeColors = new BiomeColors(biomes.map((b) => ({ ...b, name: b.name ?? '' })));
@@ -327,7 +413,29 @@ export class Game {
     this.level = new ClientLevel(this.mc, this.generator, this.seedBig);
     // BiomeColors samples the multi-noise biome source for the 5x5 `biomeBlendRadius` average
     // (vanilla ClientLevel.calculateBlockTint); without it the tint falls back to the single biome.
-    this.biomeColors.setBiomeSource((x, y, z) => this.generator!.getBiome(x, y, z));
+    // Read the biome from the loaded chunk palette, NOT from the generator: getBiome() runs the
+    // whole climate noise stack, and the mesher calls this 25 times per tinted quad (~150x per
+    // leaves block). That alone was 17% of the main thread and the 30 ms single-section mesh
+    // spikes while walking.
+    this.biomeColors.setBiomeSource((x, y, z) => this.level.getBiome(x, y, z));
+
+    // Vanilla does not create a level for the title screen: the world is generated only once the
+    // player enters one. `?play` / `?world=` boots straight into a world (tests, world selection).
+    //
+    // The spawn area is kicked off BEFORE the renderer is built and is not awaited here: terrain
+    // generation (~1.4 s for a 5x5 area) is the biggest cold-boot cost and does not need shaders.
+    // Awaiting the promise right before the player is placed overlaps it with renderer init and
+    // every remaining asset load.
+    if (this.bootPlay) {
+      this.onStatus?.('Finding spawn point', 0.58);
+      // Pick the spawn column BEFORE generating terrain: the generator can answer "what is the
+      // surface height here" without building a chunk, so searching hundreds of blocks costs
+      // ~100 ms and the loading screen only ever generates chunks around the real spawn.
+      this.spawnSpot = this.findSpawnSpot();
+
+      this.onStatus?.('Generating terrain', 0.62);
+      this.spawnAreaPromise = this.generateSpawnArea();
+    }
 
     this.onStatus?.('Building renderer', 0.65);
     this.renderer = new LevelRenderer(this.gl, this.mc, this.models, this.textures, this.biomeColors);
@@ -337,73 +445,23 @@ export class Game {
     this.renderer.shaderQuality = this.options.shaderQuality;
     await this.renderer.init();
 
-    // Vanilla does not create a level for the title screen: the world is generated only once the
-    // player enters one. `?play` / `?world=` boots straight into a world (tests, world selection).
-    if (this.bootPlay) {
-      this.onStatus?.('Finding spawn point', 0.68);
-      // Pick the spawn column BEFORE generating terrain: the generator can answer "what is the
-      // surface height here" without building a chunk, so searching hundreds of blocks costs
-      // ~100 ms and the loading screen only ever generates chunks around the real spawn.
-      this.spawnSpot = this.findSpawnSpot();
-
-      this.onStatus?.('Generating terrain', 0.7);
-      await this.generateSpawnArea();
-    }
-
-    this.onStatus?.('Rendering item icons', 0.9);
-    this.icons = new ItemIconAtlas(this.gl, this.mc, this.models, this.textures);
-    await this.icons.loadModels('/mc');
-    // Bake at the device's GUI scale so a 3x HUD gets 48x48 icons instead of a 16x16
-    // texture stretched into chunky blocks.
-    this.icons.build(this.guiScale);
-
     // Survival facade: owns health/hunger/XP, the recipe+loot tables and the player inventory.
-    this.onStatus?.('Loading survival data', 0.9);
-    const worldData = await loadWorldData('/mc');
-    // Exact 26.2 block tags for the spawn rules (animals_spawnable_on, bats_spawnable_on, ...).
+    // It is pure data (no GPU), so it can be built while the texture loads below are in flight.
+    this.onStatus?.('Rendering item icons', 0.9);
     setSpawnBlockTags(worldData.tags);
     this.survival = new SurvivalState(this.mc, this.seedBig, worldData);
     this.survival.gamemode = this.options.gamemode;
     this.survival.onDrop = (stack) => this.dropItem(stack);
     this.survival.onDeath = () => this.onPlayerDeath();
 
-    this.initHotbar();
-    this.spawnPlayer();
-
-    // Entities: the manager owns the 20 Hz entity tick + natural spawning, the dispatcher draws
-    // them into one batched pass. Both must exist before the first frame.
-    this.onStatus?.('Starting entity system', 0.94);
-    this.entityManager = new EntityManager(this.level, this.player, this.seedBig, {
-      despawnDistance: 128,
-    });
-    // PlayerTarget forwards mob/arrow damage here; the survival facade owns armor, i-frames and death.
-    const pt = this.entityManager.getPlayerTarget();
-    if (pt) pt.onHurt = (amount, attacker) => {
-      this.survival.damage(amount, attacker ? attacker.getTypeName() : 'mob');
-      // LivingEntity.hurt knockback: push the player away from the attacker,
-      // strength 0.4 horizontal / 0.36 vertical (Player has its own physics).
-      if (attacker) {
-        const dx = this.player.pos.x - attacker.getX();
-        const dz = this.player.pos.z - attacker.getZ();
-        const len = Math.hypot(dx, dz) || 1;
-        this.player.vel = new Vec3(
-          this.player.vel.x + (dx / len) * 0.4,
-          Math.max(this.player.vel.y, 0.36),
-          this.player.vel.z + (dz / len) * 0.4,
-        );
-      }
-    };
-    this.entityManager.explosionHandler = (x, y, z, power) => this.explode(x, y, z, power);
-    void this.entityManager.loadSpawnConfig('/mc');
-
-    this.onStatus?.('Loading entity textures', 0.96);
+    this.icons = new ItemIconAtlas(this.gl, this.mc, this.models, this.textures);
     this.entityRenderer = new EntityRenderDispatcher(this.gl);
+    // Dropped items draw the same baked item icons as the GUI (real model, not a tint cube).
+    this.entityRenderer.setItemIconAtlas(this.icons);
     // A type without a renderer would spawn invisible and still attack: take it out of natural spawning and /summon.
     ENTITY_TYPES.forEach((t) => { if (t.factory && !this.entityRenderer.canRender(t.name)) t.factory = null; });
-    await this.entityRenderer.init('/mc/textures/entity');
 
     // Environment passes (sky / clouds / weather) + particles + audio.
-    this.onStatus?.('Building environment', 0.97);
     this.levelLike = this.level as unknown as LevelLike;
     this.skyRenderer = new SkyRenderer(this.gl);
     // 192.33 = vanilla 26.2 cloud height (dimension_type visual/cloud_height); the module default
@@ -420,27 +478,141 @@ export class Game {
     ParticleEngine.setInstance(this.particles);
     this.particles.blockLayerForState = (state) => this.blockLayerFor(state);
     this.ambientParticles = new AmbientParticles(this.mc);
-    await Promise.all([
-      this.skyRenderer.init(),
-      this.cloudRenderer.init(),
-      this.weatherRenderer.init(),
-      this.particles.init({ blockArray: this.textures.block.texture }),
-    ]);
-
     // First-person hand + block-breaking decal (hand package). They own their own shaders and
     // draw into whatever framebuffer is current, so they work with the HDR scene target too.
-    this.onStatus?.('Preparing first-person view', 0.975);
     this.handRenderer = new HandRenderer(this.gl, this.mc, this.models, this.textures);
     this.breakingOverlay = new BreakingOverlay(this.gl, this.mc, this.models, this.textures);
-    await Promise.all([this.handRenderer.init('/mc'), this.breakingOverlay.init()]);
-
     this.sounds = new SoundEngine();
     this.sounds.autoUnlock(); // browser autoplay policy: resume on the first gesture
-    void this.sounds.load('/mc/sounds/index.json')
-      // autoUnlock() binds once, but the one-shot listeners can fire *before* load() has created
-      // the AudioContext (in which case resume() is a no-op). Try again once it exists.
-      .then(() => (this.sounds.isUnlocked ? undefined : this.sounds.resume()))
-      .catch((err) => console.warn('[sound] unavailable', err));
+
+    // Each init below owns the single WebGL context while it runs (FBOs, viewport, bound program),
+    // so they must stay sequential: running them in one Promise.all interleaves GL state between
+    // an init's awaits and produced GL_INVALID_VALUE. The parallel batch saved ~0 ms anyway —
+    // these are shader compiles and uploads, not I/O waits.
+    this.onStatus?.('Loading render assets', 0.94);
+    await this.icons.loadModels('/mc');
+    // Bake at the device's GUI scale so a 3x HUD gets 48x48 icons instead of a 16x16
+    // texture stretched into chunky blocks.
+    this.icons.build(this.guiScale);
+    await this.entityRenderer.init('/mc/textures/entity');
+    await this.skyRenderer.init();
+    await this.cloudRenderer.init();
+    await this.weatherRenderer.init();
+    await this.particles.init({ blockArray: this.textures.block.texture });
+    await this.handRenderer.init('/mc');
+    await this.breakingOverlay.init();
+
+    // The spawn area has been generating in the background since `Generating terrain`; from here
+    // on the player (and therefore the entity system) needs real terrain under their feet.
+    if (this.spawnAreaPromise) {
+      await this.spawnAreaPromise;
+      this.spawnAreaPromise = null;
+    }
+    this.initHotbar();
+    this.spawnPlayer();
+
+    // Entities: the manager owns the 20 Hz entity tick + natural spawning, the dispatcher draws
+    // them into one batched pass. Both must exist before the first frame.
+    this.onStatus?.('Starting entity system', 0.94);
+    this.entityManager = new EntityManager(this.level, this.player, this.seedBig, {
+      despawnDistance: 128,
+    });
+    // Client-side redstone: signal queries, wire power, diodes, buttons/plates and the
+    // mechanisms they drive (lamp/door/trapdoor/gate/TNT). Hooks use the entity manager.
+    this.redstone = new RedstoneSystem(this.level, this.mc, {
+      playSound: (name, x, y, z, pitch = 1) => this.sounds.play(name, x, y, z, 1, pitch),
+      primeTnt: (x, y, z) => {
+        this.level.setBlockState(x, y, z, 0);
+        this.primeTnt(x + 0.5, y, z + 0.5, 80);
+      },
+      countEntities: (box) => {
+        let count = this.player.boundingBox().intersects(box) ? 1 : 0;
+        for (const e of this.entityManager.getEntities()) {
+          if (e.isRemoved() || !e.isAlive() || !(e instanceof LivingEntity)) continue;
+          if (e.getBoundingBox().intersects(box)) count++;
+        }
+        return count;
+      },
+      entityFeet: () => {
+        const feet: { x: number; y: number; z: number }[] = [
+          { x: this.player.pos.x, y: this.player.pos.y, z: this.player.pos.z },
+        ];
+        for (const e of this.entityManager.getEntities()) {
+          if (e.isRemoved() || !e.isAlive() || !(e instanceof LivingEntity)) continue;
+          feet.push({ x: e.x, y: e.y, z: e.z });
+        }
+        return feet;
+      },
+      // Container.getRedstoneSignalFromContainer: full slots raise the signal, each stack's
+      // fill fraction adds up to 14, and any item at all adds the final point.
+      containerSignal: (name, x, y, z) => {
+        const menu = this.blockContainers.get(`${name}@${x},${y},${z}`) as
+          { container?: { getContainerSize(): number; getMaxStackSize(): number; getItem(i: number): ItemStack } } | undefined;
+        const container = menu?.container;
+        if (!container) return 0;
+        const slots = container.getContainerSize();
+        if (slots <= 0) return 0;
+        let filled = 0;
+        let fraction = 0;
+        for (let i = 0; i < slots; i++) {
+          const stack = container.getItem(i);
+          if (stack.isEmpty()) continue;
+          filled++;
+          fraction += stack.getCount() / Math.min(container.getMaxStackSize(), stack.getMaxStackSize());
+        }
+        fraction /= slots;
+        return Math.floor(fraction * 14) + (filled > 0 ? 1 : 0);
+      },
+    });
+    // PlayerTarget forwards mob/arrow damage here; the survival facade owns armor, i-frames and death.
+    const pt = this.entityManager.getPlayerTarget();
+    if (pt) pt.onHurt = (amount, attacker) => {
+      this.wakeUp(false);
+      this.survival.damage(amount, attacker ? attacker.getTypeName() : 'mob');
+      this.stats.award('custom', 'damage_taken', Math.round(amount * 10));
+      // LivingEntity.hurt knockback: push the player away from the attacker,
+      // strength 0.4 horizontal / 0.36 vertical (Player has its own physics).
+      if (attacker) {
+        const dx = this.player.pos.x - attacker.getX();
+        const dz = this.player.pos.z - attacker.getZ();
+        const len = Math.hypot(dx, dz) || 1;
+        this.player.vel = new Vec3(
+          this.player.vel.x + (dx / len) * 0.4,
+          Math.max(this.player.vel.y, 0.36),
+          this.player.vel.z + (dz / len) * 0.4,
+        );
+      }
+    };
+    this.entityManager.explosionHandler = (x, y, z, power, interaction) => this.explode(x, y, z, power, interaction);
+    // TargetingConditions.forCombat().ignoreCreative() and TemptGoal's hand check need the
+    // player's live game mode / held items; the vanilla entity layer has no direct Game ref.
+    this.entityManager.playerGameModeProvider = () => this.options.gamemode;
+    this.entityManager.mobDeathHandler = (e) => this.dropMobLoot(e);
+    // AgeableMob in love: hearts every 10 ticks (Animal.aiStep particle path).
+    this.entityManager.animalLoveHandler = (e) => {
+      spawnHearts(e.x, e.y + e.getHeight() * 0.8, e.z, 2);
+    };
+    this.entityManager.animalBredHandler = () => {
+      this.stats.award('custom', 'animals_bred');
+    };
+    this.entityManager.chickenEggHandler = (e) => {
+      const item = this.survival.registry.byName('egg');
+      if (item) this.dropItem(new ItemStack(item, 1), e.x, e.y + 0.2, e.z);
+      this.sounds.play('entity.chicken.egg', e.x, e.y, e.z, 1, 1);
+    };
+    this.entityManager.potionSplashHandler = (x, y, z, potionId, age, lingering) => {
+      if (lingering) this.spawnPotionCloud(x, y, z, potionId);
+      else this.applyPotionSplash(x, y, z, potionId, age);
+    };
+    this.entityManager.playerHeldItemsProvider = () => {
+      const held: string[] = [];
+      const main = this.survival.getSelectedStack();
+      if (!main.isEmpty() && main.item) held.push(main.item.name);
+      const off = this.survival.inventory.getItem(SLOT_OFFHAND);
+      if (!off.isEmpty() && off.item) held.push(off.item.name);
+      return held;
+    };
+    void this.entityManager.loadSpawnConfig('/mc');
 
     // Persistence: restore the last world (chunks / player / time) before the GUI is built so the
     // world list on the title screen already has a provider.
@@ -460,6 +632,8 @@ export class Game {
       icons: this.icons,
       // GameOptions has every field GuiOptions requires; the index signature is the only gap.
       options: this.options as unknown as GuiOptions,
+      stats: this.stats,
+      playerLevel: () => this.survival.level,
       touchInput: this.touchDevice,
       container: this.containerAdapter(),
       // 3D player preview for the survival inventory (FBO render + readback in the dispatcher).
@@ -478,7 +652,13 @@ export class Game {
             this.renderer.shaderQuality = String(value);
           } else if (key === 'shadersEnabled' || key === 'shaders') {
             this.renderer.shadersEnabled = Boolean(value);
+            this.applyRenderScale();
           } else if (key === 'guiScale') {
+            // Window#setGuiScale: rebake the item icons at the new physical slot size and re-lay out
+            // the open screen. Without this the HUD kept drawing an atlas baked for the old scale
+            // and the settings page stayed at the previous logical size until the next window resize.
+            this.icons?.build(this.guiScale);
+            this.screens?.resize(window.innerWidth, window.innerHeight);
             this.touch?.updateMetrics(this.guiScale);
           } else if (key === 'language') {
             void DEFAULT_I18N.setLanguage(String(value)).then(() => this.screens.refreshLanguage());
@@ -516,11 +696,31 @@ export class Game {
     });
 
     this.resize();
-    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('resize', () => this.scheduleResize());
     this.bindInput();
     this.initTouch();
+    this.initPerfLog();
     if (!this.bootPlay) this.openTitle();
     this.onStatus?.('Ready', 1);
+  }
+
+  /**
+   * 性能采样默认开启：进世界 2.5 秒后静默采 12 秒，然后把报告 POST 给 dev server
+   * （vite.config.ts 的 perf-log-sink 落盘到 logs/perf/perf-*.json），手机上也无需任何操作。
+   *
+   *   ?play&perf=20   手动模式：显示面板、20 秒、带 50% 分辨率对照，可复制/下载
+   *   ?play&perf=0    完全关掉
+   */
+  private initPerfLog(): void {
+    if (typeof location === 'undefined') return;
+    const raw = new URLSearchParams(location.search).get('perf');
+    if (raw === '0' || raw === 'off') return;
+    const manual = raw !== null;
+    const seconds = manual && Number(raw) > 0 ? Number(raw) : 12;
+    const log = new PerfLog(this, { seconds, auto: !manual, abTest: manual, upload: true });
+    this.perfLog = log;
+    (window as unknown as { __perf: PerfLog }).__perf = log;
+    log.install();
   }
 
   // ------------------------------------------------ title screen / world lifecycle
@@ -682,10 +882,12 @@ export class Game {
   /** Hit-test the vanilla 182x22 hotbar (Hud.renderHotbar) against a CSS-pixel pointer position. */
   private touchHotbarSlot(clientX: number, clientY: number): number {
     const scale = this.guiScale;
-    const dpr = this.glCanvas.width / Math.max(1, window.innerWidth);
+    // CSS -> physical GUI pixels. glCanvas can be capped by the 3D render scale, so map against
+    // the GUI canvas (which is always full device pixels).
+    const dpr = this.guiCanvas.width / Math.max(1, window.innerWidth);
     const guiX = (clientX * dpr) / scale;
     const guiY = (clientY * dpr) / scale;
-    const size = guiScaledSize(this.glCanvas.width, this.glCanvas.height, scale);
+    const size = guiScaledSize(this.guiCanvas.width, this.guiCanvas.height, scale);
     const w = size.width;
     const h = size.height;
     if (guiY < h - 22 || guiY > h) return -1;
@@ -719,8 +921,10 @@ export class Game {
     const centreX = (this.spawnSpot?.x ?? 8) >> 4;
     const centreZ = (this.spawnSpot?.z ?? 8) >> 4;
 
-    // 5x5 chunks around spawn, nearest first. Everything else streams in from the tick loop.
-    const radius = 2;
+    // 3x3 chunks around spawn: enough terrain for the camera to open on. The rest of the view
+    // distance is requested by the normal tick loop (ensureChunksAround) once the game runs, so
+    // the workers are not competing with shader compilation during the boot.
+    const radius = 1;
     const total = (radius * 2 + 1) ** 2;
     for (let dz = -radius; dz <= radius; dz++) {
       for (let dx = -radius; dx <= radius; dx++) {
@@ -833,6 +1037,8 @@ export class Game {
     const waterYaw = water ? (Math.atan2(water.x - x, water.z - z) * 180) / Math.PI : 0;
     this.player.yaw = water ? waterYaw + 180 : 0;
     this.player.pitch = -3;
+    this.lastStatX = this.player.pos.x;
+    this.lastStatZ = this.player.pos.z;
     console.log(
       `[spawn] ${x + 0.5}, ${(standing ?? fallbackY) + 1}, ${z + 0.5}` +
       ` (sea ${this.level.seaLevel}, standing ${standing ?? 'fallback'},` +
@@ -878,20 +1084,51 @@ export class Game {
    * screen reads/writes the same PlayerInventory the HUD and the mining code use.
    */
   private containerAdapter(): ContainerMenuLike {
-    const menu = (): AbstractContainerMenu => this.survival.activeMenu ?? this.survival.openInventory();
+    const menu = (): AbstractContainerMenu => {
+      const active = this.survival.activeMenu ?? this.survival.openInventory();
+      // Stats.ITEM_CRAFTED: wired lazily here so every InventoryMenu/CraftingMenu/FurnaceMenu
+      // created by SurvivalState reports takes without importing the statistics layer.
+      if (active instanceof AbstractCraftingMenu || active instanceof AbstractFurnaceMenu) {
+        if (!active.onCrafted) {
+          active.onCrafted = (name, count) => this.stats.award('crafted', name, count);
+        }
+      }
+      if (active instanceof EnchantingMenu) {
+        if (!active.onSpendLevels) active.onSpendLevels = (levels) => this.survival.removeExperienceLevels(levels);
+        if (!active.onEnchanted) {
+          active.onEnchanted = () => {
+            this.stats.award('custom', 'enchant_item');
+            this.sounds.play(
+              'block.enchantment_table.use',
+              this.player.pos.x, this.player.pos.y, this.player.pos.z, 1, 1,
+            );
+          };
+        }
+      }
+      return active;
+    };
     // CreativeModeInventoryScreen owns a virtual 9x5 tab grid (indices 0..44) plus the real
-    // player hotbar (45..53); it is not backed by an AbstractContainerMenu.
+    // player hotbar (45..53); it is not backed by an AbstractContainerMenu. Its Survival
+    // Inventory tab is backed by the real InventoryMenu (46 slots), so indices are used as-is.
     const creativeGrid: { itemId: number; count: number }[] = Array.from(
       { length: 45 }, () => ({ itemId: -1, count: 0 }),
     );
-    const isCreative = (): boolean => this.screens?.current instanceof CreativeModeInventoryScreen;
-    const menuIndex = (index: number): number => isCreative() && index >= 45 ? index - 9 : index;
+    const creativeScreen = (): CreativeModeInventoryScreen | null =>
+      this.screens?.current instanceof CreativeModeInventoryScreen ? this.screens.current : null;
+    const isCreative = (): boolean => creativeScreen() !== null;
+    const isCreativeSurvival = (): boolean => creativeScreen()?.getSelectedTab() === TAB_SURVIVAL;
+    const isCreativeItemTab = (): boolean => isCreative() && !isCreativeSurvival();
+    const menuIndex = (index: number): number => isCreativeItemTab() && index >= 45 ? index - 9 : index;
     const plain = (stack: ItemStack): { itemId: number; count: number } =>
       ({ itemId: stack.isEmpty() ? -1 : stack.item!.id, count: stack.getCount() });
     return {
-      getSlotCount: () => (isCreative() ? 54 : menu().slots.length),
+      getSlotCount: () => (isCreativeItemTab() ? 54 : menu().slots.length),
       getItem: (index) => {
-        if (isCreative()) {
+        if (isCreativeSurvival()) {
+          const slot = menu().slots[index];
+          return plain(slot ? slot.getItem() : ItemStack.EMPTY);
+        }
+        if (isCreativeItemTab()) {
           if (index >= 0 && index < 45) return creativeGrid[index];
           if (index >= 45 && index < 54) return plain(this.survival.inventory.getItem(index - 45));
         }
@@ -901,7 +1138,7 @@ export class Game {
       },
       click: (index, button, _shift, action) => {
         const active = menu();
-        if (isCreative() && index >= 0 && index < 45) {
+        if (isCreativeItemTab() && index >= 0 && index < 45) {
           const item = this.survival.registry.get(creativeGrid[index].itemId);
           if (!item) { active.setCarried(ItemStack.EMPTY); return; }
           const stack = new ItemStack(item, 1);
@@ -925,14 +1162,14 @@ export class Game {
           }
           return;
         }
-        if (isCreative() && index >= 45 && index < 54 && action === 'QUICK_MOVE') {
+        if (isCreativeItemTab() && index >= 45 && index < 54 && action === 'QUICK_MOVE') {
           this.survival.inventory.setItem(index - 45, ItemStack.EMPTY);
           return;
         }
         active.clicked(menuIndex(index), button, ACTION_TO_INPUT[action], this.survival.asMenuPlayer());
       },
       canPlaceItem: (index, stack) => {
-        if (isCreative() && index >= 0 && index < 45) return false;
+        if (isCreativeItemTab() && index >= 0 && index < 45) return false;
         const active = menu();
         const slot = active.slots[menuIndex(index)];
         const item = this.survival.registry.get(stack.itemId);
@@ -942,11 +1179,28 @@ export class Game {
         const item = this.survival.registry.get(stack.itemId);
         if (!item) return 0;
         const value = new ItemStack(item, stack.count);
-        if (isCreative() && index >= 0 && index < 45) return value.getMaxStackSize();
+        if (isCreativeItemTab() && index >= 0 && index < 45) return value.getMaxStackSize();
         return menu().slots[menuIndex(index)]?.getMaxStackSize(value) ?? value.getMaxStackSize();
       },
       setItem: (index, stack) => {
-        if (isCreative() && index >= 0 && index < 45) creativeGrid[index] = { itemId: stack.itemId, count: stack.count };
+        if (isCreativeItemTab() && index >= 0 && index < 45) creativeGrid[index] = { itemId: stack.itemId, count: stack.count };
+      },
+      enchantInfo: (levels) => {
+        const active = menu();
+        return active instanceof EnchantingMenu
+          ? active.info(levels)
+          : { costs: [0, 0, 0], canEnchant: [false, false, false] };
+      },
+      enchant: (slot) => {
+        const active = menu();
+        if (!(active instanceof EnchantingMenu)) return false;
+        return active.enchant(slot, this.survival.level);
+      },
+      brewInfo: () => {
+        const active = menu();
+        return active instanceof BrewingMenu
+          ? active.brewInfo()
+          : { progress: 0, fuel: 0 };
       },
       getCarried: () => {
         const stack = menu().getCarried();
@@ -1053,11 +1307,39 @@ export class Game {
           const item = this.survival.registry.byName(String(saved.id))
             ?? (saved.numericId !== undefined ? this.survival.registry.get(saved.numericId) : undefined);
           if (!item || saved.count <= 0) continue;
-          this.survival.inventory.setItem(saved.slot & 0xff, new ItemStack(item, saved.count));
+          this.survival.inventory.setItem(saved.slot & 0xff, new ItemStack(
+            item, saved.count,
+            saved.components as ItemComponents | undefined,
+          ));
         }
       }
       this.survival.inventory.setSelectedSlot(view.selectedItemSlot);
       this.survival.restoreFromSave(view);
+      // Active potion effects are part of the player save (active_effects component).
+      this.survival.clearEffects();
+      const savedEffects = (view.extra as { effects?: unknown } | undefined)?.effects;
+      if (Array.isArray(savedEffects)) {
+        for (const raw of savedEffects) {
+          if (!raw || typeof raw !== 'object') continue;
+          const e = raw as { id?: unknown; duration?: unknown; amplifier?: unknown };
+          const id = typeof e.id === 'string' ? e.id : '';
+          const duration = Number(e.duration);
+          const amplifier = Number(e.amplifier);
+          if (id && Number.isFinite(duration) && duration > 0) {
+            this.survival.applyEffect(id, duration, Number.isFinite(amplifier) && amplifier > 0 ? amplifier : 0);
+          }
+        }
+      }
+      this.stats.load((view.extra as { stats?: unknown } | undefined)?.stats);
+      const bed = (view.extra as { bedSpawn?: unknown } | undefined)?.bedSpawn;
+      if (bed && typeof bed === 'object') {
+        const b = bed as { x?: unknown; y?: unknown; z?: unknown };
+        if (Number.isFinite(b.x) && Number.isFinite(b.y) && Number.isFinite(b.z)) {
+          this.bedSpawn = { x: Number(b.x), y: Number(b.y), z: Number(b.z) };
+        }
+      }
+      this.lastStatX = this.player.pos.x;
+      this.lastStatZ = this.player.pos.z;
     }
 
     const data = loaded.level.getCompoundOrEmpty('Data');
@@ -1097,7 +1379,14 @@ export class Game {
       const stack = s.inventory.getItem(i);
       const item = stack.getItem();
       if (!item || stack.isEmpty()) continue;
-      inventory.push({ slot: i, id: item.namespacedId, count: stack.getCount(), numericId: item.id });
+      inventory.push({
+        slot: i, id: item.namespacedId, count: stack.getCount(), numericId: item.id,
+        // Data components (potion id, enchantments, damage, custom name) must survive:
+        // item id + count alone turns every potion into a water bottle / strips enchants.
+        components: Object.keys(stack.components).length > 0
+          ? stack.components as unknown as Record<string, unknown>
+          : undefined,
+      });
     }
     return {
       health: s.health,
@@ -1108,6 +1397,11 @@ export class Game {
       xpP: s.experience,
       xpTotal: s.totalExperience,
       inventory,
+      stats: this.stats.toJSON(),
+      bedSpawn: this.bedSpawn,
+      effects: [...s.effects.entries()].map(([id, e]) => ({
+        id, duration: e.duration, amplifier: e.amplifier,
+      })),
     };
   }
 
@@ -1167,6 +1461,11 @@ export class Game {
       if (e.code === 'F3') { this.showDebug = !this.showDebug; e.preventDefault(); return; }
       if (e.code === 'F6') { this.setShaders(!this.renderer.shadersEnabled); e.preventDefault(); return; }
       if (e.code === 'Escape') { this.openScreen('pause'); e.preventDefault(); return; }
+      if (e.code === 'KeyQ' && !e.repeat) {
+        this.dropSelectedItem(e.ctrlKey);
+        e.preventDefault();
+        return;
+      }
       if (e.code === 'KeyW' && !e.repeat && !this.keys.has('KeyW')) {
         const now = performance.now();
         if (now - this.lastWPress < 300) this.sprintTap = true;
@@ -1221,11 +1520,13 @@ export class Game {
       }
       if (e.button === 0) { this.mining = true; this.attack(); }
       if (e.button === 2) this.useItem();
+      // Bow release is handled in pointerup (hold to charge).
       if (e.button === 1) this.pickBlock();
     });
     document.addEventListener('pointerup', (e) => {
       if (!e.isPrimary) return;
       if (e.button === 0) this.mining = false;
+      if (e.button === 2 && !this.screens.current) this.releaseBow();
       if (this.screens.current) {
         this.screens.onMouse(e.clientX, e.clientY, e.button, 'up', 0, modifiers(e));
         // A button may have closed the menu: take the pointer back while we still have activation.
@@ -1354,6 +1655,7 @@ export class Game {
   }
 
   private attack(): void {
+    if (this.sleeping) return;
     if (this.attackCooldown > 0) return;
     this.attackCooldown = 4;
     this.player.swingHand();
@@ -1369,9 +1671,17 @@ export class Game {
     if (target) {
       const held = this.survival.getSelectedStack();
       const name = held.item?.name ?? '';
-      const damage = name.endsWith('_sword') ? 4 : name.endsWith('_axe') ? 6
+      let damage = name.endsWith('_sword') ? 4 : name.endsWith('_axe') ? 6
         : name.endsWith('_pickaxe') ? 3 : name.endsWith('_shovel') ? 2.5 : 1;
+      // MobEffects.DAMAGE_BOOST (+3/level) / MobEffects.WEAKNESS (-4/level).
+      if (this.survival.hasEffect('strength')) {
+        damage += 3 * (this.survival.getEffectLevel('strength') + 1);
+      }
+      if (this.survival.hasEffect('weakness')) {
+        damage = Math.max(0, damage - 4 * (this.survival.getEffectLevel('weakness') + 1));
+      }
       target.hurt(damage, this.entityManager.getPlayerTarget());
+      this.stats.award('custom', 'damage_dealt', Math.round(damage * 10));
       return;
     }
 
@@ -1381,6 +1691,7 @@ export class Game {
     if (!blockHit) return;
     const hit = blockHit;
     const broken = this.level.getBlockState(hit.x, hit.y, hit.z);
+    if (broken !== 0) this.stats.award('mined', this.mc.blockOf(broken).name);
     this.level.setBlockState(hit.x, hit.y, hit.z, 0);
     this.updateNeighbors(hit.x, hit.y, hit.z);
     if (broken !== 0) this.breakEffects(broken, hit.x, hit.y, hit.z);
@@ -1421,6 +1732,7 @@ export class Game {
 
   /** Advances the survival mining progress for the aimed block (vanilla Player.tick loop). */
   private updateMining(): void {
+    if (this.sleeping) { this.survival.breaking.reset(); return; }
     if (this.options.gamemode === 'creative' || !(this.mouseLocked || this.touchEnabled) || !this.mining) {
       this.survival.breaking.reset();
       return;
@@ -1437,6 +1749,7 @@ export class Game {
     if (!this.survival.mine(1, state, underwater)) return;
 
     const drops = this.survival.breakBlock((x, y, z) => this.level.getBlockState(x, y, z), hit.x, hit.y, hit.z);
+    this.stats.award('mined', this.mc.blockOf(state).name);
     this.level.setBlockState(hit.x, hit.y, hit.z, 0);
     this.updateNeighbors(hit.x, hit.y, hit.z);
     this.breakEffects(state, hit.x, hit.y, hit.z);
@@ -1445,29 +1758,71 @@ export class Game {
     this.player.swingHand();
   }
 
+  /**
+   * Source: Sheep.shear (ShearsItem.useOn). Drops 1..3 wool of the sheep's DyeColor
+   * (creative also drops; vanilla only skips the shears durability in creative).
+   */
+  private shearSheep(sheep: Sheep): void {
+    if (sheep.sheared) return;
+    sheep.sheared = true;
+    const count = 1 + Math.floor(Math.random() * 3);
+    const item = this.survival.registry.byName(`minecraft:${sheep.woolItem}`);
+    if (item) this.dropItem(new ItemStack(item, count), sheep.x, sheep.y + 0.6, sheep.z);
+    this.sounds.play('entity.sheep.shear', sheep.x, sheep.y + 0.5, sheep.z, 1, 1);
+  }
+
+  /** LivingEntity.die -> Entity loot table + mob XP. */
+  private dropMobLoot(entity: Entity): void {
+    const type = entity.getTypeName();
+    const playerKill = entity instanceof LivingEntity
+      && entity.getLastHurtBy() === this.entityManager.getPlayerTarget();
+    if (playerKill) {
+      this.stats.award('killed', type);
+      this.stats.award('custom', 'mob_kills');
+    }
+    // Baby animals drop neither loot nor experience (no loot table for babies).
+    if (entity instanceof Mob && entity.isBaby()) return;
+    const rng = this.survival.random;
+    const looting = playerKill ? this.survival.getSelectedStack().getEnchantmentLevel('looting') : 0;
+    for (const drop of Game.MOB_LOOT[type] ?? []) {
+      const [name, min, max, chance] = drop;
+      if (chance !== undefined && rng.nextFloat() > chance) continue;
+      let count = min + rng.nextInt(max - min + 1);
+      if (count > 0 && looting > 0) count += rng.nextInt(looting + 1);
+      if (count <= 0) continue;
+      const dropName = entity.isOnFire() ? (Game.COOKED_MEAT[name] ?? name) : name;
+      const item = this.survival.registry.byName(dropName);
+      if (item) this.dropItem(new ItemStack(item, count), entity.x, entity.y + 0.5, entity.z);
+    }
+    if (entity instanceof Sheep && !entity.sheared) {
+      const wool = this.survival.registry.byName(entity.woolItem);
+      if (wool) this.dropItem(new ItemStack(wool, 1), entity.x, entity.y + 0.5, entity.z);
+    }
+    // Vanilla Mob.dropEquipment: 8.5% base chance, +1% per Looting level.
+    if (entity instanceof LivingEntity) {
+      const chance = 0.085 + looting * 0.01;
+      for (const stack of entity.equipment) {
+        if (!stack || rng.nextFloat() >= chance) continue;
+        const item = this.survival.registry.byName(stack.id);
+        if (item) this.dropItem(new ItemStack(item, stack.count), entity.x, entity.y + 0.5, entity.z);
+      }
+    }
+    const base = Game.MOB_XP[type] ?? 0;
+    if (base > 0) {
+      const xp = base + rng.nextInt(3);
+      this.entityManager.spawnEntity(new ExperienceOrb(this.level, entity.x, entity.y + 0.5, entity.z, xp));
+    }
+  }
+
   /** Spawns a dropped ItemStack as an ItemEntity. Coordinates default to the player's feet. */
   private dropItem(stack: ItemStack, x?: number, y?: number, z?: number): void {
     if (!stack || stack.isEmpty()) return;
     const px = x === undefined ? this.player.pos.x : x + 0.5;
     const py = y === undefined ? this.player.pos.y + 1.2 : y + 0.25;
     const pz = z === undefined ? this.player.pos.z : z + 0.5;
-    const entity = new ItemEntity(this.level, px, py, pz, this.toEntityStack(stack));
+    const entity = new ItemEntity(this.level, px, py, pz, stack.copy());
     entity.setPickupDelay(10);
     this.entityManager.spawnEntity(entity);
-  }
-
-  /**
-   * ItemEntity / LivingEntity use their own stub stack (`{ id: string; count: number }`) instead of
-   * world/item/ItemStack, and ItemEntityRenderer reads `.id` off it. Convert at the boundary.
-   */
-  private toEntityStack(stack: ItemStack): { id: string; count: number } {
-    const item = stack.getItem();
-    return { id: item ? item.namespacedId : 'minecraft:air', count: stack.getCount() };
-  }
-
-  private fromEntityStack(stack: { id: string; count: number }): ItemStack {
-    const item = this.survival.registry.byName(stack.id);
-    return item ? new ItemStack(item, stack.count) : ItemStack.EMPTY;
   }
 
   // ------------------------------------------------------- environment / fx
@@ -1475,6 +1830,14 @@ export class Game {
   /** Texture-array layer for a block state, used by the BLOCK particle sprite. */
   private blockLayerFor(state: number): number {
     const name = this.mc.blockOf(state).name;
+    // Vanilla picks the blockstate's `particle` texture, which for these blocks is dirt. Their
+    // own top texture is a grayscale mask that needs the biome tint, and the particle shader has
+    // no tint - it rendered as grey gravel chunks instead of brown dirt.
+    if (name === 'grass_block' || name === 'mycelium' || name === 'podzol'
+      || name === 'dirt_path' || name === 'farmland') {
+      const dirt = this.textures.blockTextureLayer('block/dirt');
+      if (dirt >= 0) return dirt;
+    }
     for (const candidate of [`block/${name}`, `block/${name}_top`, `block/${name}_side`, `block/${name}_still`]) {
       const layer = this.textures.blockTextureLayer(candidate);
       if (layer >= 0) return layer;
@@ -1531,6 +1894,9 @@ export class Game {
   setShaders(on: boolean): void {
     this.options.shaders = on;
     this.renderer.shadersEnabled = on;
+    // Post off draws straight into the canvas, so the viewport/target must switch back to the full
+    // drawing buffer (and back to the scaled HDR target when it is re-enabled).
+    this.applyRenderScale();
   }
 
   /** Also reachable from the console: __mc.setShaderQuality('low' | ... | 'ultra'). */
@@ -1565,42 +1931,184 @@ export class Game {
 
   /** Vanilla Entity remainingFireTicks for the player (lava/fire ignite, water extinguishes). */
   private playerFireTicks = 0;
+  /** Vanilla mobGriefing gamerule: MOB explosions break blocks while true. */
+  private mobGriefing = true;
+
+  // ---- bed sleeping (ServerPlayer.startSleepInBed / stopSleepInBed) ----
+  private sleeping = false;
+  private sleepTicks = 0;
+  /** 0..1 black overlay while falling asleep / waking up. */
+  private sleepFade = 0;
+  /** Spawn point set by the last bed the player slept in. */
+  private bedSpawn: { x: number; y: number; z: number } | null = null;
+
+  /** DamageSource types that are not entities (Stats.ENTITY_KILLED_BY needs an entity type). */
+  private static readonly ENVIRONMENTAL_DEATHS: ReadonlySet<string> = new Set([
+    'explosion', 'fall', 'void', 'lava', 'fire', 'drown', 'starve', 'magic', 'mob',
+    'generic', 'out_of_world', 'lightning', 'cactus', 'sweet_berry_bush', 'stalagmite',
+    'in_wall', 'cramming', 'fly_into_wall', 'hot_floor', 'on_fire', 'in_fire', 'campfire',
+  ]);
+
+  /** Vanilla fishing loot pools (FishingHook + BuiltInLootTables.FISHING). */
+  private static readonly FISHING_FISH: readonly (readonly [string, number])[] = [
+    ['cod', 60], ['salmon', 25], ['tropical_fish', 2], ['pufferfish', 13],
+  ];
+  private static readonly FISHING_JUNK: readonly (readonly [string, number])[] = [
+    ['lily_pad', 17], ['leather', 10], ['leather_boots', 10], ['rotten_flesh', 10],
+    ['stick', 5], ['string', 5], ['water_bottle', 10], ['bone', 10], ['ink_sac', 1],
+    ['tripwire_hook', 10], ['bamboo', 10],
+  ];
+  private static readonly FISHING_TREASURE: readonly (readonly [string, number])[] = [
+    ['bow', 1], ['enchanted_book', 1], ['fishing_rod', 1], ['name_tag', 1],
+    ['nautilus_shell', 1], ['saddle', 1],
+  ];
+
+  /** Vanilla entity loot tables, simplified to item/min/max/(chance). */
+  private static readonly MOB_LOOT: Readonly<Record<string, readonly (readonly [string, number, number, number?])[]>> = {
+    zombie: [['rotten_flesh', 0, 2]],
+    husk: [['rotten_flesh', 0, 2]],
+    drowned: [['rotten_flesh', 0, 2]],
+    skeleton: [['bone', 0, 2], ['arrow', 0, 2]],
+    stray: [['bone', 0, 2], ['arrow', 0, 2]],
+    bogged: [['bone', 0, 2], ['arrow', 0, 2]],
+    parched: [['bone', 0, 2], ['arrow', 0, 2]],
+    wither_skeleton: [['coal', 0, 1], ['bone', 0, 2]],
+    creeper: [['gunpowder', 0, 2]],
+    spider: [['string', 0, 2], ['spider_eye', 0, 1]],
+    cave_spider: [['string', 0, 2], ['spider_eye', 0, 1]],
+    enderman: [['ender_pearl', 0, 1]],
+    slime: [['slime_ball', 0, 2]],
+    magma_cube: [['magma_cream', 0, 1]],
+    witch: [
+      ['glowstone_dust', 0, 2], ['redstone', 0, 2], ['sugar', 0, 2],
+      ['spider_eye', 0, 2], ['glass_bottle', 0, 2], ['stick', 0, 2],
+    ],
+    pig: [['porkchop', 1, 3]],
+    cow: [['beef', 1, 3], ['leather', 0, 2]],
+    mooshroom: [['beef', 1, 3], ['leather', 0, 2]],
+    sheep: [['mutton', 1, 2]],
+    chicken: [['chicken', 1, 1], ['feather', 0, 2]],
+    rabbit: [['rabbit', 0, 1], ['rabbit_hide', 0, 1], ['rabbit_foot', 0, 1, 0.1]],
+    parrot: [['feather', 0, 2]],
+    squid: [['ink_sac', 1, 3]],
+    glow_squid: [['glow_ink_sac', 1, 3]],
+    cod: [['cod', 1, 1], ['bone_meal', 0, 1]],
+    salmon: [['salmon', 1, 1], ['bone_meal', 0, 1]],
+    zombified_piglin: [['rotten_flesh', 0, 1], ['gold_nugget', 0, 1]],
+  };
+
+  /** On-fire meat drops use the cooked variant (LootTable smelt function). */
+  private static readonly COOKED_MEAT: Readonly<Record<string, string>> = {
+    porkchop: 'cooked_porkchop', beef: 'cooked_beef', mutton: 'cooked_mutton',
+    chicken: 'cooked_chicken', rabbit: 'cooked_rabbit', cod: 'cooked_cod', salmon: 'cooked_salmon',
+  };
+
+  /** Base XP per mob; the final orb is base + random(0..2). */
+  private static readonly MOB_XP: Readonly<Record<string, number>> = {
+    zombie: 5, husk: 5, drowned: 5, skeleton: 5, stray: 5, bogged: 5, parched: 5,
+    wither_skeleton: 5, creeper: 5, spider: 5, cave_spider: 5, enderman: 5,
+    slime: 4, magma_cube: 4, witch: 5, zombified_piglin: 5,
+    pig: 1, cow: 1, mooshroom: 1, sheep: 1, chicken: 1, rabbit: 1, parrot: 1,
+    squid: 1, glow_squid: 1, cod: 1, salmon: 1,
+  };
 
   /**
-   * Explosion (net/minecraft/world/level/Explosion): damages the player by distance and
+   * Explosion (net/minecraft/world/level/Explosion): damages entities by distance and
    * breaks the blocks of the blast sphere (dropping their loot through the normal loot tables).
-   * Vanilla power 3 leaves a ~3 block radius; resistance/hardness are approximated.
+   *
+   * f = power * 2 (Explosion.radius); q = 1 - d/f. Damage follows
+   * `(q*q + q) / 2 * 7 * f + 1`, so a point-blank TNT is lethal like vanilla.
+   * `interaction` is Level.ExplosionInteraction: TNT always breaks blocks, mob
+   * explosions (creeper) only while the mobGriefing gamerule is on.
    */
-  private explode(x: number, y: number, z: number, power: number): void {
+  private explode(x: number, y: number, z: number, power: number, interaction: 'mob' | 'tnt' = 'mob'): void {
     // Explosion.java: playSound(EntityType.GENERIC_EXPLODE, 4.0F, (1 + (random - random) * 0.2))
     this.sounds.play('entity.generic.explode', x, y, z, 4, 0.9 + Math.random() * 0.2);
+    spawnExplosion(x, y, z, power / 2);
     const f = power * 2;
     const radius = Math.max(1, Math.floor(f));
-    for (let dy = -radius; dy <= radius; dy++) {
-      for (let dz = -radius; dz <= radius; dz++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          const d = Math.hypot(dx, dy, dz);
-          if (d > f) continue;
-          const bx = x + dx, by = y + dy, bz = z + dz;
-          const state = this.level.getBlockState(bx, by, bz);
-          if (state === 0) continue;
-          const meta = this.mc.blockOf(state);
-          if (meta.hardness < 0 || meta.resistance > 100) continue; // bedrock / barrier
-          const drops = this.survival.breakBlock((qx, qy, qz) => this.level.getBlockState(qx, qy, qz), bx, by, bz);
-          this.level.setBlockState(bx, by, bz, 0);
-          for (const stack of drops) this.dropItem(stack, bx, by, bz);
-          this.breakEffects(state, bx, by, bz);
+    // Level.ExplosionInteraction.MOB destroys blocks only while the mobGriefing gamerule is on.
+    if (interaction === 'tnt' || this.mobGriefing) {
+      const cx = Math.floor(x), cy = Math.floor(y), cz = Math.floor(z);
+      const destroyed: { x: number; y: number; z: number }[] = [];
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const bx = cx + dx, by = cy + dy, bz = cz + dz;
+            // Explosion.explode: distance from the blast centre to the block centre.
+            if (Math.hypot(bx + 0.5 - x, by + 0.5 - y, bz + 0.5 - z) > f) continue;
+            const state = this.level.getBlockState(bx, by, bz);
+            if (state === 0) continue;
+            const meta = this.mc.blockOf(state);
+            if (meta.hardness < 0 || meta.resistance > 100) continue; // bedrock / barrier
+            // TntBlock.wasExploded: a nearby TNT block is primed, not destroyed.
+            if (meta.name === 'tnt') {
+              this.level.setBlockState(bx, by, bz, 0);
+              this.primeTnt(bx + 0.5, by, bz + 0.5, 10 + Math.floor(Math.random() * 10));
+              destroyed.push({ x: bx, y: by, z: bz });
+              continue;
+            }
+            const drops = this.survival.breakBlock((qx, qy, qz) => this.level.getBlockState(qx, qy, qz), bx, by, bz, true);
+            this.level.setBlockState(bx, by, bz, 0);
+            destroyed.push({ x: bx, y: by, z: bz });
+            for (const stack of drops) this.dropItem(stack, bx, by, bz);
+            this.breakEffects(state, bx, by, bz);
+          }
         }
       }
+      this.updateNeighbors(Math.floor(x), Math.floor(y), Math.floor(z));
+      this.redstone.onBlocksChanged(destroyed);
     }
-    this.updateNeighbors(Math.floor(x), Math.floor(y), Math.floor(z));
-    // Player damage: vanilla Explosion.getSeenPercent ~ (1 - d/f) falloff.
-    const d = Math.hypot(this.player.pos.x - x, this.player.pos.y - y, this.player.pos.z - z);
-    if (d < f) this.survival.damage((1 - d / f) * (power * 7 + 1) * 0.5, 'explosion');
+
+    // Explosion.finalizeExplosion: knockback + damage for every living entity inside f.
+    for (const e of this.entityManager.getEntities()) {
+      if (e.isRemoved() || !(e instanceof LivingEntity) || !e.isAlive()) continue;
+      const ey = e.y + e.getHeight() / 2;
+      const d = Math.hypot(e.x - x, ey - y, e.z - z);
+      if (d >= f) continue;
+      const q = 1 - d / f;
+      const nx = e.x - x, ny = ey - y, nz = e.z - z;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      e.push((nx / len) * q, (ny / len) * q, (nz / len) * q);
+      e.hurt(((q * q + q) / 2) * 7 * f + 1, null);
+    }
+
+    // Player damage: creative players are invulnerable (spectator is not a supported mode yet).
+    if (this.options.gamemode !== 'creative') {
+      const px = this.player.pos.x, py = this.player.pos.y + 0.9, pz = this.player.pos.z;
+      const d = Math.hypot(px - x, py - y, pz - z);
+      if (d < f) {
+        const q = 1 - d / f;
+        this.survival.damage(((q * q + q) / 2) * 7 * f + 1, 'explosion');
+        const nx = px - x, ny = py - y, nz = pz - z;
+        const len = Math.hypot(nx, ny, nz) || 1;
+        this.player.vel = new Vec3(
+          this.player.vel.x + (nx / len) * q,
+          Math.max(this.player.vel.y, (ny / len) * q + 0.1),
+          this.player.vel.z + (nz / len) * q,
+        );
+      }
+    }
+  }
+
+  /** PrimedTnt: create the entity and play TNT_PRIMED (TntBlock.prime). */
+  private primeTnt(x: number, y: number, z: number, fuse: number): void {
+    const tnt = this.entityManager.spawn('tnt', x, y, z);
+    if (!(tnt instanceof PrimedTnt)) return;
+    tnt.setFuse(fuse);
+    this.sounds.play('entity.tnt.primed', x, y, z, 1, 1);
   }
 
   /** Player death: drop inventory + XP, open the vanilla DeathScreen. */
   private onPlayerDeath(): void {
+    this.sleeping = false;
+    this.sleepTicks = 0;
+    this.sleepFade = 0;
+    this.stats.award('custom', 'deaths');
+    // Stats.ENTITY_KILLED_BY: the damage source is the attacker's entity type name (PlayerTarget
+    // forwards getTypeName()); environmental causes are not entity types.
+    const cause = this.survival.lastHurtBy;
+    if (cause && !Game.ENVIRONMENTAL_DEATHS.has(cause)) this.stats.award('killed_by', cause);
     const { stacks, experience } = this.survival.dropAllOnDeath();
     for (const stack of stacks) this.dropItem(stack);
     if (experience > 0) {
@@ -1659,6 +2167,30 @@ export class Game {
   private respawnPlayer(): void {
     this.survival.respawn();
     this.spawnPlayer();
+    this.sleeping = false;
+    this.sleepTicks = 0;
+    this.sleepFade = 0;
+    // ServerPlayer.setRespawnPosition -> respawn at the last bed when it still exists.
+    if (this.bedSpawn) {
+      const b = this.bedSpawn;
+      const bedState = this.level.getBlockState(b.x, b.y - 1, b.z);
+      if (bedState !== 0 && this.mc.blockOf(bedState).name.endsWith('_bed')) {
+        const cx = b.x >> 4, cz = b.z >> 4;
+        for (let dz = -1; dz <= 1; dz++) {
+          for (let dx = -1; dx <= 1; dx++) this.level.ensureChunk(cx + dx, cz + dz);
+        }
+        this.player.pos.x = b.x + 0.5;
+        this.player.pos.y = b.y;
+        this.player.pos.z = b.z + 0.5;
+        this.player.prevPos.x = this.player.pos.x;
+        this.player.prevPos.y = this.player.pos.y;
+        this.player.prevPos.z = this.player.pos.z;
+        this.lastStatX = this.player.pos.x;
+        this.lastStatZ = this.player.pos.z;
+      } else {
+        this.bedSpawn = null;
+      }
+    }
     // A respawn is a teleport: the previous frame's depth/colour history would smear.
     this.renderer.post.invalidateHistory();
     this.playerFireTicks = 0;
@@ -1671,6 +2203,8 @@ export class Game {
 
   /** Per-block container instances: chest/furnace contents survive closing the GUI this session. */
   private readonly blockContainers = new Map<string, AbstractContainerMenu>();
+  /** Client-side redstone simulation (wire power, diodes, buttons, plates, mechanisms). */
+  private redstone!: RedstoneSystem;
 
   /**
    * Opens the vanilla container GUI for a right-clicked block. The menu itself comes from the
@@ -1679,12 +2213,56 @@ export class Game {
    * (this client has no block-entity ticker, so a furnace only cooks while its GUI is open).
    */
   private openBlockContainer(blockName: string, x: number, y: number, z: number): void {
+    if (blockName === 'enchanting_table') {
+      // EnchantmentTableBlock.getEnchantmentPower: bookshelves within ±2 blocks and two layers.
+      let power = 0;
+      for (let dz = -2; dz <= 2; dz++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          for (let dy = 0; dy <= 1; dy++) {
+            if (this.mc.blockOf(this.level.getBlockState(x + dx, y + dy, z + dz)).name === 'bookshelf') power++;
+          }
+        }
+      }
+      power = Math.min(15, power);
+      const key = `enchanting_table@${x},${y},${z}`;
+      let menu = this.blockContainers.get(key);
+      if (!menu) {
+        menu = this.survival.openEnchantingTable(power);
+        this.blockContainers.set(key, menu);
+      } else {
+        this.survival.activeMenu = menu;
+      }
+      this.openScreen('enchanting');
+      return;
+    }
+    if (blockName === 'brewing_stand') {
+      // Brewing stand contents + timer/fuel live in the cached menu instance; the menu
+      // advances while its GUI is open (tickActiveMenu), like the furnace output.
+      const key = `brewing_stand@${x},${y},${z}`;
+      let menu = this.blockContainers.get(key);
+      if (!menu) {
+        const brewing = this.survival.openBrewingStand();
+        brewing.onBrew = () => this.sounds.play(
+          'block.brewing_stand.brew',
+          this.player.pos.x, this.player.pos.y, this.player.pos.z, 1, 1,
+        );
+        menu = brewing;
+        this.blockContainers.set(key, menu);
+      } else {
+        this.survival.activeMenu = menu;
+      }
+      this.openScreen('brewing');
+      return;
+    }
     if (blockName === 'crafting_table') {
+      this.stats.award('custom', 'interact_with_crafting_table');
       this.survival.openCraftingTable();
       this.openScreen('crafting');
       return;
     }
     const isFurnace = blockName === 'furnace';
+    if (isFurnace) this.stats.award('custom', 'interact_with_furnace');
+    else this.stats.award('custom', 'open_chest');
     // The cache key includes the block type: the same position may hold a chest at one moment and
     // a furnace later (tests/sandbox both do this), and the menu classes are not interchangeable.
     const key = `${blockName}@${x},${y},${z}`;
@@ -1698,11 +2276,21 @@ export class Game {
     this.openScreen(isFurnace ? 'furnace' : 'chest');
   }
 
-  /** Furnace menus advance one 20 Hz step per game tick (block-entity tick stand-in). */
+  /**
+   * Furnace/brewing menus advance one 20 Hz step per game tick. Vanilla block entities
+   * tick even while their GUI is closed, so every cached container advances too (the
+   * cache is created the first time a block is opened; unvisited blocks still have no
+   * block entity in this client).
+   */
   private tickActiveMenu(): void {
-    const menu = this.survival.activeMenu as unknown as
-      { tick?: () => void; getBurnProgress?: () => number } | null;
-    if (menu && typeof menu.tick === 'function' && typeof menu.getBurnProgress === 'function') menu.tick();
+    const ticked = new Set<object>();
+    const menus: unknown[] = [this.survival.activeMenu, ...this.blockContainers.values()];
+    for (const menu of menus) {
+      if (!menu || ticked.has(menu)) continue;
+      ticked.add(menu);
+      const m = menu as { tick?: () => void };
+      if (typeof m.tick === 'function') m.tick();
+    }
   }
 
   /** Mirrors the active furnace menu's cooking state into the open FurnaceScreen. */
@@ -1722,9 +2310,36 @@ export class Game {
    * BlockPlaceContext equivalent from the crosshair hit and the player state.
    */
   private useItem(): void {
+    if (this.sleeping) return;
     if (this.useCooldown > 0) return;
     // Food / consumables: right click eats without requiring a block target.
     const held = this.survival.getSelectedStack();
+    // BowItem.use: start charging; the shot happens on pointerup.
+    if (held.item?.name === 'bow') {
+      this.bowCharging = true;
+      this.bowCharge = 0;
+      return;
+    }
+    // FishingRodItem.use: cast a bobber, or reel the active one in.
+    if (held.item?.name === 'fishing_rod') {
+      this.useFishingRod(held);
+      return;
+    }
+    // EggItem.use: throw the egg (ThrownEgg), 1/8 chance of a baby chicken on impact.
+    if (held.item?.name === 'egg') {
+      this.throwEgg(held);
+      return;
+    }
+    // PotionItem.use: drink a potion, apply its effects, return the glass bottle.
+    if (held.item?.name === 'potion') {
+      this.drinkPotion(held);
+      return;
+    }
+    // ThrownPotion: splash / lingering potions break on impact.
+    if (held.item?.name === 'splash_potion' || held.item?.name === 'lingering_potion') {
+      this.throwPotion(held);
+      return;
+    }
     const food = held.item?.food;
     if (food && (this.survival.hunger < 20 || food.canAlwaysEat)) {
       this.survival.food.eatProperties(food.nutrition, food.saturation);
@@ -1736,12 +2351,94 @@ export class Game {
     this.useCooldown = 4;
     this.player.swingHand();
     const hit = this.raycast();
+    // Empty bucket: fluids have no outline, so raycast() passes through them. Pick the first
+    // fluid along the look ray if it is in front of the solid block that raycast() found.
+    if (held.item?.name === 'bucket') {
+      const fluid = this.fluidRay(5);
+      if (fluid) {
+        const eye = this.cameraEye();
+        const solidDist = hit
+          ? Math.hypot(hit.point.x - eye.x, hit.point.y - eye.y, hit.point.z - eye.z)
+          : Infinity;
+        if (fluid.dist < solidDist) {
+          this.pickUpFluid(fluid);
+          return;
+        }
+      }
+    }
+    // BottleItem.use: fill a glass bottle from a water source block.
+    if (held.item?.name === 'glass_bottle') {
+      const fluid = this.fluidRay(5);
+      if (fluid && fluid.name === 'water') {
+        const eye = this.cameraEye();
+        const solidDist = hit
+          ? Math.hypot(hit.point.x - eye.x, hit.point.y - eye.y, hit.point.z - eye.z)
+          : Infinity;
+        if (fluid.dist < solidDist) {
+          this.fillGlassBottle(held);
+          return;
+        }
+      }
+    }
+    // Entity interaction (ShearsItem.useOn / Animal.mobInteract): the block hit is the
+    // occlusion limit (a sheep behind a wall cannot be fed or sheared), and the click
+    // is consumed before block placement.
+    const eye = this.cameraEye();
+    const blockDistance = hit
+      ? Math.hypot(hit.point.x - eye.x, hit.point.y - eye.y, hit.point.z - eye.z)
+      : Infinity;
+    const entityTarget = this.findEntityTarget(Math.min(3.0, blockDistance + 0.25));
+    if (held.item?.name?.endsWith('shears') && entityTarget instanceof Sheep) {
+      this.shearSheep(entityTarget);
+      return;
+    }
+    if (held.item && entityTarget instanceof Animal && entityTarget.isFood(held.item.name)) {
+      this.feedAnimal(entityTarget);
+      return;
+    }
     if (!hit) return;
     // Vanilla PlayerGameMode.useItemOn: an interactive block consumes the right click before item
     // placement (unless the player is sneaking, which keeps the old "place against it" behaviour).
     const targetBlock = this.mc.blockOf(this.level.getBlockState(hit.x, hit.y, hit.z)).name;
+    if (!this.player.sneaking && targetBlock.endsWith('_bed')) {
+      this.trySleep(hit.x, hit.y, hit.z, targetBlock);
+      return;
+    }
+    // Lever / button / repeater / door / trapdoor / fence gate interaction
+    // (PlayerGameMode.useItemOn -> Block.use) consumes the click before placement.
+    if (!this.player.sneaking && this.redstone.use(hit.x, hit.y, hit.z)) return;
     if (!this.player.sneaking && isContainerBlock(targetBlock)) {
       this.openBlockContainer(targetBlock, hit.x, hit.y, hit.z);
+      return;
+    }
+    // ItemBucket / FlintAndSteel useOn: consume the click before block placement.
+    const heldUse = this.survival.getSelectedStack();
+    const heldUseName = heldUse.item?.name ?? '';
+    if (heldUseName === 'water_bucket' || heldUseName === 'lava_bucket') {
+      this.placeFluidBucket(hit, heldUseName === 'water_bucket' ? 'water' : 'lava');
+      return;
+    }
+    if (heldUseName === 'flint_and_steel') {
+      this.igniteBlock(hit);
+      return;
+    }
+    // SpawnEggItem.useOn: spawn at the clicked face (0 down, 1 up, 2 north, 3 south, 4 west, 5 east).
+    const heldStack = this.survival.getSelectedStack();
+    const eggType = heldStack.item ? this.spawnEggType(heldStack.item.name) : null;
+    if (eggType) {
+      const nx = hit.face === 4 ? -1 : hit.face === 5 ? 1 : 0;
+      const ny = hit.face === 0 ? -1 : hit.face === 1 ? 1 : 0;
+      const nz = hit.face === 2 ? -1 : hit.face === 3 ? 1 : 0;
+      const spawned = this.entityManager.spawn(
+        eggType,
+        hit.point.x + nx * 0.5,
+        hit.point.y + ny * 0.5,
+        hit.point.z + nz * 0.5,
+      );
+      if (spawned) {
+        if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+        this.useCooldown = 10;
+      }
       return;
     }
     const heldBlock = this.survival.getSelectedStack();
@@ -1756,15 +2453,563 @@ export class Game {
       heldBlockName: item.block,
       // BlockItem.canPlace -> Level.isUnobstructed: entity collision shapes block placement
       isUnobstructed: (state, x, y, z) => this.isUnobstructed(state, x, y, z),
-      // client redstone is not simulated (vanilla Level.hasNeighborSignal is a server-side query)
-      hasNeighborSignal: () => false,
+      // Level.hasNeighborSignal: doors/trapdoors/gates placed while powered open immediately.
+      hasNeighborSignal: (x, y, z) => this.redstone.isPoweredAt(x, y, z),
     };
     const plan = placeBlock(this.mc, this.level, item.block, ctx);
     if (!plan) return;
+    // PlayerGameMode.useItemOn: a successful placement is Stats.ITEM_USED for the block item.
+    this.stats.award('used', item.name);
     this.sounds.play(`${this.blockSoundBase(this.level.getBlockState(plan.x, plan.y, plan.z))}.place`, plan.x + 0.5, plan.y + 0.5, plan.z + 0.5, 1, 0.8);
     this.updateNeighbors(plan.x, plan.y, plan.z);
     for (const extra of plan.extras) this.updateNeighbors(extra.x, extra.y, extra.z);
     if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+  }
+
+  /** EggItem.use: throw a ThrownEgg toward the crosshair. */
+  private throwEgg(held: ItemStack): void {
+    const dir = this.lookVector();
+    const eye = this.cameraEye();
+    const egg = new ThrownEgg(
+      this.level,
+      eye.x + dir.x * 0.3,
+      eye.y - 0.1,
+      eye.z + dir.z * 0.3,
+    );
+    egg.owner = this.entityManager.getPlayerTarget();
+    egg.shoot(dir.x * 1.2, dir.y * 1.2 + 0.15, dir.z * 1.2);
+    this.entityManager.spawnEntity(egg);
+    this.player.swingHand();
+    this.stats.award('used', 'egg');
+    if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+    this.useCooldown = 10;
+    void held;
+  }
+
+  /** ThrownSplashPotion / ThrownLingeringPotion: throw the potion toward the crosshair. */
+  private throwPotion(held: ItemStack): void {
+    const dir = this.lookVector();
+    const eye = this.cameraEye();
+    const lingering = held.item?.name === 'lingering_potion';
+    const potion = new ThrownPotion(
+      this.level,
+      eye.x + dir.x * 0.3,
+      eye.y - 0.1,
+      eye.z + dir.z * 0.3,
+      lingering,
+    );
+    potion.owner = this.entityManager.getPlayerTarget();
+    potion.item = held.copy();
+    // ThrowableItemProjectile.shootFromRotation(player, xRot, yRot, -20, 0.5, 1).
+    potion.shoot(dir.x * 0.6, dir.y * 0.6 + 0.1, dir.z * 0.6);
+    this.entityManager.spawnEntity(potion);
+    this.player.swingHand();
+    this.stats.award('used', held.item?.name ?? 'splash_potion');
+    if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+    this.useCooldown = 10;
+  }
+
+  /**
+   * ThrownSplashPotion.onHitAsPotion: every living entity in the potion box grown
+   * by (4,2,4) whose box is closer than 4 blocks takes the effects scaled by
+   * `1 - distance/4`. Undead invert instant health/harm.
+   */
+  private applyPotionSplash(x: number, y: number, z: number, potionId: string, age: number): void {
+    const effects = potionEffects(potionId);
+    const base = potionId.replace(/^(splash_|lingering_|long_|strong_)/, '');
+    const color = POTION_CLOUD_COLORS[base] ?? [0.7, 0.4, 1];
+    this.sounds.play('entity.splash_potion.break', x, y, z, 1, 1);
+    spawnPotionCloudParticles(x, y + 0.1, z, 1.5, color, 12);
+    // AbstractThrownPotion: a water potion douses fire around where it broke.
+    if (base === 'water') this.douseFireAround(x, y, z);
+    if (effects.length === 0) return;
+    const potionBox = new AABB(x - 0.125, y, z - 0.125, x + 0.125, y + 0.25, z + 0.125);
+    const search = potionBox.inflate(4, 2, 4);
+    const margin = Math.max(0, Math.min(0.3, (age - 2) / 20));
+    const apply = (
+      box: AABB,
+      undead: boolean,
+      heal: (n: number) => void,
+      damage: (n: number) => void,
+      effect: (id: string, duration: number, amplifier: number) => void,
+    ): void => {
+      if (!search.intersects(box)) return;
+      const d2 = boxDistanceSqr(potionBox, box.inflateAll(margin));
+      if (d2 >= 16) return;
+      const intensity = 1 - Math.sqrt(d2) / 4;
+      for (const e of effects) {
+        if (e.id === 'instant_health') {
+          const amount = Math.floor(intensity * (4 << e.amplifier) + 0.5);
+          if (amount > 0) (undead ? damage : heal)(amount);
+        } else if (e.id === 'instant_damage') {
+          const amount = Math.floor(intensity * (6 << e.amplifier) + 0.5);
+          if (amount > 0) (undead ? heal : damage)(amount);
+        } else {
+          // Splash potions keep POTION_DURATION_SCALE 1; the distance is the only reducer.
+          const duration = Math.floor(intensity * e.duration + 0.5);
+          if (duration > 20) effect(e.id, duration, e.amplifier);
+        }
+      }
+    };
+    const playerTarget = this.entityManager.getPlayerTarget();
+    for (const e of this.entityManager.getEntities()) {
+      if (!(e instanceof LivingEntity) || e.isRemoved() || !e.isAlive()) continue;
+      apply(
+        e.getBoundingBox(), UNDEAD_ENTITY_NAMES.has(e.getTypeName()),
+        (n) => e.heal(n),
+        (n) => e.hurt(n, playerTarget),
+        (id, duration, amplifier) => e.addEffect(id, duration, amplifier),
+      );
+    }
+    apply(
+      this.player.boundingBox(), false,
+      (n) => this.survival.heal(n),
+      (n) => this.survival.damage(n, 'magic'),
+      (id, duration, amplifier) => this.survival.applyEffect(id, duration, amplifier),
+    );
+  }
+
+  /**
+   * ThrownLingeringPotion.onHitAsPotion: the cloud sits at the impact (radius 3,
+   * wait 10, lifetime 600). AreaEffectCloud drives the timing; Game applies the
+   * effects at 0.25 duration scale with a 20-tick reapplication delay.
+   */
+  private spawnPotionCloud(x: number, y: number, z: number, potionId: string): void {
+    if (potionEffects(potionId).length === 0) return;
+    const base = potionId.replace(/^(splash_|lingering_|long_|strong_)/, '');
+    if (base === 'water') this.douseFireAround(x, y, z);
+    const cloud = new AreaEffectCloud(this.level, x, y, z);
+    cloud.potionId = potionId;
+    cloud.onEffects = (c) => this.applyPotionCloudEffects(c);
+    this.entityManager.spawnEntity(cloud);
+  }
+
+  /** AreaEffectCloud.serverTick's five-tick dose for every entity inside the radius. */
+  private applyPotionCloudEffects(cloud: AreaEffectCloud): void {
+    const effects = potionEffects(cloud.potionId);
+    if (effects.length === 0) return;
+    const base = cloud.potionId.replace(/^(splash_|lingering_|long_|strong_)/, '');
+    spawnPotionCloudParticles(
+      cloud.x, cloud.y, cloud.z, cloud.radius,
+      POTION_CLOUD_COLORS[base] ?? [0.7, 0.4, 1],
+    );
+    const r = cloud.radius;
+    const area = new AABB(
+      cloud.x - r, cloud.y, cloud.z - r,
+      cloud.x + r, cloud.y + 0.5, cloud.z + r,
+    );
+    const inside = (box: AABB, x: number, z: number): boolean => {
+      if (!area.intersects(box)) return false;
+      const dx = x - cloud.x, dz = z - cloud.z;
+      return dx * dx + dz * dz <= r * r;
+    };
+    const apply = (
+      box: AABB, x: number, z: number,
+      undead: boolean, victim: object,
+      heal: (n: number) => void,
+      damage: (n: number) => void,
+      effect: (id: string, duration: number, amplifier: number) => void,
+    ): void => {
+      if (!inside(box, x, z) || !cloud.affect(victim)) return;
+      for (const e of effects) {
+        if (e.id === 'instant_health') {
+          const amount = 4 << e.amplifier;
+          (undead ? damage : heal)(amount);
+        } else if (e.id === 'instant_damage') {
+          const amount = 6 << e.amplifier;
+          (undead ? heal : damage)(amount);
+        } else {
+          // Lingering potions carry POTION_DURATION_SCALE 0.25.
+          const duration = Math.floor(e.duration * 0.25 + 0.5);
+          if (duration > 20) effect(e.id, duration, e.amplifier);
+        }
+      }
+    };
+    const playerTarget = this.entityManager.getPlayerTarget();
+    for (const e of this.entityManager.getEntities()) {
+      if (!(e instanceof LivingEntity) || e.isRemoved() || !e.isAlive()) continue;
+      apply(
+        e.getBoundingBox(), e.x, e.z,
+        UNDEAD_ENTITY_NAMES.has(e.getTypeName()), e,
+        (n) => e.heal(n),
+        (n) => e.hurt(n, playerTarget),
+        (id, duration, amplifier) => e.addEffect(id, duration, amplifier),
+      );
+    }
+    apply(
+      this.player.boundingBox(), this.player.pos.x, this.player.pos.z,
+      false, this.player,
+      (n) => this.survival.heal(n),
+      (n) => this.survival.damage(n, 'magic'),
+      (id, duration, amplifier) => this.survival.applyEffect(id, duration, amplifier),
+    );
+  }
+
+  /** AbstractThrownPotion.douseFire: fire blocks in the 3x3 column are destroyed. */
+  private douseFireAround(x: number, y: number, z: number): void {
+    const bx = Math.floor(x), by = Math.floor(y), bz = Math.floor(z);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const state = this.level.getBlockState(bx + dx, by + dy, bz + dz);
+          if (state === 0) continue;
+          const name = this.mc.blockOf(state).name;
+          if (name === 'fire' || name === 'soul_fire') {
+            this.level.setBlockState(bx + dx, by + dy, bz + dz, 0);
+            this.updateNeighbors(bx + dx, by + dy, bz + dz);
+          }
+        }
+      }
+    }
+  }
+
+  /** PotionItem.use: apply the potion's effects, then hand back a glass bottle. */
+  private drinkPotion(held: ItemStack): void {
+    const potionId = held.components.potion ?? 'water';
+    this.player.swingHand();
+    this.sounds.play(
+      'entity.generic.drink',
+      this.player.pos.x, this.player.pos.y, this.player.pos.z, 1, 1,
+    );
+    for (const effect of potionEffects(potionId)) {
+      if (effect.id === 'instant_health') this.survival.heal(4 << effect.amplifier);
+      else if (effect.id === 'instant_damage') this.survival.damage(6 << effect.amplifier, 'magic');
+      else this.survival.applyEffect(effect.id, effect.duration, effect.amplifier);
+    }
+    this.stats.award('used', 'potion');
+    // ItemUtils.createFilledResult: creative keeps the potion (adds one bottle if missing);
+    // survival consumes it and returns the empty bottle.
+    const bottle = this.survival.registry.byName('glass_bottle');
+    const bottleStack = bottle ? new ItemStack(bottle, 1) : ItemStack.EMPTY;
+    if (this.options.gamemode === 'creative') {
+      if (bottle && !this.survival.inventory.containsItem(bottleStack)) {
+        this.survival.inventory.add(bottleStack);
+      }
+    } else if (held.getCount() > 1) {
+      this.survival.inventory.removeFromSelected(false);
+      if (bottle) this.survival.inventory.add(bottleStack);
+    } else {
+      this.survival.inventory.setItem(this.survival.inventory.getSelectedSlot(), bottleStack);
+    }
+    this.useCooldown = 32;
+  }
+
+  /**
+   * LivingEntity speed/jump attribute modifiers for the local player: Speed +20% and
+   * Slowness -15% per level (multiplicative), Jump Boost +0.1 jump power per level.
+   */
+  private syncPotionMovement(): void {
+    let speed = 1;
+    if (this.survival.hasEffect('speed')) {
+      speed *= 1 + 0.2 * (this.survival.getEffectLevel('speed') + 1);
+    }
+    if (this.survival.hasEffect('slowness')) {
+      speed *= 1 - 0.15 * (this.survival.getEffectLevel('slowness') + 1);
+    }
+    this.player.speedMultiplier = Math.max(0.05, speed);
+    this.player.jumpMultiplier = this.survival.hasEffect('jump_boost')
+      ? (JUMP_VELOCITY + 0.1 * (this.survival.getEffectLevel('jump_boost') + 1)) / JUMP_VELOCITY
+      : 1;
+    this.player.slowFalling = this.survival.hasEffect('slow_falling');
+  }
+
+  /** BottleItem.use: fill a glass bottle from the targeted water source. */
+  private fillGlassBottle(held: ItemStack): void {
+    const potion = this.survival.registry.byName('potion');
+    if (!potion) return;
+    const water = new ItemStack(potion, 1, { potion: 'water' });
+    if (this.options.gamemode === 'creative') {
+      if (!this.survival.inventory.containsItem(water)) this.survival.inventory.add(water);
+    } else if (held.getCount() > 1) {
+      this.survival.inventory.removeFromSelected(false);
+      this.survival.inventory.add(water);
+    } else {
+      this.survival.inventory.setItem(this.survival.inventory.getSelectedSlot(), water);
+    }
+    this.player.swingHand();
+    const eye = this.cameraEye();
+    this.sounds.play('item.bottle.fill', eye.x, eye.y, eye.z, 1, 1);
+    this.useCooldown = 10;
+  }
+
+  /** Player.drop (Q / Ctrl+Q): throw the selected stack forward with a pickup delay. */
+  private dropSelectedItem(all: boolean): void {
+    if (this.sleeping) return;
+    const removed = this.survival.inventory.removeFromSelected(all);
+    if (removed.isEmpty() || !removed.item) return;
+    const dir = this.lookVector();
+    const eye = this.cameraEye();
+    const entity = new ItemEntity(
+      this.level,
+      eye.x + dir.x * 0.3,
+      eye.y - 0.3,
+      eye.z + dir.z * 0.3,
+      removed.copy(),
+    );
+    entity.setPickupDelay(40);
+    entity.push(dir.x * 0.3, 0.1, dir.z * 0.3);
+    this.entityManager.spawnEntity(entity);
+    this.stats.award('dropped', removed.item.name, removed.getCount());
+    this.stats.award('custom', 'drop');
+  }
+
+  /** FishingRodItem.use: cast toward the first water block, or reel the active bobber in. */
+  private useFishingRod(held: ItemStack): void {
+    const active = this.entityManager.getEntities().find(
+      (e): e is FishingBobber => e instanceof FishingBobber && !e.isRemoved(),
+    );
+    if (active) { this.reelFishing(active, held); return; }
+    const water = this.fluidRay(32);
+    if (!water || water.name !== 'water') return;
+    const eye = this.cameraEye();
+    const dx = water.x + 0.5 - eye.x;
+    const dy = water.y + 0.5 - eye.y;
+    const dz = water.z + 0.5 - eye.z;
+    const dist = Math.hypot(dx, dy, dz) || 1;
+    const speed = 1.35;
+    const bobber = new FishingBobber(this.level, eye.x, eye.y - 0.1, eye.z);
+    bobber.owner = this.entityManager.getPlayerTarget();
+    bobber.lureLevel = held.getEnchantmentLevel('lure');
+    bobber.shoot((dx / dist) * speed, (dy / dist) * speed + 0.08, (dz / dist) * speed);
+    this.entityManager.spawnEntity(bobber);
+    this.stats.award('used', 'fishing_rod');
+    if (this.options.gamemode !== 'creative') held.hurtAndBreak(1);
+    this.useCooldown = 10;
+  }
+
+  /** FishingHook.retrieve: only a bitten bobber yields loot (fish 85%, junk, treasure with LotS). */
+  private reelFishing(bobber: FishingBobber, held: ItemStack): void {
+    const x = bobber.x, y = bobber.y, z = bobber.z;
+    const caught = bobber.reel();
+    this.useCooldown = 10;
+    const rng = this.survival.random;
+    if (!caught) return;
+    const luck = held.getEnchantmentLevel('luck_of_the_sea');
+    const roll = rng.nextFloat();
+    const table = roll < 0.85 ? Game.FISHING_FISH
+      : luck > 0 && roll >= 0.95 ? Game.FISHING_TREASURE
+      : Game.FISHING_JUNK;
+    const item = this.survival.registry.byName(Game.pickWeighted(table, rng));
+    if (item) this.dropItem(new ItemStack(item, 1), x, y, z);
+    this.stats.award('custom', 'fish_caught');
+    this.survival.addExperience(1 + rng.nextInt(6));
+    if (this.options.gamemode !== 'creative') held.hurtAndBreak(1);
+    this.sounds.play('entity.fishing_bobber.splash', x, y, z, 0.4, 1.4);
+  }
+
+  private static pickWeighted(
+    table: readonly (readonly [string, number])[],
+    rng: { nextInt(bound: number): number },
+  ): string {
+    let total = 0;
+    for (const [, weight] of table) total += weight;
+    let roll = rng.nextInt(Math.max(1, total));
+    for (const [name, weight] of table) {
+      if (roll < weight) return name;
+      roll -= weight;
+    }
+    return table[0]?.[0] ?? 'cod';
+  }
+
+  /**
+   * ServerPlayer.startSleepInBed: night/thunder only, no monsters within 8 blocks,
+   * and the bed must not be obstructed. Sleeping advances to the next sunrise.
+   */
+  private trySleep(x: number, y: number, z: number, blockName: string): void {
+    if (this.level.isDay() && !this.level.isThundering()) {
+      this.addChatLine('你现在不能睡觉，只能夜晚或雷暴时睡觉');
+      return;
+    }
+    for (const e of this.entityManager.getEntities()) {
+      if (!(e instanceof Mob) || e.isRemoved() || !e.isAlive()) continue;
+      if (e.getCategory() !== MobCategory.MONSTER) continue;
+      if (e.distanceToSqr(x + 0.5, y, z + 0.5) < 64) {
+        this.addChatLine('你现在不能休息，周围有怪物在游荡');
+        return;
+      }
+    }
+    const above = this.level.getBlockState(x, y + 1, z);
+    if (above !== 0 && this.mc.isSolid(above)) {
+      this.addChatLine('这张床被阻挡了');
+      return;
+    }
+    this.sleeping = true;
+    this.sleepTicks = 0;
+    this.bedSpawn = { x, y: y + 1, z };
+    this.stats.award('custom', 'sleep_in_bed');
+    this.player.vel.x = 0; this.player.vel.y = 0; this.player.vel.z = 0;
+    // Lie on the clicked bed (the black fade covers the transition; no sleeping pose model yet).
+    this.player.pos.x = x + 0.5;
+    this.player.pos.y = y + 0.5625;
+    this.player.pos.z = z + 0.5;
+    this.player.prevPos.x = this.player.pos.x;
+    this.player.prevPos.y = this.player.pos.y;
+    this.player.prevPos.z = this.player.pos.z;
+    void blockName;
+  }
+
+  /** ServerPlayer.stopSleepInBed: `advanceTime` skips to sunrise and clears the weather. */
+  private wakeUp(advanceTime: boolean): void {
+    if (!this.sleeping) return;
+    this.sleeping = false;
+    this.sleepTicks = 0;
+    this.sleepFade = 1;
+    if (advanceTime) {
+      // Level.sleep: jump to the next day boundary (sunrise) and clear rain/thunder.
+      this.level.time = (Math.floor(this.level.time / 24000) + 1) * 24000;
+      if (this.level.getRainLevel() > 0.01) {
+        this.level.setWeatherState({ raining: false, thundering: false, rainTime: 6000, thunderTime: 12000 });
+      }
+    }
+  }
+
+  private tickSleep(): void {
+    if (!this.sleeping) {
+      if (this.sleepFade > 0) this.sleepFade = Math.max(0, this.sleepFade - 0.05);
+      return;
+    }
+    this.sleepTicks++;
+    this.sleepFade = Math.min(1, this.sleepTicks / 20);
+    // Damage or lava interrupts the sleep without advancing the clock.
+    if (this.survival.hurtTime > 0 || this.playerInLava()) { this.wakeUp(false); return; }
+    if (this.sleepTicks >= 60) this.wakeUp(true);
+  }
+
+  /**
+   * Animal.mobInteract: feeding a baby skips 10% of its remaining growth time;
+   * feeding an adult that can fall in love starts the 600-tick love timer and
+   * shows hearts. Adults still on the 6000-tick cooldown ignore the click
+   * (vanilla does not consume the item).
+   */
+  private feedAnimal(animal: Animal): void {
+    const creative = this.options.gamemode === 'creative';
+    if (animal.isBaby()) {
+      animal.feedBaby();
+      if (!creative) this.survival.inventory.removeFromSelected(false);
+      return;
+    }
+    if (!animal.canFallInLove()) return;
+    animal.setInLove(true, 600);
+    spawnHearts(animal.x, animal.y + animal.getHeight() * 0.8, animal.z, 3);
+    if (!creative) this.survival.inventory.removeFromSelected(false);
+  }
+
+  /** BowItem.releaseUsing: fire an arrow scaled by the hold time. */
+  private releaseBow(): void {
+    if (!this.bowCharging) return;
+    this.bowCharging = false;
+    const charge = Math.min(1, this.bowCharge / 20);
+    this.bowCharge = 0;
+    if (this.screens.current || !this.mouseLocked || charge < 0.1) return;
+    const held = this.survival.getSelectedStack();
+    if (!held.item || held.item.name !== 'bow') return;
+
+    let arrowSlot = -1;
+    for (let i = 0; i < 36; i++) {
+      const st = this.survival.inventory.getItem(i);
+      if (!st.isEmpty() && st.item?.name === 'arrow') { arrowSlot = i; break; }
+    }
+    if (arrowSlot < 0 && this.options.gamemode !== 'creative') return;
+    if (arrowSlot >= 0 && this.options.gamemode !== 'creative') this.survival.inventory.removeItem(arrowSlot, 1);
+
+    const eye = this.cameraEye();
+    const dir = this.lookVector();
+    const arrow = new Arrow(this.level, eye.x + dir.x * 0.5, eye.y - 0.1, eye.z + dir.z * 0.5);
+    arrow.owner = this.entityManager.getPlayerTarget();
+    const speed = 1.0 + charge * 2.0;
+    arrow.shoot(dir.x * speed, dir.y * speed, dir.z * speed);
+    arrow.critical = charge >= 1;
+    arrow.damage = Math.max(1, Math.round(charge * 6 * (arrow.critical ? 1.5 : 1)));
+    this.entityManager.spawnEntity(arrow);
+    if (this.options.gamemode !== 'creative') held.hurtAndBreak(1);
+    this.sounds.play('entity.arrow.shoot', eye.x, eye.y, eye.z, 1, 1);
+    this.useCooldown = 4;
+  }
+
+  /** Block adjacent to the clicked face (0 down, 1 up, 2 north, 3 south, 4 west, 5 east). */
+  private adjacentBlock(hit: { x: number; y: number; z: number; face: number }): { x: number; y: number; z: number } {
+    switch (hit.face) {
+      case 0: return { x: hit.x, y: hit.y - 1, z: hit.z };
+      case 2: return { x: hit.x, y: hit.y, z: hit.z - 1 };
+      case 3: return { x: hit.x, y: hit.y, z: hit.z + 1 };
+      case 4: return { x: hit.x - 1, y: hit.y, z: hit.z };
+      case 5: return { x: hit.x + 1, y: hit.y, z: hit.z };
+      default: return { x: hit.x, y: hit.y + 1, z: hit.z };
+    }
+  }
+
+  /** First water/lava block along the look ray (fluids are not part of raycast's outline test). */
+  private fluidRay(maxDistance: number): { x: number; y: number; z: number; name: string; dist: number } | null {
+    const eye = this.cameraEye();
+    const dir = this.lookVector();
+    for (let dist = 0.1; dist <= maxDistance; dist += 0.1) {
+      const x = Math.floor(eye.x + dir.x * dist);
+      const y = Math.floor(eye.y + dir.y * dist);
+      const z = Math.floor(eye.z + dir.z * dist);
+      const name = this.mc.blockOf(this.level.getBlockState(x, y, z)).name;
+      if (name === 'water' || name === 'lava') return { x, y, z, name, dist };
+    }
+    return null;
+  }
+
+  /** ItemBucket useOn: place a source block at the clicked face, return an empty bucket. */
+  private placeFluidBucket(hit: { x: number; y: number; z: number; face: number }, fluid: 'water' | 'lava'): void {
+    const t = this.adjacentBlock(hit);
+    if (this.level.getBlockState(t.x, t.y, t.z) !== 0) return;
+    const state = this.mc.stateOf(fluid);
+    if (!state) return;
+    this.level.setBlockState(t.x, t.y, t.z, state);
+    this.updateNeighbors(t.x, t.y, t.z);
+    if (this.options.gamemode !== 'creative') {
+      this.survival.inventory.removeFromSelected(false);
+      const bucket = this.survival.registry.byName('bucket');
+      if (bucket) this.survival.inventory.add(new ItemStack(bucket, 1));
+    }
+    this.sounds.play('item.bucket.empty', t.x + 0.5, t.y + 0.5, t.z + 0.5, 1, 1);
+    this.useCooldown = 10;
+  }
+
+  /** Empty bucket use: remove the source block and put the filled bucket back in the inventory. */
+  private pickUpFluid(fluid: { x: number; y: number; z: number; name: string; dist: number }): void {
+    this.level.setBlockState(fluid.x, fluid.y, fluid.z, 0);
+    this.updateNeighbors(fluid.x, fluid.y, fluid.z);
+    this.survival.inventory.removeFromSelected(false);
+    const item = this.survival.registry.byName(fluid.name === 'water' ? 'water_bucket' : 'lava_bucket');
+    if (item) this.survival.inventory.add(new ItemStack(item, 1));
+    this.sounds.play('item.bucket.fill', fluid.x + 0.5, fluid.y + 0.5, fluid.z + 0.5, 1, 1);
+    this.useCooldown = 10;
+  }
+
+  /**
+   * FlintAndSteel useOn: TntBlock.useItemOn primes TNT directly; otherwise ignite
+   * the adjacent air block (fire spread is not simulated yet).
+   */
+  private igniteBlock(hit: { x: number; y: number; z: number; face: number }): void {
+    const clicked = this.level.getBlockState(hit.x, hit.y, hit.z);
+    if (clicked !== 0 && this.mc.blockOf(clicked).name === 'tnt') {
+      this.level.setBlockState(hit.x, hit.y, hit.z, 0);
+      this.updateNeighbors(hit.x, hit.y, hit.z);
+      this.primeTnt(hit.x + 0.5, hit.y, hit.z + 0.5, 80);
+      if (this.options.gamemode !== 'creative') this.survival.getSelectedStack().hurtAndBreak(1);
+      this.useCooldown = 10;
+      return;
+    }
+    const t = this.adjacentBlock(hit);
+    if (this.level.getBlockState(t.x, t.y, t.z) !== 0) return;
+    const fire = this.mc.stateOf('fire');
+    if (!fire) return;
+    this.level.setBlockState(t.x, t.y, t.z, fire);
+    this.updateNeighbors(t.x, t.y, t.z);
+    if (this.options.gamemode !== 'creative') this.survival.getSelectedStack().hurtAndBreak(1);
+    this.sounds.play('item.flintandsteel.use', t.x + 0.5, t.y + 0.5, t.z + 0.5, 1, 1);
+    this.useCooldown = 10;
+  }
+
+  /** `minecraft:zombie_spawn_egg` -> `zombie`; null for non-spawn-egg items. */
+  private spawnEggType(itemName: string): string | null {
+    const suffix = '_spawn_egg';
+    if (!itemName.endsWith(suffix)) return null;
+    return itemName.slice(0, -suffix.length);
   }
 
   /**
@@ -1796,6 +3041,7 @@ export class Game {
         }
       }
     }
+    this.redstone?.onBlockChanged(x, y, z);
   }
 
   private updateBlockShape(x: number, y: number, z: number): void {
@@ -1848,6 +3094,15 @@ export class Game {
     this.running = true;
     this.lastFrame = performance.now();
     requestAnimationFrame(this.frame);
+    // Sound is not needed for the first frame and parsing+decoding the index cost ~390 ms of the
+    // main thread. Kick it off once the loop is running so it cannot delay the loading screen.
+    setTimeout(() => {
+      void this.sounds.load('/mc/sounds/index.json')
+        // autoUnlock() binds once, but the one-shot listeners can fire *before* load() has created
+        // the AudioContext (in which case resume() is a no-op). Try again once it exists.
+        .then(() => (this.sounds.isUnlocked ? undefined : this.sounds.resume()))
+        .catch((err) => console.warn('[sound] unavailable', err));
+    }, 0);
   }
 
   stop(): void { this.running = false; }
@@ -1856,7 +3111,9 @@ export class Game {
     if (!this.running) return;
     const dt = Math.min(100, now - this.lastFrame);
     this.lastFrame = now;
+    this.lastDt = dt;
     const frameStart = performance.now();
+    this.perfLog?.beginFrame(dt);
     // OpusMC FramePacer: budget this frame's chunk/mesh work from the measured cost of the
     // previous frame instead of a constant. This is the single biggest lever on movement
     // smoothness (a hard-coded 6 ms budget could push a busy frame past the 16.7 ms deadline).
@@ -1899,9 +3156,97 @@ export class Game {
 
     this.syncTouchUi();
     this.render(worldTicking ? this.accum / TICK_MS : 1);
-    this.pacer.endFrame(performance.now() - frameStart, this.frameChunkMs);
+    const cpuMs = performance.now() - frameStart;
+    this.pacer.endFrame(cpuMs, this.frameChunkMs);
+    this.perfLog?.endFrame(cpuMs);
+    this.adaptRenderScale(cpuMs, dt);
     requestAnimationFrame(this.frame);
   };
+
+  /**
+   * Dynamic resolution, the same lever OpusMC uses: the 3D buffer is the only setting whose GPU
+   * cost scales linearly with pixels, so when frames come in late for reasons that are NOT the
+   * main thread, drop the render scale; raise it again when there is headroom.
+   *
+   * Guarded by `cpuMs` so a CPU-bound frame (chunk relight, GC) never makes the picture blurry
+   * without gaining anything. Steps are one per ~45 frames because reallocating the HDR/TAA
+   * targets costs a frame.
+   */
+  private adaptRenderScale(cpuMs: number, dt: number): void {
+    if (this.titleMode || !this.worldActive) return;
+    this.scaleProbeMs += dt;
+    this.scaleProbeFrames++;
+    if (dt > this.scaleProbeMax) this.scaleProbeMax = dt;
+    if (this.scaleProbeFrames < 45) return;
+    const avg = this.scaleProbeMs / this.scaleProbeFrames;
+    const worst = this.scaleProbeMax;
+    this.scaleProbeMs = 0;
+    this.scaleProbeFrames = 0;
+    this.scaleProbeMax = 0;
+    const target = this.pacer.target();
+    // 区块流式加载期间帧间隔必然抖（一个 chunk 就是一次长任务），这时候降分辨率既救不了
+    // 主线程又会把画面永久调糊 —— 只在「世界基本稳定」的窗口里做决定。
+    if (worst > target * 3) { this.scaleQuiet = 0; return; }
+    const gpuBound = cpuMs < target * 0.6;
+    if (avg > target * 1.12 && gpuBound && this.renderScale > 0.55) {
+      // 降档前先记住「上一档撑不住」，上限随每次失败下移，避免在两档之间来回抖
+      this.scaleCeiling = Math.min(this.scaleCeiling, this.renderScale);
+      this.renderScale = Math.max(0.55, this.renderScale * 0.85);
+      this.scaleQuiet = 0;
+      this.applyRenderScale();
+      console.log(`[perf] render scale ${(this.renderScale * 100).toFixed(0)}% (frame ${avg.toFixed(1)} ms)`);
+    } else if (avg <= target * 1.05) {
+      // 只有连续几个窗口都贴着刷新率，才认为有富余可以升档（60Hz 下 avg 恒为 16.7ms，
+      // 用「明显小于 16.7」判断会永远升不回去）
+      this.scaleQuiet++;
+      if (this.scaleQuiet >= 2 && this.renderScale < this.scaleCeiling - 0.01) {
+        const next = Math.min(this.scaleCeiling, this.renderScale * 1.08);
+        // 离上限只差一步时直接吸附上去，否则 1.08 的步长会永远停在 99% 而不是 100%
+        this.renderScale = next > this.scaleCeiling * 0.98 ? this.scaleCeiling : next;
+        this.scaleQuiet = 0;
+        this.applyRenderScale();
+      }
+    } else {
+      this.scaleQuiet = 0;
+    }
+  }
+
+  /** Test hook (scripts/perf-audit.mjs): force the 3D render scale; 1 = native at MAX_RENDER_PIXELS. */
+  setRenderScale(scale: number): void {
+    this.renderScale = Math.max(0.4, Math.min(this.maxRenderScale, scale));
+    this.applyRenderScale();
+  }
+
+  /**
+   * Perf report diagnostics (debug-only, called from PerfLog). Camera/motion/screen state plus the
+   * number of sections near the camera that still have no mesh - the "can see through the ground"
+   * holes - so one report is enough to tell a physics bug from a streaming bug.
+   */
+  perfDiagnostics(): Record<string, string | number> {
+    const p = this.player;
+    const missing = this.renderer.nearMissingStats(this.level, p.pos.x, p.pos.y, p.pos.z, 2);
+    const n = Math.max(1, Math.min(this.hSpeedIndex, this.hSpeedTrace.length));
+    const speeds = Array.from(this.hSpeedTrace.subarray(0, n));
+    return {
+      playerPos: `${p.pos.x.toFixed(2)}, ${p.pos.y.toFixed(2)}, ${p.pos.z.toFixed(2)}`,
+      playerLook: `yaw ${p.yaw.toFixed(1)} / pitch ${p.pitch.toFixed(1)}`,
+      playerVel: `${p.vel.x.toFixed(3)}, ${p.vel.y.toFixed(3)}, ${p.vel.z.toFixed(3)}`
+        + ` (h ${Math.hypot(p.vel.x, p.vel.z).toFixed(3)}, ${p.onGround ? 'ground' : 'air'}`
+        + `${p.flying ? ', fly' : ''}${p.sprinting ? ', sprint' : ''}${p.inWater ? ', water' : ''})`,
+      hSpeedTrace: `min ${Math.min(...speeds).toFixed(3)} / max ${Math.max(...speeds).toFixed(3)}`
+        + ` / near-zero ${speeds.filter((v) => v < 0.02).length}/${speeds.length}`,
+      sectionsMissing: `${missing.missing} (below ${missing.below}, queued ${missing.queued})`,
+      hudBreakdown: `hud ${this.hudMs.toFixed(2)}ms / chat ${this.chatMs.toFixed(2)}ms`
+        + ` / icons ${this.icons.drawStats.ms.toFixed(2)}ms (${this.icons.drawStats.n} draws, cell ${this.icons.cellSizePx}px)`,
+      eyeSky: this.level.getSkyLight(Math.floor(p.pos.x), Math.floor(p.eyeY), Math.floor(p.pos.z)),
+      screen: `${window.innerWidth}x${window.innerHeight} css @${(window.devicePixelRatio || 1).toFixed(2)}dpr`
+        + `${document.fullscreenElement ? ' fullscreen' : ''}`,
+      renderTargets: `3d ${this.targetW}x${this.targetH} / canvas ${this.glCanvas.width}x${this.glCanvas.height}`
+        + ` / gui ${this.guiCanvas.width}x${this.guiCanvas.height}`
+        + ` / scale ${(this.renderScale * 100).toFixed(0)}% (max ${(this.maxRenderScale * 100).toFixed(0)}%)`,
+      resizeEvents: this.resizeCount,
+    };
+  }
 
   /** MouseHandler#turnPlayer: consume the accumulated pointer delta once per frame. */
   private applyPendingLook(): void {
@@ -2022,17 +3367,30 @@ export class Game {
     };
     const wasOnGround = this.player.onGround;
     const fallDistanceBefore = this.player.fallDistance;
+    // ServerPlayer.startSleepInBed freezes travel input while asleep.
+    if (this.sleeping) {
+      input.forward = 0; input.strafe = 0; input.jump = false; input.sprint = false; input.sneak = false;
+    }
     this.player.tick(this.level, input);
+    this.hSpeedTrace[this.hSpeedIndex % this.hSpeedTrace.length] =
+      Math.hypot(this.player.vel.x, this.player.vel.z);
+    this.hSpeedIndex++;
 
     // Fall damage: LivingEntity.causeFallDamage runs when a falling entity lands. Player.tick
     // resets fallDistance on the landing tick, so use the value accumulated before the move.
-    if (!this.survival.isDead && !wasOnGround && this.player.onGround && !this.player.flying && !this.player.inWater) {
+    if (!this.survival.isDead && !wasOnGround && this.player.onGround && !this.player.flying
+      && !this.player.inWater && !this.survival.hasEffect('slow_falling')) {
       const fall = Math.max(fallDistanceBefore, this.player.fallDistance);
       if (fall > 0) this.survival.fallDamage(fall);
     }
 
     if (this.attackCooldown > 0) this.attackCooldown--;
     if (this.useCooldown > 0) this.useCooldown--;
+    if (this.bowCharging) {
+      const held = this.survival.getSelectedStack();
+      if (held.item?.name === 'bow') this.bowCharge = Math.min(20, this.bowCharge + 1);
+      else { this.bowCharging = false; this.bowCharge = 0; }
+    }
     if (this.itemNameTimer > 0) this.itemNameTimer--;
 
     // survival: health/hunger/XP + inventory cooldowns
@@ -2049,6 +3407,10 @@ export class Game {
       inLava,
     };
     this.survival.tick(moved);
+    this.syncPotionMovement();
+    this.redstone.tick();
+    this.tickStatistics(moved.jumped);
+    this.tickSleep();
     this.survival.tickEnvironment(inLava, this.player.inWater, this.playerFireTicks > 0);
     // Container GUIs: open furnace menus cook one tick and mirror their progress into the screen.
     this.tickActiveMenu();
@@ -2065,7 +3427,7 @@ export class Game {
     const cam = {
       x: this.player.pos.x, y: this.player.eyeY, z: this.player.pos.z,
       yaw: this.player.yaw, pitch: this.player.pitch,
-      fov: this.options.fov, aspect: this.glCanvas.width / this.glCanvas.height,
+      fov: this.options.fov, aspect: this.targetW / this.targetH,
     };
     this.weatherRenderer.tick(cam, this.levelLike, 1);
     this.sounds.tick(cam, this.levelLike);
@@ -2086,28 +3448,60 @@ export class Game {
 
     // entities last so they see the chunks that were just applied
     this.entityManager.tick();
+    for (const e of this.entityManager.getEntities()) {
+      if (e instanceof FishingBobber && e.biting && !e.splashPlayed) {
+        e.splashPlayed = true;
+        this.sounds.play('entity.fishing_bobber.splash', e.x, e.y, e.z, 0.6, 1.2);
+      }
+    }
     this.pickupNearbyItems();
     this.syncEntityChunks();
 
     this.autosave?.tick();
   }
 
-  /**
-   * Adds every pickable ItemEntity in reach to the inventory (vanilla Player.take).
-   * EntityManager.pickupItems() only counts and removes the entity, so it cannot be used here:
-   * the stack has to be merged into the PlayerInventory before the entity is discarded.
-   */
+  /** StatsCustom counters that advance every tick (ServerPlayer.checkMovementStatistics). */
+  private tickStatistics(jumped: boolean): void {
+    this.stats.award('custom', 'play_time');
+    this.stats.award('custom', 'total_world_time');
+    const dx = this.player.pos.x - this.lastStatX;
+    const dz = this.player.pos.z - this.lastStatZ;
+    const cm = Math.round(Math.hypot(dx, dz) * 100);
+    if (cm > 0) {
+      const key = this.player.flying ? 'fly_one_cm'
+        : this.player.swimming ? 'swim_one_cm'
+        : this.player.sneaking ? 'crouch_one_cm'
+        : this.player.sprinting ? 'sprint_one_cm'
+        : 'walk_one_cm';
+      this.stats.award('custom', key, cm);
+    }
+    this.lastStatX = this.player.pos.x;
+    this.lastStatZ = this.player.pos.z;
+    if (jumped) this.stats.award('custom', 'jump');
+  }
+
+  /** Adds every pickable ItemEntity in reach to the inventory (vanilla Player.take). */
   private pickupNearbyItems(): void {
     const p = this.player.pos;
     for (const e of this.entityManager.getEntities()) {
       if (!(e instanceof ItemEntity) || e.isRemoved() || !e.isPickable()) continue;
       if (e.distanceToSqr(p.x, p.y, p.z) > 2.25) continue; // 1.5 blocks
-      const stack = this.fromEntityStack(e.getItem());
+      const stack = e.getItem();
       if (stack.isEmpty()) { e.remove(); continue; }
+      const pickedItem = stack.item?.name;
+      const pickedUp = stack.getCount();
       if (!this.survival.inventory.add(stack)) continue; // inventory full: leave it on the ground
+      if (pickedItem) this.stats.award('picked_up', pickedItem, pickedUp);
       e.remove();
       // ItemEntity.playerTouch: ENTITY_ITEM_PICKUP volume 0.2, pitch (random - random) * 1.4 + 2 (clamped by the engine)
       this.sounds.play('entity.item.pickup', p.x, p.y, p.z, 0.2, 1.6 + Math.random() * 0.4);
+    }
+    for (const e of this.entityManager.getEntities()) {
+      if (!(e instanceof ExperienceOrb) || e.isRemoved()) continue;
+      if (e.distanceToSqr(p.x, p.y, p.z) > 2.25) continue;
+      this.survival.addExperience(e.getValue());
+      e.remove();
+      this.sounds.play('entity.experience_orb.pickup', p.x, p.y, p.z, 0.3, 1.6 + Math.random() * 0.4);
     }
   }
 
@@ -2182,32 +3576,98 @@ export class Game {
     this.renderer.prune(this.player.pos.x, this.player.pos.z, this.level);
   }
 
+  /**
+   * Fullscreen (and the mobile URL bar) fires resize dozens of times while the transition is
+   * running. Every one of those used to realloc both canvases, release every post target and
+   * rebake the 1600 item icons, which is exactly the 20-30 fps + black flash the user hit when
+   * playing fullscreen. Coalesce them into one resize at the final size.
+   */
+  private scheduleResize(): void {
+    this.resizeCount++;
+    // Keep the CSS size in sync immediately (the browser stretches the existing backing store for
+    // the length of the transition); only the costly canvas/target reallocation is deferred.
+    const cssW = `${window.innerWidth}px`;
+    const cssH = `${window.innerHeight}px`;
+    this.guiCanvas.style.width = cssW;
+    this.guiCanvas.style.height = cssH;
+    this.glCanvas.style.width = cssW;
+    this.glCanvas.style.height = cssH;
+    if (this.resizeTimer !== 0) window.clearTimeout(this.resizeTimer);
+    this.resizeTimer = window.setTimeout(() => {
+      this.resizeTimer = 0;
+      this.resize();
+    }, 120);
+  }
+
   private resize(): void {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.glCanvas.width = Math.floor(w * dpr);
-    this.glCanvas.height = Math.floor(h * dpr);
-    this.glCanvas.style.width = `${w}px`;
-    this.glCanvas.style.height = `${h}px`;
-    this.guiCanvas.width = Math.floor(w * dpr);
-    this.guiCanvas.height = Math.floor(h * dpr);
+    const physW = Math.floor(w * dpr);
+    const physH = Math.floor(h * dpr);
+    const key = `${physW}x${physH}`;
+    if (key === this.lastResizeKey) return;
+    this.lastResizeKey = key;
+    // The GUI canvas stays at full device pixels (text and item icons must stay crisp), but the
+    // 3D buffer is capped and upscaled by the compositor. Measured on a GTX 1050: the scene pass
+    // costs ~8 ms/MP, so a 3840x2160 buffer (8.3 MP, i.e. 1080p at devicePixelRatio 2 — the
+    // default on most Windows laptops) needs 23 ms and pins the client at ~39 fps. The same
+    // scene at 2.1 MP runs at 7 ms and holds the refresh rate.
+    this.guiCanvas.width = physW;
+    this.guiCanvas.height = physH;
     this.guiCanvas.style.width = `${w}px`;
     this.guiCanvas.style.height = `${h}px`;
+    this.maxRenderScale = Math.min(1, Math.sqrt(MAX_RENDER_PIXELS / Math.max(1, physW * physH)));
+    this.renderScale = Math.min(this.renderScale, this.maxRenderScale);
+    // 窗口/DPR 变了，之前测出的「撑不住的档位」不再适用，重置上限重新爬
+    this.scaleCeiling = this.maxRenderScale;
+    this.scaleQuiet = 0;
+    this.applyCanvasSize();
+    this.applyRenderScale();
+    this.glCanvas.style.width = `${w}px`;
+    this.glCanvas.style.height = `${h}px`;
     // resizing the backing store resets 2D context state
     this.guiCtx.imageSmoothingEnabled = false;
     // GUI scale can change with the viewport (or when moving between DPI screens): re-bake
-    // item icons at the new physical slot size so they are never nearest-upscaled blobs.
+    // item icons at the new physical slot size so they are never pixelated blobs.
     this.icons?.build(this.guiScale);
-    this.gl.viewport(0, 0, this.glCanvas.width, this.glCanvas.height);
-    this.renderer?.resize(this.glCanvas.width, this.glCanvas.height);
     this.screens?.resize(w, h);
     this.touch?.updateMetrics(this.guiScale);
   }
 
+  /** Allocates the GL drawing buffer once per window size. Dynamic resolution never calls this. */
+  private applyCanvasSize(): void {
+    const w = Math.max(320, Math.floor(this.guiCanvas.width * this.maxRenderScale));
+    const h = Math.max(180, Math.floor(this.guiCanvas.height * this.maxRenderScale));
+    if (this.glCanvas.width !== w || this.glCanvas.height !== h) {
+      this.glCanvas.width = w;
+      this.glCanvas.height = h;
+    }
+  }
+
+  /**
+   * Sizes the 3D drawing target from the CSS size, the device pixel ratio and `renderScale`.
+   * Called on resize and whenever the adaptive resolution decides to step.
+   *
+   * With shaders on, only the HDR/TAA/bloom targets change size; the GL canvas keeps its fixed
+   * backing store and the final composite upscales into it. Reallocating the canvas (the old
+   * behaviour) dropped one frame's targets and produced the short black flash while playing.
+   */
+  private applyRenderScale(): void {
+    const scale = Math.max(0.4, Math.min(this.maxRenderScale, this.renderScale));
+    const usePost = this.renderer?.shadersEnabled ?? false;
+    const w = usePost ? Math.max(320, Math.floor(this.guiCanvas.width * scale)) : this.glCanvas.width;
+    const h = usePost ? Math.max(180, Math.floor(this.guiCanvas.height * scale)) : this.glCanvas.height;
+    this.targetW = w;
+    this.targetH = h;
+    this.renderer?.resize(w, h);
+  }
+
   get guiScale(): number {
     const forced = this.options.guiScale > 0 ? this.options.guiScale : 0;
-    const auto = calcGuiScale(this.glCanvas.width, this.glCanvas.height, forced, false);
+    // GUI layout follows the DISPLAY resolution, not the (possibly reduced) 3D buffer, otherwise
+    // dropping render scale would silently shrink the HUD.
+    const auto = calcGuiScale(this.guiCanvas.width, this.guiCanvas.height, forced, false);
     // OpusMC uses 3x GUI pixels on phones; vanilla's auto scale picks 2 on a 390 px-wide device.
     // Three matches the reference screenshots and makes slot/font lines one CSS pixel, not 1.5.
     return this.touchDevice && auto < 3 ? 3 : auto;
@@ -2226,6 +3686,9 @@ export class Game {
       gl.clearColor(0.08, 0.09, 0.12, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       this.renderer.post.invalidateHistory();
+      // The title screen paints over the shared GUI canvas; the next in-world frame must repaint
+      // the HUD even if its cached signature would still match.
+      this.hudValid = false;
       this.screens.render(partial);
       return;
     }
@@ -2263,18 +3726,54 @@ export class Game {
     const p = this.player.pos;
     const pp = this.player.prevPos;
     const eyeY = this.player.eyeY;
+    // GameRenderer interpolates the FOV modifier; snapping it made a double-tap-to-sprint (or a
+    // zoom toggle) jump the whole projection 10%/75% in a single frame - the "camera twitches
+    // while flying" report, because flight speed doubles at the same moment.
+    const targetFov = this.options.fov * (this.player.sprinting ? 1.1 : 1) * (this.zooming ? 0.25 : 1);
+    if (this.fovSmooth < 0) this.fovSmooth = targetFov;
+    // GameRenderer.tick lerps the FOV modifier by 50% per frame (≈2 frames at 60 fps); a slower
+    // time constant made double-tap sprint feel sluggish compared to vanilla.
+    const fovK = 1 - Math.exp(-Math.max(1, this.lastDt) / 30);
+    this.fovSmooth += (targetFov - this.fovSmooth) * fovK;
     const camera: Camera = {
       x: pp.x + (p.x - pp.x) * partial,
       y: pp.y + (p.y - pp.y) * partial + (eyeY - p.y),
       z: pp.z + (p.z - pp.z) * partial,
       yaw: this.player.yaw,
       pitch: this.player.pitch,
-      fov: this.options.fov * (this.player.sprinting ? 1.1 : 1) * (this.zooming ? 0.25 : 1),
-      aspect: this.glCanvas.width / this.glCanvas.height,
+      fov: this.fovSmooth,
+      aspect: this.targetW / this.targetH,
     };
 
-    gl.viewport(0, 0, this.glCanvas.width, this.glCanvas.height);
-    gl.clearColor(skyState.fogColor[0], skyState.fogColor[1], skyState.fogColor[2], 1);
+    gl.viewport(0, 0, this.targetW, this.targetH);
+    // Sky access at the eye. With sky light 0 the camera is fully covered: in a correct world no
+    // part of the sky can be seen, so a bright sky/fog background only shows through a missing
+    // chunk section - the "white seam at the horizon while underground" report. Clear to the void
+    // colour and skip the sky/cloud passes in that case instead.
+    const eyeSky = this.level.getSkyLight(
+      Math.floor(camera.x), Math.floor(camera.y), Math.floor(camera.z),
+    );
+    const skyVisible = eyeSky > 0;
+    if (skyVisible) {
+      // Use the same sun-aware fog colour the sky pass paints at the horizon, not the raw
+      // level fog colour: at sunrise/sunset the two differ and the GL clear showed through
+      // the sky disc's edge as a hard band.
+      const basis = cameraBasis((camera.yaw * Math.PI) / 180, (camera.pitch * Math.PI) / 180);
+      const clearFog = computeFogColor({
+        fogColorArgb: argbFromRgb(skyState.fogColor),
+        skyColorArgb: argbFromRgb(skyState.skyColor),
+        sunriseSunsetColorArgb: skyState.sunriseColorArgb,
+        sunAngleDeg: skyState.sunAngleDeg,
+        cameraForward: { x: basis.forward[0], y: basis.forward[1], z: basis.forward[2] },
+        skyFogEndDistance: skyState.skyFogEndDistance,
+        renderDistanceBlocks: this.renderer.renderDistance * 16,
+        rainLevel: this.level.getRainLevel(),
+        thunderLevel: 0,
+      });
+      gl.clearColor(clearFog[0], clearFog[1], clearFog[2], 1);
+    } else {
+      gl.clearColor(0.015, 0.015, 0.02, 1);
+    }
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     // Everything below this line is drawn into the HDR scene target when shaders are on.
@@ -2297,15 +3796,17 @@ export class Game {
     const skyPhase = (((this.level.time % DAY_LENGTH) + DAY_LENGTH) % DAY_LENGTH) / DAY_LENGTH;
     // FogRenderer#setupFog: FogData.skyEnd = min(renderDistanceBlocks, SKY_FOG_END_DISTANCE).
     this.skyRenderer.skyFogEnd = Math.min(skyState.skyFogEndDistance, this.renderer.renderDistance * 16);
-    this.skyRenderer.render(
-      this.renderer.viewMatrix,
-      this.renderer.projection,
-      skyPhase,
-      camera,
-      this.level.getRainLevel(),
-      this.levelLike,
-    );
-    this.cloudRenderer.render(this.renderer.viewProjection, camera, this.level.time, this.levelLike);
+    if (skyVisible) {
+      this.skyRenderer.render(
+        this.renderer.viewMatrix,
+        this.renderer.projection,
+        skyPhase,
+        camera,
+        this.level.getRainLevel(),
+        this.levelLike,
+      );
+      this.cloudRenderer.render(this.renderer.viewProjection, camera, this.level.time, this.levelLike);
+    }
 
     // Vanilla order: solid/cutout terrain -> entities -> particles -> block breaking ->
     // translucent water. Water is drawn last so it tints and hides submerged entities
@@ -2344,12 +3845,18 @@ export class Game {
     });
 
     // Weather uses the particle pipeline: lightmap-sampled light coords + environmental fog.
+    // Rain/snow columns are placed on the surface, so with the camera fully covered they can only
+    // be seen through a hole in the terrain: their lightmap brightness made them read as white
+    // specks floating in the dark cave. Vanilla hides them with the terrain; skipping the pass
+    // has the same visible result without drawing them at all.
     this.weatherRenderer.lightmap = this.textures.lightmap;
-    this.weatherRenderer.render(this.renderer.viewProjection, camera, this.level.time, this.levelLike, {
-      start: skyState.fogStartDistance,
-      end: skyState.fogEndDistance,
-      color: skyState.fogColor,
-    });
+    if (skyVisible) {
+      this.weatherRenderer.render(this.renderer.viewProjection, camera, this.level.time, this.levelLike, {
+        start: skyState.fogStartDistance,
+        end: skyState.fogEndDistance,
+        color: skyState.fogColor,
+      });
+    }
 
     const outlineHit = this.raycast();
     if (outlineHit && (this.mouseLocked || this.touchEnabled)) {
@@ -2374,7 +3881,15 @@ export class Game {
     // Resolve the HDR frame (SSAO + TAA -> bloom -> tonemap -> FXAA) into the default framebuffer.
     this.renderer.endScene();
 
-    this.renderHud();
+    // Vanilla hides the HUD behind every menu (ChatScreen is the one exception). Rendering it first
+    // and letting ScreenManager clear it again costs a full HUD pass per frame - measured at 236 ms
+    // on a machine whose 2D canvas had fallen back to software, which made the settings screen run
+    // at 10 fps while it was open.
+    const screen = this.screens.current;
+    if (!screen || screen.preserveHud) this.renderHud();
+    // A menu clears (or draws over) the GUI canvas, so the cached HUD pixels are gone; force the
+    // next in-game frame to repaint even if nothing in HudState changed.
+    if (screen) this.hudValid = false;
 
     // Screens last: ScreenManager clears the GUI canvas (vanilla hides the HUD while a menu is up).
     this.screens.render(partial);
@@ -2384,20 +3899,17 @@ export class Game {
   private renderHud(): void {
     const ctx = this.guiCtx;
     const scale = this.guiScale;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, this.guiCanvas.width, this.guiCanvas.height);
-    // Window#setGuiScale: logical units are framebuffer pixels / scale, so the transform is
-    // exactly `scale` (not dpr * scale).
-    ctx.setTransform(scale, 0, 0, scale, 0, 0);
     const size = guiScaledSize(this.guiCanvas.width, this.guiCanvas.height, scale);
     const w = size.width;
     const h = size.height;
+    this.icons.drawStats.ms = 0;
+    this.icons.drawStats.n = 0;
 
     // survival.airSupply / maxAirSupply / armorValue exist since the survival package landed; the
     // optional cast only covers fields that may still be missing (absorption / status effects).
     const ext = this.survival as unknown as HudSurvivalExtensions;
     const toSlot = (s: ItemStack): HudItemSlot => ({
-      item: s.item ? s.item.id : -1,
+      item: s.isEmpty() ? -1 : s.item!.id,
       count: s.getCount(),
       damage: s.getDamageValue(),
       maxDamage: s.getMaxDamage(),
@@ -2411,7 +3923,8 @@ export class Game {
       hearts: Math.max(0, Math.ceil(this.survival.health)),
       maxHearts: this.survival.maxHealth,
       absorption: ext.absorption ?? 0,
-      heartKind: ext.heartKind ?? 'normal',
+      heartKind: this.survival.hasEffect('poison') ? 'poisoned'
+        : this.survival.hasEffect('wither') ? 'withered' : 'normal',
       hardcore: ext.hardcore ?? false,
       hunger: this.survival.hunger,
       saturation: this.survival.saturation,
@@ -2429,17 +3942,78 @@ export class Game {
       selectedSlot: this.selectedSlot,
       itemNameTimer: this.itemNameTimer,
       itemName: this.itemName,
-      ...this.buildDebugColumns(),
+      // F3 text is ~0.3 ms of string building + a raycast + biome lookups per frame; do not pay
+      // for it while the overlay is hidden.
+      ...(this.showDebug ? this.buildDebugColumns() : { debugLeft: [], debugRight: [] }),
       showDebug: this.showDebug,
       fps: this.fps,
       gamemode: this.options.gamemode,
       tickCount: this.tickCount,
+      effects: [...this.survival.effects.entries()].map(([id, e]) => ({
+        id, duration: e.duration, amplifier: e.amplifier,
+      })),
     };
 
+    // Dirty check: with the debug overlay off the HUD is a pure function of HudState. Repainting it
+    // every frame is wasted work - on a software 2D canvas it cost 236 ms/frame. Only repaint while
+    // something is actually animating: chat fade, damage/blink/jitter, stack pop, item name, resize.
+    const chatLive = this.chatLines.some((l) => performance.now() - l.time < 10_000);
+    // One extra repaint after the last line expires, otherwise the old chat text stays on the canvas.
+    const chatExpired = !chatLive && this.chatWasLive;
+    this.chatWasLive = chatLive;
+    // Toasts are composited on top of the HUD by ScreenManager; repaint so they do not smear,
+    // and repaint once more after the last one expires to erase it.
+    const toastsActive = this.screens.toastManager.activeCount > 0;
+    const toastsExpired = !toastsActive && this.toastsWereActive;
+    this.toastsWereActive = toastsActive;
+    const pulsing = state.hearts < state.maxHearts
+      || (state.hunger < 20 && state.saturation <= 0)
+      || state.air < state.airMax || state.absorption > 0;
+    const slotSig = (s: HudItemSlot | null): string => (s
+      ? `${s.item},${s.count},${s.damage},${s.maxDamage},${s.popTime}`
+      : '-');
+    const sig = `${this.guiCanvas.width}x${this.guiCanvas.height}@${scale}`
+      + `|${state.hearts},${state.maxHearts},${state.absorption},${state.heartKind},${state.hardcore}`
+      + `|${state.hunger},${state.saturation},${state.hungerEffect},${state.air},${state.airMax},${state.underwater}`
+      + `|${state.armor},${state.xpProgress.toFixed(3)},${state.xpLevel},${state.selectedSlot}`
+      + `|${state.itemNameTimer},${state.itemName},${state.gamemode}`
+      + `|fx:${(state.effects ?? []).map((e) => `${e.id}/${e.duration}/${e.amplifier}`).join(';')}`
+      + `|${state.hotbar.map(slotSig).join(';')}|${slotSig(state.offhand)}`
+      + `|${pulsing ? state.tickCount : 0}`
+      + `|${this.sleeping ? 1 : 0},${this.sleepFade.toFixed(2)}`;
+    if (!chatLive && !chatExpired && !toastsActive && !toastsExpired && !state.showDebug
+      && this.hudValid && sig === this.hudSignature) {
+      this.hudMs = 0;
+      return;
+    }
+    this.hudSignature = sig;
+    this.hudValid = true;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // The HUD shares one 2D context with the screens; a screen that turns smoothing on must not
+    // leave the hotbar's item icons (and font sprites) bilinear for the rest of the session.
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, this.guiCanvas.width, this.guiCanvas.height);
+    // Window#setGuiScale: logical units are framebuffer pixels / scale, so the transform is
+    // exactly `scale` (not dpr * scale).
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+
+    const hudStart = performance.now();
     this.hud.render(ctx, state, w, h, (c, item, x, y, size) => {
       this.icons.draw(c, item, x, y, size);
     });
+    this.hudMs = performance.now() - hudStart;
+    const chatStart = performance.now();
     this.renderChatLog(ctx, w, h);
+    this.chatMs = performance.now() - chatStart;
+    // Sleeping fade (Gui.ScreenEffectRenderer SLEEP / black overlay).
+    if (this.sleepFade > 0) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = Math.min(1, this.sleepFade);
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, this.guiCanvas.width, this.guiCanvas.height);
+      ctx.globalAlpha = 1;
+    }
   }
 
   /**
@@ -2573,7 +4147,7 @@ export class Game {
         groups: [{
           id: 'system',
           lines: [
-            `显示: ${this.glCanvas.width}x${this.glCanvas.height} (${vendor})`,
+            `显示: ${this.glCanvas.width}x${this.glCanvas.height} (scale ${(this.renderScale * 100).toFixed(0)}%, max ${(this.maxRenderScale * 100).toFixed(0)}%) (${vendor})`,
             `GPU: ${gpu}`,
             `GL: ${glVersion}`,
           ],
@@ -2589,7 +4163,42 @@ export class Game {
 /** Blocks that open a container GUI on right click (PlayerGameMode.useItemOn). */
 function isContainerBlock(blockName: string): boolean {
   return blockName === 'crafting_table' || blockName === 'chest'
-    || blockName === 'trapped_chest' || blockName === 'furnace';
+    || blockName === 'trapped_chest' || blockName === 'furnace' || blockName === 'enchanting_table'
+    || blockName === 'brewing_stand';
+}
+
+/** Approximate PotionContents.getColor for the lingering cloud particles. */
+const POTION_CLOUD_COLORS: Readonly<Record<string, readonly [number, number, number]>> = {
+  poison: [0.3, 0.8, 0.2],
+  harming: [0.5, 0.1, 0.1],
+  healing: [1, 0.4, 0.6],
+  swiftness: [0.3, 0.7, 1],
+  slowness: [0.4, 0.4, 0.6],
+  regeneration: [1, 0.5, 0.7],
+  strength: [0.9, 0.3, 0.2],
+  weakness: [0.4, 0.5, 0.3],
+  fire_resistance: [1, 0.6, 0.2],
+  water_breathing: [0.3, 0.5, 1],
+  night_vision: [0.2, 0.4, 0.7],
+  invisibility: [0.6, 0.6, 0.8],
+  slow_falling: [0.9, 0.9, 0.7],
+  jump_boost: [0.4, 0.9, 0.4],
+  water: [0.3, 0.5, 1],
+};
+
+/** EntityTypes in #minecraft:undead (instant health hurts them, instant damage heals them). */
+const UNDEAD_ENTITY_NAMES: ReadonlySet<string> = new Set([
+  'zombie', 'zombie_villager', 'husk', 'drowned', 'zombified_piglin',
+  'skeleton', 'stray', 'bogged', 'parched', 'wither_skeleton',
+  'phantom', 'zoglin', 'zombie_horse', 'skeleton_horse', 'wither',
+]);
+
+/** Squared distance between two axis-aligned boxes (0 when they overlap). */
+function boxDistanceSqr(a: AABB, b: AABB): number {
+  const dx = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+  const dy = Math.max(0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
+  const dz = Math.max(0, Math.max(a.minZ - b.maxZ, b.minZ - a.maxZ));
+  return dx * dx + dy * dy + dz * dz;
 }
 
 /**

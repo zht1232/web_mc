@@ -11,7 +11,7 @@
 
 import { XoroshiroRandomSource } from '../../vanilla/core/Random.js';
 import {
-  SOUND_ALIASES, SOUND_CATEGORIES, categoryOf,
+  SOUND_ALIASES, SOUND_CATEGORIES, SOUND_FILE_ALIASES, categoryOf,
 } from './SoundEvents.js';
 import { MusicManager } from './MusicManager.js';
 
@@ -195,15 +195,17 @@ export class SoundEngine {
     const ctx = this.ctx;
     if (!ctx || !this.index || !this.rootGain) return;
     const event = this.resolveEvent(name);
-    if (!event) return;
-    const files = this.index.events[event];
+    // Some events (brewing stand brew) have real ogg files that the directory-based
+    // index could not give its own event name; SOUND_FILE_ALIASES supplies them.
+    const files = SOUND_FILE_ALIASES[name] ?? (event ? this.index.events[event] : undefined);
     if (!files || !files.length) return;
     // A crowd of mobs must not turn into hundreds of live audio nodes (SoundEngine.java caps channels at 247).
     if (this.activeSources.size >= 64) return;
-    this.stats[event] = (this.stats[event] ?? 0) + 1;
+    const statKey = event ?? name;
+    this.stats[statKey] = (this.stats[statKey] ?? 0) + 1;
     const path = files[this.random.nextInt(files.length)];
     const vol = clamp01(volume);
-    const cat = categoryOf(event);
+    const cat = categoryOf(statKey);
     const is3d = x !== undefined && y !== undefined && z !== undefined;
 
     void this.buffer(path).then((buf) => {

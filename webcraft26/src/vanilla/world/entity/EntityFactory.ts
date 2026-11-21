@@ -8,6 +8,7 @@
 // instead of counting them as spawn failures (see EntityManager.tryNaturalSpawn).
 
 import type { ClientLevel } from '../level/ClientLevel.js';
+import { ItemStack } from '../item/ItemStack.js';
 import type { Entity } from './Entity.js';
 import { ENTITY_TYPES } from './EntityType.js';
 
@@ -18,7 +19,11 @@ import { ZombieVillager } from './monster/ZombieVillager.js';
 import { Skeleton } from './monster/Skeleton.js';
 import { Stray } from './monster/Stray.js';
 import { Bogged } from './monster/Bogged.js';
+import { Parched } from './monster/Parched.js';
 import { Creeper } from './monster/Creeper.js';
+import { WitherSkeleton } from './monster/WitherSkeleton.js';
+import { MagmaCube } from './monster/MagmaCube.js';
+import { ZombifiedPiglin } from './monster/ZombifiedPiglin.js';
 import { Spider } from './monster/Spider.js';
 import { CaveSpider } from './monster/CaveSpider.js';
 import { Enderman } from './monster/Enderman.js';
@@ -27,6 +32,7 @@ import { Slime } from './monster/Slime.js';
 import { Witch } from './monster/Witch.js';
 import { Pig } from './animal/Pig.js';
 import { Cow } from './animal/Cow.js';
+import { Mooshroom } from './animal/Mooshroom.js';
 import { Sheep } from './animal/Sheep.js';
 import { Chicken } from './animal/Chicken.js';
 import { Wolf } from './animal/Wolf.js';
@@ -37,6 +43,10 @@ import { Parrot } from './animal/Parrot.js';
 import { Bat } from './ambient/Bat.js';
 import { Squid, GlowSquid, Cod, Salmon } from './animal/WaterAnimal.js';
 import { ItemEntity } from './item/ItemEntity.js';
+import { PrimedTnt } from './item/PrimedTnt.js';
+import { FishingBobber } from './projectile/FishingBobber.js';
+import { ThrownEgg } from './projectile/ThrownEgg.js';
+import { ThrownPotion } from './projectile/ThrownPotion.js';
 import { ExperienceOrb } from './ExperienceOrb.js';
 import { Arrow } from './projectile/Arrow.js';
 
@@ -51,7 +61,11 @@ const CTORS: Record<string, Ctor> = {
   skeleton: l => new Skeleton(l),
   stray: l => new Stray(l),
   bogged: l => new Bogged(l),
+  parched: l => new Parched(l),
   creeper: l => new Creeper(l),
+  wither_skeleton: l => new WitherSkeleton(l),
+  magma_cube: l => new MagmaCube(l),
+  zombified_piglin: l => new ZombifiedPiglin(l),
   spider: l => new Spider(l),
   cave_spider: l => new CaveSpider(l),
   enderman: l => new Enderman(l),
@@ -61,6 +75,7 @@ const CTORS: Record<string, Ctor> = {
   // passive animals
   pig: l => new Pig(l),
   cow: l => new Cow(l),
+  mooshroom: l => new Mooshroom(l),
   sheep: l => new Sheep(l),
   chicken: l => new Chicken(l),
   wolf: l => new Wolf(l),
@@ -77,9 +92,14 @@ const CTORS: Record<string, Ctor> = {
   cod: l => new Cod(l),
   salmon: l => new Salmon(l),
   // non-mob
-  item: l => new ItemEntity(l, 0, 0, 0, { id: 'minecraft:stone', count: 1 }),
+  item: l => new ItemEntity(l, 0, 0, 0, ItemStack.EMPTY),
   experience_orb: l => new ExperienceOrb(l, 0, 0, 0, 1),
   arrow: l => new Arrow(l, 0, 0, 0),
+  tnt: l => new PrimedTnt(l),
+  fishing_bobber: l => new FishingBobber(l),
+  egg: l => new ThrownEgg(l),
+  splash_potion: l => new ThrownPotion(l, 0, 0, 0, false),
+  lingering_potion: l => new ThrownPotion(l, 0, 0, 0, true),
 };
 
 /** Register factories on the 158-entry EntityType registry. Idempotent. */

@@ -43,6 +43,7 @@ interface LivingLike {
   deathTime?: number;
   hurtTime?: number;
   isAggressive?: () => boolean;
+  getMainHandItem?: () => { id: string; count: number } | null;
   swell?: number;
 }
 
@@ -208,10 +209,26 @@ const ANIM_CTX: AnimContext = {
 /** Vanilla hurt overlay colour: OverlayTexture row v=3 is 0xB2FF0000. */
 const HURT_ALPHA = 0xb2 / 255;
 
+/**
+ * Extra model layer drawn after the base model, with its own texture and tint.
+ * Mirrors the vanilla `RenderLayer` stack (e.g. SheepRenderer's fur layer).
+ */
+export interface EntityLayer {
+  model: BakedModel;
+  /** path relative to /mc/textures/entity/ (without .png) */
+  texture: string;
+  tint: readonly [number, number, number];
+}
+
+const NO_LAYERS: readonly EntityLayer[] = [];
+
 export abstract class EntityRenderer<T extends Entity = Entity> {
   abstract getModel(e: T): BakedModel;
   abstract getTextureKey(e: T): string;
   abstract getTint(e: T): readonly [number, number, number];
+
+  /** Additional layers drawn after the base model (empty for most entities). */
+  getLayers(_e: T): readonly EntityLayer[] { return NO_LAYERS; }
 
   /** Extra rotation about X after yaw (radians), e.g. arrow pitch. Default 0. */
   getRotX(_e: T): number { return 0; }
@@ -228,9 +245,22 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
   /** Shadow strength (EntityRenderer.shadowStrength, 1.0 by default). */
   getShadowStrength(_e: T): number { return 1; }
 
+  /** Extra world-space Y offset applied before the entity rotation (ItemEntity bob). */
+  getRenderYOffset(_e: T, _partialTick: number): number { return 0; }
+
   append(e: T, batch: EntityBatch, texId: number, partialTick: number): void {
-    const model = this.getModel(e);
-    const tint = this.getTint(e);
+    this.appendModel(e, this.getModel(e), this.getTint(e), batch, texId, partialTick);
+  }
+
+  /** Emits one baked model for `e` into a texture bucket (used for extra layers too). */
+  appendModel(
+    e: T,
+    model: BakedModel,
+    tint: readonly [number, number, number],
+    batch: EntityBatch,
+    texId: number,
+    partialTick: number,
+  ): void {
     const rx = e.xo + (e.x - e.xo) * partialTick;
     const ry = e.yo + (e.y - e.yo) * partialTick;
     const rz = e.zo + (e.z - e.zo) * partialTick;
@@ -268,10 +298,9 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     ctx.headPitch = headPitch;
     const mob = le;
     ctx.isAggressive = typeof mob.isAggressive === 'function' ? mob.isAggressive() : false;
-    // SkeletonRenderer: state.isHoldingBow = main hand item is a bow. This port has
-    // no mob equipment, and the skeleton is our only ranged attacker, so it is
-    // always rendered in the bow pose (HumanoidModel.ArmPose.BOW_AND_ARROW).
-    ctx.isHoldingBow = e.getTypeName() === 'skeleton';
+    // SkeletonRenderer: state.isHoldingBow = main hand item is a bow.
+    const mainHand = typeof mob.getMainHandItem === 'function' ? mob.getMainHandItem() : null;
+    ctx.isHoldingBow = !!mainHand && mainHand.id.endsWith('bow');
     ctx.swell = typeof mob.swell === 'number' ? Math.min(1, Math.max(0, mob.swell)) : 0;
     // ChickenModel/ParrotModel: flapAngle = (sin(flap) + 1) * flapSpeed. The flap
     // counters live in the survival package's Chicken/Parrot classes; approximate
@@ -309,7 +338,7 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     const entityScale = e.scale;
 
     // E = T(pos) * S(scale) * RY(180 - bodyRot) * RX(pitch) * RZ(death) * ROOT
-    translation(mT, rx, ry, rz);
+    translation(mT, rx, ry + this.getRenderYOffset(e, partialTick), rz);
     scaleMat(mS, mExtra[0] * entityScale, mExtra[1] * entityScale, mExtra[2] * entityScale);
     rotY(mRy, (180 - bodyRot) * DEG);
     rotZ(mRz, deathDeg * DEG);

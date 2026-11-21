@@ -1,6 +1,6 @@
 // Port of net.minecraft.client.gui.Hud (26.2) — the in-game HUD.
 //
-// Java sources (decompiled, G:/ck-web26/src-vanilla):
+// Java sources (decompiled, src-vanilla):
 //   net.minecraft.client.gui.Hud                      extractCrosshair() 439,
 //                                                     extractHotbarAndDecorations() 534,
 //                                                     extractItemHotbar() 564,
@@ -47,6 +47,15 @@ export interface HudItemSlot {
   popTime: number;
 }
 
+/** One status effect shown in the top-right HUD column (Hud.extractEffects). */
+export interface HudEffect {
+  /** MobEffect id, also the icon file name (textures/mob_effect/<id>.png). */
+  id: string;
+  /** Remaining ticks. */
+  duration: number;
+  amplifier: number;
+}
+
 export interface HudState {
   /** Player.getHealth() rounded up = half-hearts (Hud.extractPlayerHealth 764) */
   hearts: number;
@@ -91,6 +100,8 @@ export interface HudState {
   gamemode: 'survival' | 'creative';
   /** Hud.tickCount — drives the low-health/empty-bubble jitter and the blink */
   tickCount: number;
+  /** Active status effects, rendered top-down at the right edge (Hud.extractEffects). */
+  effects?: HudEffect[];
 }
 
 /**
@@ -153,6 +164,8 @@ export const HUD_SPRITES = [
   `${HUD}/crosshair`,
   `${HUD}/experience_bar_background`,
   `${HUD}/experience_bar_progress`,
+  `${HUD}/effect_background`,
+  `${HUD}/effect_background_ambient`,
   `${HUD}/air`,
   `${HUD}/air_bursting`,
   `${HUD}/air_empty`,
@@ -178,6 +191,26 @@ export const HUD_SPRITES = [
     );
   }),
 ];
+
+/** Mob effect icons used by the potion system (Hud.extractEffects blits these 18x18). */
+export const MOB_EFFECT_TEXTURES: readonly string[] = [
+  'speed', 'jump_boost', 'instant_health', 'instant_damage', 'poison', 'regeneration',
+  'fire_resistance', 'water_breathing', 'night_vision', 'strength', 'slowness', 'weakness',
+  'invisibility', 'slow_falling',
+].map((id) => `mob_effect/${id}`);
+
+/** MobEffectUtil.formatDuration: H:MM:SS when at least an hour remains, else M:SS. */
+export function formatEffectDuration(ticks: number): string {
+  const total = Math.max(0, Math.floor(ticks / 20));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const ss = String(s).padStart(2, '0');
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${ss}`;
+  return `${m}:${ss}`;
+}
+
+const ROMAN_LEVELS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 
 /** Hud.HeartType.getSprite(isHardcore, isHalf, isBlink) -> fully qualified sprite path. */
 export function heartSprite(kind: HeartSpriteKind, hardcore: boolean, half: boolean, blinking: boolean): string {
@@ -376,9 +409,41 @@ export class Hud {
       this.renderExperience(ctx, state, W, H); // gameMode.hasExperience()
     }
     this.renderSelectedItemName(ctx, state, W, H);
+    this.renderEffects(ctx, state, W);
     // Vanilla only shows the frame counter inside the F3 debug overlay; a permanent
     // "N FPS" in the corner is not part of the vanilla HUD.
     if (state.showDebug) this.renderDebug(ctx, state, W, H);
+  }
+
+  /**
+   * Hud.extractEffects: 24x24 background sprites in a column at the right edge,
+   * 18x18 effect icon, remaining time at the bottom-right and the amplifier in the
+   * top-left corner. Effects below 10s blink every 10 ticks.
+   */
+  private renderEffects(ctx: CanvasRenderingContext2D, state: HudState, W: number): void {
+    const effects = state.effects;
+    if (!effects || effects.length === 0) return;
+    const x = W - 24 - 3;
+    for (let i = 0; i < effects.length; i++) {
+      const effect = effects[i];
+      const y = 3 + 24 * i;
+      const bg = this.textures.get(`${HUD}/effect_background`);
+      if (bg) ctx.drawImage(bg, x, y, 24, 24);
+      else ctx.fillRect(x, y, 24, 24);
+      const blink = effect.duration < 200 && Math.floor(state.tickCount / 10) % 2 === 1;
+      const icon = this.textures.get(`mob_effect/${effect.id}`);
+      if (icon) {
+        if (blink) ctx.globalAlpha = 0.35;
+        ctx.drawImage(icon, x + 3, y + 3, 18, 18);
+        ctx.globalAlpha = 1;
+      }
+      const text = formatEffectDuration(effect.duration);
+      this.font.draw(ctx, text, x + 24 - this.font.width(text) - 2, y + 24 - 8, '#ffffff', true);
+      if (effect.amplifier > 0) {
+        const roman = ROMAN_LEVELS[Math.min(ROMAN_LEVELS.length - 1, effect.amplifier)] ?? String(effect.amplifier + 1);
+        this.font.draw(ctx, roman, x + 2, y + 2, '#ffffff', true);
+      }
+    }
   }
 
   // ---- crosshair ------------------------------------------------------------

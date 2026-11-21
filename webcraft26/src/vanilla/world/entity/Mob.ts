@@ -17,7 +17,7 @@ import { GroundPathNavigation, type PathNavigation } from './ai/navigation/Groun
  * burn_in_daylight.json), restricted to the types this port creates.
  */
 const BURN_IN_DAYLIGHT: ReadonlySet<string> = new Set([
-  'skeleton', 'stray', 'wither_skeleton', 'bogged', 'zombie', 'zombie_horse',
+  'skeleton', 'stray', 'bogged', 'parched', 'wither_skeleton', 'zombie', 'zombie_horse',
   'zombie_villager', 'drowned', 'zombie_nautilus', 'phantom',
 ]);
 
@@ -35,9 +35,11 @@ export class Mob extends LivingEntity {
   // ---- shared AI state (AgeableMob / TameableAnimal / Creeper subsets) ----
   inLove = false;
   loveTicks = 0;
-  /** negative => baby, >= 0 => adult (vanilla AgeableMob.age) */
+  /** AgeableMob.age: < 0 baby (ticks until adult), 0 adult, > 0 breeding cooldown. */
   age = 0;
   parent: Mob | null = null;
+  /** Render/model size before the baby factor is applied (cat 0.8, parrot 0.6 ...). */
+  protected baseScale = 1;
   /** Creeper swelling (-1 = deflating, +1 = inflating, 0 = idle) */
   swell = 0;
   swellDir = -1;
@@ -80,15 +82,29 @@ export class Mob extends LivingEntity {
   /** Vanilla Mob.getWalkTargetValue / checkSpawnRules (stub for parity). */
   getWalkTargetValue(_x: number, _y: number, _z: number): number { return 0; }
 
+  /** Mob.finalizeSpawn hook; variants override to roll spawn equipment. */
+  finalizeSpawn(): void {}
+
   // ---- shared AI helpers --------------------------------------------------
 
   isBaby(): boolean { return this.age < 0; }
-  setBaby(baby: boolean): void { this.age = baby ? -24000 : 0; }
+  setBaby(baby: boolean): void { this.setAge(baby ? -24000 : 0); }
   getAge(): number { return this.age; }
+  /** AgeableMob.setAge: babies render at half size, adults at their base scale. */
+  setAge(age: number): void {
+    this.age = age;
+    this.scale = this.baseScale * (age < 0 ? 0.5 : 1);
+  }
   isInLove(): boolean { return this.inLove || this.loveTicks > 0; }
-  setInLove(v: boolean, ticks = 0): void { this.inLove = v; this.loveTicks = ticks; }
+  setInLove(v: boolean, ticks = 0): void {
+    this.inLove = v;
+    this.loveTicks = v ? Math.max(1, ticks || 600) : 0;
+  }
   getParent(): Mob | null { return this.parent; }
   setParent(p: Mob | null): void { this.parent = p; }
+
+  /** AgeableMob.spawnChildFromBreeding hook; Animal implements baby creation. */
+  breedWith(_partner: Mob): void {}
 
   /** Ranged attackers override to spawn a projectile toward the target. */
   rangedAttack(_target: Targetable): void {}
@@ -139,6 +155,26 @@ export class Mob extends LivingEntity {
     this.baseTick();
     this.serverAiStep();
     this.aiStep();
+    this.tickAgeable();
     if (this.dead && this.deathTime > 20) this.remove();
+  }
+
+  /**
+   * AgeableMob.tick: babies grow 1 tick at a time, adults count down the breeding
+   * cooldown (setAge(6000) after a successful breeding), and love expires after
+   * 600 ticks. Hearts are emitted every 10 ticks while in love.
+   */
+  private tickAgeable(): void {
+    if (this.age > 0) {
+      this.age--;
+    } else if (this.age < 0) {
+      this.age++;
+      if (this.age >= 0) this.setAge(0);
+    }
+    if (this.loveTicks > 0) {
+      this.loveTicks--;
+      if (this.loveTicks === 0) this.inLove = false;
+      else if (this.loveTicks % 10 === 0) this.world?.onAnimalLove?.(this);
+    }
   }
 }

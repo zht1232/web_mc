@@ -90,7 +90,9 @@ void main() {
   }
 
   float dist = planeY / dir.y;   // distance from the camera to the disc plane
-  if (dist > 512.0) discard;     // SKY_DISC_RADIUS
+  // Vanilla's disc is a 512-radius fan; beyond it the fog below already clamps to 1, so the
+  // shader naturally returns uFogColor there. Discarding past 512 exposed the raw GL clear
+  // colour at the seam; the analytic plane has no such edge.
 
   // core/fog.glsl: total = max(linear(spherical), linear(cylindrical))
   float spherical = dist;

@@ -116,9 +116,12 @@ export class LivingEntity extends Entity implements Targetable {
   }
 
   protected die(_attacker: Targetable | null): void {
+    if (this.dead) return;
     this.dead = true;
     this.deathTime = 0;
     this.moveControl.reset();
+    // Mob.deathTime path: drop loot / XP once, before the corpse is removed.
+    this.world?.onMobDeath?.(this);
   }
 
   /** Vanilla LivingEntity.knockback. */

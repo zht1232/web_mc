@@ -32,7 +32,10 @@ export class NearestAttackableTargetGoal extends Goal {
       if (d < bestD) { best = e; bestD = d; }
     }
     const p = world.getPlayer();
-    if (p && p.isAlive() && this.predicate(p)) {
+    // TargetingConditions.forCombat().ignoreCreative(): creative and spectator players are
+    // never acquired as targets (Horizon: mobs/ai.rs:1016-1023).
+    const mode = world.getPlayerGameMode?.() ?? 'survival';
+    if (p && p.isAlive() && mode !== 'creative' && mode !== 'spectator' && this.predicate(p)) {
       const d = this.mob.distanceToSqr(p.x, p.y, p.z);
       if (d < bestD) { best = p; bestD = d; }
     }
@@ -42,7 +45,14 @@ export class NearestAttackableTargetGoal extends Goal {
   }
 
   canContinueToUse(): boolean {
-    return this.chosen !== null && this.chosen.isAlive();
+    const chosen = this.chosen;
+    if (chosen === null || !chosen.isAlive()) return false;
+    // Switching to creative/spectator drops the pursuit as well.
+    if (chosen.getTypeName() === 'player') {
+      const mode = this.mob.getWorld()?.getPlayerGameMode?.() ?? 'survival';
+      if (mode === 'creative' || mode === 'spectator') return false;
+    }
+    return true;
   }
 
   start(): void { this.mob.setTarget(this.chosen); }

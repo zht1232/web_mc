@@ -23,7 +23,7 @@ export const DAY_LENGTH = 24000;
  * Hysteresis between the load radius and the unload radius, in chunks.
  * Vanilla ClientChunkCache keeps its storage range at
  * `calculateStorageRange(viewRange) = max(2, viewRange) + 3`
- * (G:/ck-web26/src-vanilla/net/minecraft/client/multiplayer/ClientChunkCache.java:159-161).
+ * (src-vanilla/net/minecraft/client/multiplayer/ClientChunkCache.java:159-161).
  * The render distance used by Game.ensureChunksAround() is the *enter* radius, so chunks are
  * only dropped once they are 3 chunks beyond it. That margin is what keeps a player walking
  * back and forth across a chunk border from generating/dropping the same columns forever.
@@ -157,7 +157,7 @@ export class ClientLevel {
   // ---- chunk unloading ----------------------------------------------------
   //
   // Port of the client-side drop path: ClientChunkCache.drop / Storage.drop
-  // (G:/ck-web26/src-vanilla/net/minecraft/client/multiplayer/ClientChunkCache.java:60-68,
+  // (src-vanilla/net/minecraft/client/multiplayer/ClientChunkCache.java:60-68,
   // 258-265). Vanilla drops a chunk when the packet handler says it left the storage range,
   // then calls level.unload(chunk) and LevelRenderer/EntityManager release their per-chunk
   // state. Lighting lives inside the chunk sections, so deleting the map entry frees it too.

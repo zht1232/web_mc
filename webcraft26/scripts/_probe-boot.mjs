@@ -1,0 +1,10 @@
+﻿import { chromium } from "playwright";
+import { launchOptions } from "./lib/browser.mjs";
+const b = await chromium.launch(launchOptions());
+const p = await (await b.newContext({ viewport: { width: 800, height: 600 } })).newPage();
+p.on("console", (m) => console.log("CONSOLE", m.type(), m.text().slice(0, 600)));
+p.on("pageerror", (e) => console.log("PAGEERR", String(e).slice(0, 800)));
+await p.goto("http://127.0.0.1:5174/?play&perf=0", { waitUntil: "load" });
+await p.waitForTimeout(15000);
+console.log("hasMc", await p.evaluate(() => !!window.__mc), "running", await p.evaluate(() => window.__mc?.running));
+await b.close();

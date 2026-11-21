@@ -1,2 +1,0 @@
-- [webcraft26 1:1 roadmap](project-webcraft26-1to1-roadmap.md) — browser MC 26.2 复刻：现状是创造渲染器+菜单壳、M1-M11 建造顺序、截图并排验收、内嵌浏览器手法（不能指针锁定，用 window.__mc）
-- [MC 26.2 authoritative data](reference-mc262-authoritative-data.md) — jar 是 Mojang-mapped 可反编译取常量、NBT 结构模板/display 变换在哪、原版客户端可启动截参考图、Complementary 解包位置

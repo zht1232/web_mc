@@ -1,0 +1,25 @@
+import { chromium } from 'playwright';
+import { launchOptions } from './lib/browser.mjs';
+const b = await chromium.launch(launchOptions());
+const p = await b.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+p.on('pageerror', (e) => console.log('[pageerror]', e.message));
+await p.goto('http://127.0.0.1:5175/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+await p.waitForTimeout(8000);
+await p.mouse.click(365, 383); await p.waitForTimeout(200);
+await p.mouse.click(640, 490); await p.waitForTimeout(5000);
+await p.mouse.click(610, 380);
+await p.waitForFunction(() => window.game?.ui?.screen?.phase === 'pick', null, { timeout: 120000 });
+await p.evaluate(() => {
+  const g = window.game; const s = g.ui.screen;
+  const w = s.widgets.find((x) => x.label === '就这样'); if (w) w.onClick();
+});
+await p.waitForTimeout(1000);
+console.log('screen1', await p.evaluate(() => window.game?.ui?.screen?.constructor?.name));
+await p.evaluate(() => { const g=window.game; const s=g.ui.screen; if (s && s.skipTest) s.skipTest(); });
+await p.waitForTimeout(5000);
+console.log('state', await p.evaluate(() => ({ state: window.game?.state, screen: window.game?.ui?.screen?.constructor?.name })));
+await p.keyboard.press('e');
+await p.waitForTimeout(1200);
+console.log('screen2', await p.evaluate(() => window.game?.ui?.screen?.constructor?.name));
+await p.screenshot({ path: 'shots/opusmc-ui-inventory.png' });
+await b.close();

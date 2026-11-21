@@ -11,7 +11,7 @@ export class LookAtPlayerGoal extends Goal {
   private player: Targetable | null = null;
   private timer = 0;
 
-  constructor(private readonly mob: Mob, private readonly lookDistance = 8, private readonly chance = 0.5) {
+  constructor(private readonly mob: Mob, private readonly lookDistance = 8, private readonly chance = 0.02) {
     super();
     this.setFlags(GoalFlag.LOOK);
   }

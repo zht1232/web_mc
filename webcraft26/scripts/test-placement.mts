@@ -741,6 +741,51 @@ let plan: ReturnType<typeof getPlacement> = null;
 }
 
 // ---------------------------------------------------------------------------
+// 17. redstone long-tail placement: observer / piston / tripwire hook
+// ---------------------------------------------------------------------------
+
+{
+  const level = makeLevel();
+  plan = getPlacement(mc, level, 'observer', clickCtx(level, { heldBlockName: 'observer' }));
+  check('observer: placed', plan !== null);
+  if (plan) expectProps('observer yaw=0', props(plan.state), { facing: 'south', powered: 'false' });
+
+  plan = getPlacement(mc, level, 'observer',
+    clickCtx(level, { heldBlockName: 'observer', pitch: 90 }));
+  check('observer: placed looking down', plan !== null);
+  if (plan) expectProps('observer pitch=90', props(plan.state), { facing: 'down' });
+
+  plan = getPlacement(mc, level, 'piston', clickCtx(level, { heldBlockName: 'piston' }));
+  check('piston: placed', plan !== null);
+  if (plan) expectProps('piston yaw=0', props(plan.state), { facing: 'north', extended: 'false' });
+
+  plan = getPlacement(mc, level, 'sticky_piston',
+    clickCtx(level, { heldBlockName: 'sticky_piston', pitch: 90 }));
+  check('sticky piston: placed looking down', plan !== null);
+  if (plan) expectProps('sticky piston pitch=90', props(plan.state), { facing: 'up' });
+}
+{
+  // Hook on the east face of a wall: the body sits at x=1, FACING points away from the wall.
+  const level = makeLevel();
+  level.set(0, 0, 0, 'stone');
+  const ctx: PlacementContext = {
+    x: 0, y: 0, z: 0, face: EAST, hitX: 1, hitY: 0.5, hitZ: 0.5,
+    yaw: 90, pitch: 0, heldBlockName: 'tripwire_hook',
+  };
+  plan = getPlacement(mc, level, 'tripwire_hook', ctx);
+  check('tripwire hook: placed on a wall', plan !== null && plan.x === 1 && plan.y === 0 && plan.z === 0,
+    plan ? `${plan.x},${plan.y},${plan.z}` : 'null');
+  if (plan) expectProps('tripwire hook east wall', props(plan.state), { facing: 'east' });
+}
+{
+  // No wall behind the candidate: the hook cannot survive.
+  const level = makeLevel();
+  plan = getPlacement(mc, level, 'tripwire_hook',
+    clickCtx(level, { heldBlockName: 'tripwire_hook', pitch: 90 }));
+  check('tripwire hook: rejected without a support', plan === null);
+}
+
+// ---------------------------------------------------------------------------
 // summary
 // ---------------------------------------------------------------------------
 

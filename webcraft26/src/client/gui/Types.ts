@@ -7,6 +7,7 @@ import type { GuiTextures } from './Hud.js';
 import type { ItemIconAtlas } from './ItemIconAtlas.js';
 import type { GuiSpriteAtlas } from './GuiSpriteAtlas.js';
 import type { GuiGraphics } from './GuiGraphics.js';
+import type { StatisticsView } from '../../vanilla/world/stats/Statistics.js';
 
 export interface Rect {
   x: number;
@@ -104,6 +105,12 @@ export interface ContainerMenuLike {
   setCarried(stack: ItemStack | null): void;
   /** Creative inventory writes its virtual tab grid through this (optional for real menus). */
   setItem?(index: number, stack: ItemStack): void;
+  /** Enchanting table: offer costs + affordability for the three buttons. */
+  enchantInfo?(playerLevels: number): { costs: number[]; canEnchant: boolean[] };
+  /** Enchanting table: apply offer `slot` (0..2); true when it was consumed. */
+  enchant?(slot: number): boolean;
+  /** Brewing stand: brew timer (0..400) and fuel (0..20) for the progress sprites. */
+  brewInfo?(): { progress: number; fuel: number };
 }
 
 /** Constructor dependency bundle. All main-loop data is injected here, never imported from Game. */
@@ -117,6 +124,10 @@ export interface ScreenDeps {
   sprites?: GuiSpriteAtlas;
   icons: ItemIconAtlas;
   options: GuiOptions;
+  /** Live player statistics for the Statistics screen (StatsScreen). */
+  stats?: StatisticsView;
+  /** Live XP level (EnchantingScreen affordability). */
+  playerLevel?: () => number;
   touchInput?: boolean;
   /** Optional: ScreenManager falls back to the built-in I18n if omitted. */
   i18n?: (key: string) => string;

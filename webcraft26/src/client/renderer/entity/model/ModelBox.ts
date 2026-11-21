@@ -242,6 +242,33 @@ export function withAnimator(model: BakedModel, animate: ModelAnimator): BakedMo
   return model;
 }
 
+/**
+ * A camera-plane sprite for dropped items: one vertical quad whose UVs address a
+ * rectangle of the baked icon atlas. The quad is 4x4 model units (0.25 blocks at
+ * entity scale 1), matching vanilla's GROUND item display size.
+ */
+export function flatSpriteModel(
+  u0: number, v0: number, u1: number, v1: number,
+  texW: number, texH: number,
+  width = 4, height = 4,
+): BakedModel {
+  // BakedPart.verts are BLOCK units (bakeBoxes divides by 16); keep the same contract.
+  const x0 = -width / 32, x1 = width / 32;
+  const y0 = 24 / 16, y1 = (24 + height) / 16;
+  const verts = new Float32Array([
+    x0, y0, 0, u0 / texW, v1 / texH, 1,
+    x1, y0, 0, u1 / texW, v1 / texH, 1,
+    x1, y1, 0, u1 / texW, v0 / texH, 1,
+    x0, y0, 0, u0 / texW, v1 / texH, 1,
+    x1, y1, 0, u1 / texW, v0 / texH, 1,
+    x0, y1, 0, u0 / texW, v0 / texH, 1,
+  ]);
+  const model = bakeModel({ texW: 1, texH: 1, children: [{ name: 'sprite' }] });
+  model.parts[0].verts = verts;
+  model.vertexCount = 6;
+  return model;
+}
+
 /** Convenience: a single-box model (used by items / projectiles). */
 export function singleBoxModel(
   x: number, y: number, z: number, w: number, h: number, d: number,

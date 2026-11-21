@@ -23,6 +23,7 @@ import { XoroshiroRandomSource } from '../../core/Random.js';
 import type { ClientLevel } from '../level/ClientLevel.js';
 import type { Player } from './player/Player.js';
 import { Entity, type MobWorld, type Targetable } from './Entity.js';
+import { Mob } from './Mob.js';
 import { ENTITY_TYPES, type EntityType } from './EntityType.js';
 import { createEntity } from './EntityFactory.js';
 import { PlayerTarget } from './PlayerTarget.js';
@@ -99,7 +100,21 @@ export class EntityManager implements MobWorld {
   private readonly chunksPerTick: number;
 
   /** Set by Game: forwards explosion damage/block destruction to the world. */
-  explosionHandler?: (x: number, y: number, z: number, power: number) => void;
+  explosionHandler?: (x: number, y: number, z: number, power: number, interaction?: 'mob' | 'tnt') => void;
+  /** Set by Game: local player game mode, used by targeting conditions. */
+  playerGameModeProvider?: () => string;
+  /** Set by Game: non-empty main-hand + offhand item names, used by TemptGoal. */
+  playerHeldItemsProvider?: () => readonly string[];
+  /** Set by Game: drop loot / XP when a living entity dies. */
+  mobDeathHandler?: (e: Entity) => void;
+  /** Set by Game: spawn heart particles while an animal is in love. */
+  animalLoveHandler?: (e: Entity) => void;
+  /** Set by Game: award Stats.ANIMALS_BRED when two animals breed. */
+  animalBredHandler?: (e: Entity) => void;
+  /** Set by Game: spawn an egg item when a chicken lays one. */
+  chickenEggHandler?: (e: Entity) => void;
+  /** Set by Game: apply the splash potion's area effects. */
+  potionSplashHandler?: (x: number, y: number, z: number, potionId: string, age: number, lingering: boolean) => void;
 
   readonly spawnStats: SpawnStats = {
     passes: 0, chunkAttempts: 0, spawned: 0, noType: 0, skippedEntries: 0, rulesFail: 0, chunkGenSpawns: 0,
@@ -122,6 +137,15 @@ export class EntityManager implements MobWorld {
   // ---- MobWorld -----------------------------------------------------------
 
   getPlayer(): Targetable | null { return this.playerTarget; }
+  getPlayerGameMode(): string { return this.playerGameModeProvider?.() ?? 'survival'; }
+  getPlayerHeldItems(): readonly string[] { return this.playerHeldItemsProvider?.() ?? []; }
+  onMobDeath(e: Entity): void { this.mobDeathHandler?.(e); }
+  onAnimalLove(e: Entity): void { this.animalLoveHandler?.(e); }
+  onAnimalBred(e: Entity): void { this.animalBredHandler?.(e); }
+  onChickenLayEgg(e: Entity): void { this.chickenEggHandler?.(e); }
+  onPotionSplash(x: number, y: number, z: number, potionId: string, age: number, lingering: boolean): void {
+    this.potionSplashHandler?.(x, y, z, potionId, age, lingering);
+  }
   getEntities(): readonly Entity[] { return this.entities; }
   getGameTime(): number { return this.tickCounter; }
   isDay(): boolean { return this.level.isDay(); }
@@ -134,9 +158,9 @@ export class EntityManager implements MobWorld {
   removeEntity(e: Entity): void { e.remove(); }
 
   /** Source: Explosion. Game installs this to damage the player + break blocks. */
-  explode(x: number, y: number, z: number, power: number): void {
+  explode(x: number, y: number, z: number, power: number, interaction: 'mob' | 'tnt' = 'mob'): void {
     if (this.explosionHandler) {
-      this.explosionHandler(x, y, z, power);
+      this.explosionHandler(x, y, z, power, interaction);
       return;
     }
     const r2 = power * power;
@@ -153,6 +177,8 @@ export class EntityManager implements MobWorld {
     e.id = this.nextId++;
     e.world = this;
     e.random = new XoroshiroRandomSource(this.seedBig ^ BigInt(e.id));
+    // After the per-entity RNG exists, roll vanilla-style spawn equipment (armor).
+    if (e instanceof Mob) e.finalizeSpawn();
     this.entities.push(e);
   }
 
@@ -523,7 +549,7 @@ export class EntityManager implements MobWorld {
       const e = this.entities[i];
       if (!(e instanceof ItemEntity)) continue;
       if (e.isPickable() && e.distanceToSqr(x, y, z) <= r2) {
-        collected += e.getItem().count;
+        collected += e.getItem().getCount();
         e.remove();
       }
     }

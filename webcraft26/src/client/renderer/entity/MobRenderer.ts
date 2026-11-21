@@ -5,11 +5,20 @@
 // the shared transform in EntityRenderer. Mob-specific render state that lives
 // in the entity class itself (creeper swelling) is read here.
 
-import { EntityRenderer } from './EntityRenderer.js';
-import { MODEL_REGISTRY, type ModelEntry } from './model/ModelRegistry.js';
+import { EntityRenderer, type EntityLayer } from './EntityRenderer.js';
+import {
+  MODEL_REGISTRY, SHEEP_WOOL_MODEL, SHEEP_WOOL_TEXTURE,
+  ARMOR_LAYER1_TEXTURE, ARMOR_LAYER2_TEXTURE, type ModelEntry,
+} from './model/ModelRegistry.js';
+import {
+  ArmorHelmetModel, ArmorChestModel, ArmorLegsModel, ArmorBootsModel,
+} from './model/EntityModels.js';
 import type { BakedModel } from './model/ModelBox.js';
 import type { Entity } from '../../../vanilla/world/entity/Entity.js';
 import type { Mob } from '../../../vanilla/world/entity/Mob.js';
+import type { LivingEntity } from '../../../vanilla/world/entity/LivingEntity.js';
+import { EquipmentSlot } from '../../../vanilla/world/entity/EquipmentSlot.js';
+import { SHEEP_WOOL_RGB, type Sheep } from '../../../vanilla/world/entity/animal/Sheep.js';
 
 /**
  * Per-type render scale on top of entity.scale.
@@ -64,22 +73,86 @@ const SHADOW_RADIUS: Readonly<Record<string, number>> = {
   salmon: 0.5714286,    // 0.4  * scale 0.7
 };
 
+const HUMAN_ARMOR_TYPES: ReadonlySet<string> = new Set([
+  'zombie', 'husk', 'drowned', 'zombie_villager',
+  'skeleton', 'stray', 'bogged', 'parched', 'wither_skeleton',
+  'zombified_piglin',
+]);
+const WHITE: readonly [number, number, number] = [1, 1, 1];
+
+/** `minecraft:iron_helmet` -> `iron`; turtle helmet -> turtle_scute. */
+function armorMaterial(id: string): string | null {
+  const name = id.startsWith('minecraft:') ? id.slice('minecraft:'.length) : id;
+  if (name === 'turtle_helmet') return 'turtle_scute';
+  if (!/_(helmet|chestplate|leggings|boots)$/.test(name)) return null;
+  const prefix = name.slice(0, name.indexOf('_'));
+  if (prefix === 'golden') return 'gold';
+  return ['leather', 'chainmail', 'iron', 'diamond', 'netherite', 'copper'].includes(prefix)
+    ? prefix : null;
+}
+
 export class MobRenderer extends EntityRenderer<Entity> {
   private readonly tint: readonly [number, number, number] = [1, 1, 1];
   private readonly entry: ModelEntry;
   private readonly extraScale: number;
   private readonly shadowRadius: number;
+  /** SheepRenderer: one wool layer per DyeColor, reused per frame (no allocation). */
+  private readonly woolLayers: readonly EntityLayer[] | null;
+  private readonly layerScratch: EntityLayer[] = [];
+  private readonly armorLayers: EntityLayer[] = [];
 
   constructor(private readonly typeName: string) {
     super();
     this.entry = MODEL_REGISTRY[typeName];
     this.extraScale = EXTRA_SCALE[typeName] ?? 1;
     this.shadowRadius = SHADOW_RADIUS[typeName] ?? 0.5;
+    this.woolLayers = typeName === 'sheep'
+      ? SHEEP_WOOL_RGB.map((tint) => ({ model: SHEEP_WOOL_MODEL, texture: SHEEP_WOOL_TEXTURE, tint }))
+      : null;
   }
 
   getModel(): BakedModel { return this.entry.model; }
   getTextureKey(): string { return this.entry.texture; }
   getTint(): readonly [number, number, number] { return this.tint; }
+
+  /** Source: SheepRenderer.render — the wool layer is skipped while sheared. */
+  getLayers(e: Entity): readonly EntityLayer[] {
+    if (this.woolLayers) {
+      const sheep = e as Sheep;
+      if (sheep.sheared) return super.getLayers(e);
+      this.layerScratch[0] = this.woolLayers[sheep.woolColor] ?? this.woolLayers[0];
+      return this.layerScratch;
+    }
+    if (HUMAN_ARMOR_TYPES.has(this.typeName)) {
+      const living = e as LivingEntity;
+      let n = 0;
+      const head = living.getItemBySlot(EquipmentSlot.HEAD);
+      const headMat = head ? armorMaterial(head.id) : null;
+      if (headMat) {
+        this.armorLayers[n++] = { model: ArmorHelmetModel, texture: ARMOR_LAYER1_TEXTURE(headMat), tint: WHITE };
+      }
+      const chest = living.getItemBySlot(EquipmentSlot.CHEST);
+      const chestMat = chest ? armorMaterial(chest.id) : null;
+      if (chestMat) {
+        this.armorLayers[n++] = { model: ArmorChestModel, texture: ARMOR_LAYER1_TEXTURE(chestMat), tint: WHITE };
+      }
+      const legs = living.getItemBySlot(EquipmentSlot.LEGS);
+      const legsMat = legs ? armorMaterial(legs.id) : null;
+      if (legsMat) {
+        this.armorLayers[n++] = { model: ArmorLegsModel, texture: ARMOR_LAYER2_TEXTURE(legsMat), tint: WHITE };
+      }
+      const feet = living.getItemBySlot(EquipmentSlot.FEET);
+      const feetMat = feet ? armorMaterial(feet.id) : null;
+      if (feetMat) {
+        this.armorLayers[n++] = { model: ArmorBootsModel, texture: ARMOR_LAYER1_TEXTURE(feetMat), tint: WHITE };
+      }
+      if (n > 0) {
+        this.armorLayers.length = n;
+        return this.armorLayers;
+      }
+    }
+    return super.getLayers(e);
+  }
 
   /** Source: MobRenderer constructor shadowRadius (0.5 for the vanilla overworld mobs). */
   getShadowRadius(): number { return this.shadowRadius; }

@@ -370,6 +370,55 @@ export function spawnExplosion(x: number, y: number, z: number, radius = 1): num
   return made;
 }
 
+/** AreaEffectCloud.clientTick: a ring of coloured effect particles while the cloud lives. */
+export function spawnPotionCloudParticles(
+  x: number, y: number, z: number, radius: number,
+  color: readonly [number, number, number], count = 8,
+): number {
+  const e = ParticleEngine.get();
+  const rng = e.random;
+  let made = 0;
+  for (let i = 0; i < count; i++) {
+    const a = rng.nextFloat() * Math.PI * 2;
+    const d = Math.sqrt(rng.nextFloat()) * Math.max(0.5, radius);
+    const ok = e.add({
+      type: ParticleType.ENCHANT,
+      x: x + Math.cos(a) * d,
+      y: y + 0.05 + rng.nextFloat() * 0.3,
+      z: z + Math.sin(a) * d,
+      vx: 0,
+      vy: 0.01 + rng.nextFloat() * 0.02,
+      vz: 0,
+      size: 0.35,
+      lifetime: 25 + Math.floor(rng.nextFloat() * 20),
+      color: [color[0], color[1], color[2]],
+    });
+    if (ok >= 0) made++;
+  }
+  return made;
+}
+
+/** Animal breeding hearts (Level.addParticle(ParticleTypes.HEART, ...)). */
+export function spawnHearts(x: number, y: number, z: number, count = 3): number {
+  const e = ParticleEngine.get();
+  const rng = e.random;
+  let made = 0;
+  for (let i = 0; i < count; i++) {
+    const ok = e.add({
+      type: ParticleType.HEART,
+      x: x + (rng.nextFloat() - 0.5) * 0.6,
+      y: y + rng.nextFloat() * 0.4,
+      z: z + (rng.nextFloat() - 0.5) * 0.6,
+      vx: (rng.nextFloat() - 0.5) * 0.02,
+      vy: 0.02 + rng.nextFloat() * 0.02,
+      vz: (rng.nextFloat() - 0.5) * 0.02,
+      lifetime: 25,
+    });
+    if (ok >= 0) made++;
+  }
+  return made;
+}
+
 /** Water splash: splash droplets + a few bubbles. */
 export function spawnSplash(x: number, y: number, z: number, count = 12): number {
   const e = ParticleEngine.get();

@@ -23,6 +23,8 @@ import { InventoryMenu } from '../world/inventory/InventoryMenu.js';
 import { CraftingMenu } from '../world/inventory/CraftingMenu.js';
 import { FurnaceMenu } from '../world/inventory/FurnaceMenu.js';
 import { ChestMenu } from '../world/inventory/ChestMenu.js';
+import { EnchantingMenu } from '../world/inventory/EnchantingMenu.js';
+import { BrewingMenu } from '../world/inventory/BrewingMenu.js';
 import { CreativeInventory } from '../world/inventory/CreativeInventory.js';
 
 export interface WorldData {
@@ -118,6 +120,44 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   private invulnerableTicks = 0;
   /** DamageSource type of the last hit (death screen cause line). */
   private lastDamageCause = '';
+
+  /** Status effects (potion): id -> remaining ticks + amplifier. */
+  readonly effects = new Map<string, { duration: number; amplifier: number }>();
+  private effectTick = 0;
+
+  getEffectLevel(id: string): number { return this.effects.get(id)?.amplifier ?? 0; }
+  hasEffect(id: string): boolean { return this.effects.has(id); }
+  applyEffect(id: string, duration: number, amplifier = 0): void {
+    if (!id || duration <= 0) return;
+    const existing = this.effects.get(id);
+    if (existing) {
+      existing.duration = Math.max(existing.duration, duration);
+      existing.amplifier = Math.max(existing.amplifier, amplifier);
+    } else {
+      this.effects.set(id, { duration, amplifier });
+    }
+  }
+  clearEffects(): void { this.effects.clear(); }
+
+  /** LivingEntity.tickEffects for the local player (regeneration/poison/water breathing). */
+  private tickEffects(): void {
+    this.effectTick++;
+    const fireImmune = this.hasEffect('fire_resistance');
+    void fireImmune;
+    for (const [id, e] of this.effects) {
+      if (--e.duration <= 0) { this.effects.delete(id); continue; }
+      if (id === 'regeneration') {
+        const interval = Math.max(1, 50 >> Math.min(4, e.amplifier));
+        if (this.effectTick % interval === 0) this.hp = Math.min(this.maxHp, this.hp + 1);
+      } else if (id === 'poison' || id === 'wither') {
+        const interval = Math.max(1, 25 >> Math.min(4, e.amplifier));
+        if (this.effectTick % interval === 0 && this.hp > 1) this.hp = Math.max(1, this.hp - 1);
+      } else if (id === 'water_breathing') {
+        this.air = this.maxAirSupply;
+      }
+    }
+  }
+
   /** Set once when health reaches 0; cleared by respawn(). */
   private dead = false;
 
@@ -216,6 +256,10 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   damage(amount: number, source: string): void {
     if (amount <= 0 || this.hp <= 0) return;
     if (this.gamemode === 'creative') return;
+    // Fire Resistance: immune to fire/lava/hot-floor damage sources.
+    if (this.hasEffect('fire_resistance')
+      && (source === 'fire' || source === 'lava' || source === 'on_fire'
+        || source === 'in_fire' || source === 'hot_floor' || source === 'campfire')) return;
     if (this.invulnerableTicks > 0 && source !== 'starve' && source !== 'drown') return;
     let dmg = amount;
     if (!BYPASSES_ARMOR.has(source)) {
@@ -321,6 +365,7 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
     // ServerPlayer only ticks FoodData while alive: a dead player must not regenerate
     // health back above 0 (which would otherwise clear the death state).
     if (this.hp > 0) this.food.tick(this, this.difficulty, this.naturalRegen);
+    this.tickEffects();
     this.inventory.tick();
     this.cooldowns.tick();
   }
@@ -348,6 +393,7 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
     this.invulnerableTicks = 0;
     this.dead = false;
     this.lastDamageCause = '';
+    this.clearEffects();
     this.food.setFoodLevel(20);
     this.food.setSaturation(5);
     this.food.setExhaustion(0);
@@ -374,13 +420,26 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
     return this.breaking.tick(dtTicks, state, this.inventory.getSelectedItem(), underwater, 0);
   }
 
-  /** Block.playerDestroy + Block.dropResources. Returns the drops to spawn. */
-  breakBlock(stateAt: (x: number, y: number, z: number) => number, x: number, y: number, z: number): ItemStack[] {
+  /**
+   * Block.playerDestroy + Block.dropResources. Returns the drops to spawn.
+   * `noToolWear` is used by Explosion.getBlockDrops: the blast drops blocks with
+   * an empty tool, so the player's held item must not lose durability and no
+   * block-break exhaustion is applied.
+   */
+  breakBlock(
+    stateAt: (x: number, y: number, z: number) => number,
+    x: number,
+    y: number,
+    z: number,
+    noToolWear = false,
+  ): ItemStack[] {
     const state = stateAt(x, y, z);
     const held = this.inventory.getSelectedItem();
     const drops = BlockBreaking.getDrops(state, held, this.loot as LootTableApi, this.mc);
-    this.food.onBreakBlock();
-    if (held && !held.isEmpty() && held.item?.tool) held.hurtAndBreak(1);
+    if (!noToolWear) {
+      this.food.onBreakBlock();
+      if (held && !held.isEmpty() && held.item?.tool) held.hurtAndBreak(1);
+    }
     this.breaking.reset();
     return drops;
   }
@@ -403,6 +462,30 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
     const menu = new ChestMenu(0, this.inventory, rows);
     this.activeMenu = menu;
     return menu;
+  }
+
+  /** EnchantmentMenu: bookshelf power (0..15) comes from the block scan in Game. */
+  openEnchantingTable(power: number): EnchantingMenu {
+    const menu = new EnchantingMenu(0, this.inventory, power, this.random);
+    this.activeMenu = menu;
+    return menu;
+  }
+
+  /** BrewingStandMenu: five slots, brew timer/fuel advanced by Game.tickActiveMenu. */
+  openBrewingStand(): BrewingMenu {
+    const menu = new BrewingMenu(0, this.inventory, this.registry);
+    this.activeMenu = menu;
+    return menu;
+  }
+
+  /** Player.giveExperienceLevels(-levels); refuses when the player cannot pay. */
+  removeExperienceLevels(levels: number): boolean {
+    if (levels <= 0) return true;
+    if (this.experienceLevel < levels) return false;
+    this.experienceLevel -= levels;
+    this.experienceProgress = 0;
+    this.totalXp = Math.max(0, this.totalXp - levels * 7);
+    return true;
   }
   closeMenu(): void {
     if (this.activeMenu) this.activeMenu.removed(this.asMenuPlayer());

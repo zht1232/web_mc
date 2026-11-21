@@ -14,14 +14,14 @@ import json, os, re, glob
 from collections import Counter, defaultdict
 from fractions import Fraction
 
-ROOT = "G:/ck-web26/vanilla/assets/minecraft"
+ROOT = os.environ.get("MC_ASSETS", "<MC_ASSETS>")
 BS_DIR = os.path.join(ROOT, "blockstates")
 MB_DIR = os.path.join(ROOT, "models", "block")
 MI_DIR = os.path.join(ROOT, "models", "item")
 TX_DIR = os.path.join(ROOT, "textures")
-SRCV = "G:/ck-web26/src-vanilla"
-PROJ = "C:/Users/zht/Documents/Qoder/2026-11-01/4194ac07/webcraft26"
+SRCV = "src-vanilla"
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJ = os.path.dirname(OUT_DIR)
 
 FACE_DIRS = ("down", "up", "north", "south", "west", "east")
 DYE = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
@@ -964,7 +964,7 @@ for p in sorted(prop_files, key=lambda p: -len(prop_files[p]))[:30]:
 out = {
     "meta": {
         "source_assets": ROOT.replace("/", "\\"),
-        "source_jar": "G:\\ck-web26\\client-26.2.jar",
+        "source_jar": "ck-web26\\client-26.2.jar",
         "generated_by": "research/inventory.py",
         "counts": {
             "blockstate_files": len(bs),

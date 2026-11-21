@@ -481,6 +481,8 @@ console.log('\n--- 9. vertex invariants ----------------------------------------
   let sizeOk = true;
   let indexOk = true;
   let alphaOk = true;
+  let swayOk = true;
+  let sawSway = false;
   for (let layer = 0; layer < 3; layer++) {
     if (mesh.vertices[layer].length % STRIDE !== 0) sizeOk = false;
     const n = mesh.vertices[layer].length / STRIDE;
@@ -488,7 +490,11 @@ console.log('\n--- 9. vertex invariants ----------------------------------------
     for (let i = 0; i < n; i++) {
       const v = readVertex(mesh.vertices[layer], i);
       if (v.sky < 0 || v.sky > 15 || v.block < 0 || v.block > 15) lightOk = false;
-      if (v.a !== 255) alphaOk = false;
+      // Alpha is the wind weight for cutout plants/leaves (255 = static); everything else opaque.
+      if (layer === RenderLayer.CUTOUT) {
+        if (v.a < 0 || v.a > 255) swayOk = false;
+        if (v.a < 255) sawSway = true;
+      } else if (v.a !== 255) alphaOk = false;
     }
     for (let i = 0; i < mesh.indices[layer].length; i++) {
       if (mesh.indices[layer][i] >= n) indexOk = false;
@@ -496,7 +502,9 @@ console.log('\n--- 9. vertex invariants ----------------------------------------
   }
   check('vertex buffers are multiples of 24 bytes', sizeOk);
   check('sky/block light stays within 0..15', lightOk);
-  check('alpha is always 255', alphaOk);
+  check('solid/translucent alpha is always 255', alphaOk);
+  check('cutout alpha encodes the wind weight', swayOk);
+  check('plants/leaves carry a wind weight', sawSway);
   check('indices are in range', indexOk);
   check('skipped counts the chest (block entity)', mesh.skipped >= 1, `skipped=${mesh.skipped}`);
 

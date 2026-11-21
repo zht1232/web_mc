@@ -2,7 +2,7 @@
 // blocks exactly like the real game. Pure functions: no DOM, no GL, no fetch — the node test
 // (scripts/test-placement.mts) drives it with a fake level.
 //
-// Sources (all under G:/ck-web26/src-vanilla/net/minecraft):
+// Sources (all under src-vanilla/net/minecraft):
 //   world/item/BlockItem.java                    place() >= getPlacementState() >= canPlace()
 //   world/item/context/BlockPlaceContext.java    replaceClicked / getClickedPos / canPlace
 //   world/item/context/UseOnContext.java         getClickLocation / getHorizontalDirection
@@ -517,6 +517,12 @@ function canSurvive(s: PlacementSession, state: number, pos: Pos): boolean {
     return neighborFaceSturdy(s, pos, opposite(dir));
   }
 
+  // TripWireHookBlock.canSurvive: the block behind the hook must be sturdy.
+  if (cls === 'TripWireHookBlock') {
+    const dir = DIR_BY_NAME[propValue(mc, state, 'facing') ?? 'north'];
+    return neighborFaceSturdy(s, pos, opposite(dir));
+  }
+
   // DoublePlantBlock.canSurvive: lower on vegetation, upper on its lower half.
   if (cls === 'DoublePlantBlock') {
     const half = propValue(mc, state, 'half');
@@ -844,6 +850,19 @@ function ladderPlacementState(s: PlacementSession, blockName: string): number | 
   return null;
 }
 
+/** TripWireHookBlock.getStateForPlacement: FACING points away from the clicked wall. */
+function tripwireHookPlacementState(s: PlacementSession, blockName: string): number | null {
+  const mc = s.mc;
+  const pos = sessionPos(s);
+  let state = mc.stateOf(blockName);
+  for (const dir of nearestLookingDirections(s)) {
+    if (!isHorizontal(dir)) continue;
+    state = set(mc, state, 'facing', sideName(opposite(dir)));
+    if (canSurvive(s, state, pos)) return state;
+  }
+  return null;
+}
+
 function fenceGatePlacementState(s: PlacementSession, blockName: string): number {
   const mc = s.mc;
   const pos = sessionPos(s);
@@ -906,6 +925,25 @@ function stateForBlock(s: PlacementSession, blockName: string): number | null {
   if (cls.endsWith('StairBlock')) return stairsPlacementStateFor(s, blockName);
   if (cls === 'BedBlock') return bedPlacementState(s, blockName);
   if (cls === 'ButtonBlock' || cls === 'LeverBlock') return faceAttachedPlacementState(s, blockName);
+  if (cls === 'RepeaterBlock' || cls === 'ComparatorBlock') {
+    // HorizontalDirectionalBlock.getStateForPlacement: FACING is the input side, so the
+    // repeater points (outputs) away from the player who placed it.
+    const state = mc.stateOf(blockName);
+    return set(mc, state, 'facing', sideName(opposite(horizontalDirection(s.yaw))));
+  }
+  if (cls === 'ObserverBlock') {
+    // ObserverBlock.getStateForPlacement: FACING = getNearestLookingDirection().
+    const state = mc.stateOf(blockName);
+    return set(mc, state, 'facing', sideName(orderedByNearest(s.yaw, s.pitch)[0]));
+  }
+  if (cls === 'PistonBaseBlock') {
+    // PistonBaseBlock.getStateForPlacement: push side = opposite of the nearest look direction.
+    return setAll(mc, mc.stateOf(blockName), {
+      facing: sideName(opposite(orderedByNearest(s.yaw, s.pitch)[0])),
+      extended: 'false',
+    });
+  }
+  if (cls === 'TripWireHookBlock') return tripwireHookPlacementState(s, blockName);
   if (cls === 'SnowLayerBlock') return snowLayerPlacementState(s, blockName);
   if (cls === 'CarpetBlock' || cls === 'WoolCarpetBlock') return mc.stateOf(blockName);
   if (cls === 'DoublePlantBlock') return doublePlantPlacementState(s, blockName);

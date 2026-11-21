@@ -1,9 +1,0 @@
-[12:53:04] [main/INFO]: [STDOUT]: [dump] bootstrap ok
-[12:53:04] [main/INFO]: [STDOUT]: [dump] probe lookup class = Dump$LenientEmpty
-[12:53:04] [main/INFO]: [STDOUT]: [dump] probe failed: java.lang.UnsupportedOperationException: Tag TagKey[minecraft:damage_type / minecraft:is_fire] can't be dereferenced during construction
-[12:53:04] [main/INFO]: [STDOUT]: [dump] components bound: 95 registries
-[12:53:05] [main/INFO]: [STDOUT]: [dump] blocks: 1196 blocks, 32366 states, errors=0
-[12:53:05] [main/INFO]: [STDOUT]: [dump] items: 1537
-[12:53:05] [main/INFO]: [STDOUT]: [dump] entity types: 158
-[12:53:05] [main/INFO]: [STDOUT]: [dump] creative tabs written
-[12:53:05] [main/INFO]: [STDOUT]: [dump] done

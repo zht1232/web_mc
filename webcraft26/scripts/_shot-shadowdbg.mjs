@@ -1,0 +1,22 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright';
+import { launchOptions } from './lib/browser.mjs';
+const out = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../shots/diag');
+const b = await chromium.launch(launchOptions());
+const p = await (await b.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
+p.on('pageerror', (e) => console.log('ERR', String(e).slice(0, 200)));
+await p.goto('http://127.0.0.1:5174/?play', { waitUntil: 'load' });
+await p.waitForFunction(() => !!window.__mc?.running, null, { timeout: 120000 });
+await p.waitForTimeout(9000);
+await p.evaluate(() => {
+  const g = window.__mc;
+  g.level.time = 6000;
+  g.player.pitch = 30;
+  g.player.yaw = 90;
+  g.renderer.debugMode = 11;
+});
+await p.waitForTimeout(2000);
+await p.screenshot({ path: path.join(out, 'shadow-debug.png') });
+await p.evaluate(() => { window.__mc.renderer.debugMode = 0; });
+await b.close();

@@ -7,7 +7,9 @@
 // vanilla `minecraft/sounds.json` (event -> sound file list), copies the ogg files of a whitelist of events
 // into public/mc/sounds/<event>/<file>.ogg and merges the events into public/mc/sounds/index.json, which is
 // what SoundEngine loads. Events already present in index.json (the original 28) are left untouched.
-// Music and records are never imported (size). The assets directory is only read.
+// Music and records are imported too (they are the only way music.game/menu and record.* stop
+// falling back to water aliases); the size cap below covers the vanilla soundtrack.
+// The assets directory is only read.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,9 +18,14 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(root, 'public', 'mc', 'sounds');
-const ASSETS = process.env.MC_EXTERNAL ?? path.join(os.homedir(), 'AppData', 'Roaming', '.minecraft', 'assets');
+const ASSET_HOME = process.platform === 'win32' && process.env.APPDATA
+  ? process.env.APPDATA
+  : os.homedir();
+const ASSETS = process.env.MC_EXTERNAL ?? path.join(ASSET_HOME, '.minecraft', 'assets');
 const DRY = process.argv.includes('--dry');
-const MAX_BYTES = 80 * 1024 * 1024;
+const MAX_BYTES = 512 * 1024 * 1024;
+/** Music events list the whole soundtrack; two tracks per event keep the web bundle sane. */
+const musicFileLimit = (event) => event.startsWith('music.') ? 2 : Number.POSITIVE_INFINITY;
 
 const objects = JSON.parse(fs.readFileSync(path.join(ASSETS, 'indexes', '32.json'), 'utf8')).objects;
 const objectPath = (key) => {
@@ -57,6 +64,8 @@ const WANTED = [
   /^(weather\.rain(\.above)?|ambient\.(cave|underwater\.[a-z_.]+|nether_wastes\.[a-z_]+))$/,
   /^block\.(fire\.(ambient|extinguish)|lava\.(ambient|pop|extinguish)|campfire\.crackle|water\.ambient|chest\.(open|close)|barrel\.(open|close)|wooden_door\.(open|close)|iron_door\.(open|close)|fence_gate\.(open|close)|wooden_trapdoor\.(open|close)|iron_trapdoor\.(open|close)|furnace\.fire_crackle|enchantment_table\.use|lever\.click|wooden_button\.(click_on|click_off)|stone_button\.(click_on|click_off)|wooden_pressure_plate\.(click_on|click_off)|stone_pressure_plate\.(click_on|click_off)|bubble_column\.[a-z_]+|portal\.ambient|grass\.hit)$/,
   /^(ui\.button\.click|random\.(click|pop|explode|bow|break|splash|burp|levelup|orb|fizz))$/,
+  /^music\./,
+  /^music_disc\./,
 ];
 
 function resolveFiles(event, seen = new Set()) {
@@ -85,7 +94,9 @@ for (const event of names) {
   if (!WANTED.some((re) => re.test(event))) continue;
   const rels = [];
   const files = [...new Set(resolveFiles(event))];
+  const limit = musicFileLimit(event);
   for (const f of files) {
+    if (rels.length >= limit) break;
     const src = objectPath(`minecraft/sounds/${f}.ogg`);
     if (!src || !fs.existsSync(src)) { missing++; continue; }
     const size = fs.statSync(src).size;

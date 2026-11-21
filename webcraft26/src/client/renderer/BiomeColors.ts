@@ -1,4 +1,4 @@
-// Port of the vanilla biome-tint pipeline. Sources (G:/ck-web26/src-vanilla/net/minecraft):
+// Port of the vanilla biome-tint pipeline. Sources (src-vanilla/net/minecraft):
 //   world/level/ColorMapColorUtil.java        temperature/downfall -> colormap pixel
 //   world/level/GrassColor.java               GrassColor.get + getDefaultColor
 //   world/level/FoliageColor.java             FoliageColor.get + the fixed leaf colours
@@ -217,13 +217,15 @@ export class BiomeColors {
       ctx.drawImage(img, 0, 0);
       return new Uint8Array(ctx.getImageData(0, 0, img.width, img.height).data.buffer.slice(0));
     };
-    this.grassMap = await load('textures/colormap/grass.png');
-    this.foliageMap = await load('textures/colormap/foliage.png');
-    try {
-      this.dryFoliageMap = await load('textures/colormap/dry_foliage.png');
-    } catch {
-      this.dryFoliageMap = null; // optional: older packs ship without it
-    }
+    // Three independent PNG decodes: awaiting them one by one cost ~160 ms of the cold boot.
+    const [grass, foliage, dryFol] = await Promise.all([
+      load('textures/colormap/grass.png'),
+      load('textures/colormap/foliage.png'),
+      load('textures/colormap/dry_foliage.png').catch(() => null),
+    ]);
+    this.grassMap = grass;
+    this.foliageMap = foliage;
+    this.dryFoliageMap = dryFol; // optional: older packs ship without it
     this.baseCache.clear();
   }
 

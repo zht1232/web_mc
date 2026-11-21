@@ -18,6 +18,8 @@ export abstract class AbstractCraftingMenu extends AbstractContainerMenu {
   protected readonly registry: ItemRegistry;
   readonly width: number;
   readonly height: number;
+  /** Stats.ITEM_CRAFTED hook wired by the game layer. */
+  onCrafted?: (itemName: string, count: number) => void;
   /** Guards against re-entrant result recomputation while consuming ingredients. */
   private consuming = false;
 
@@ -40,6 +42,7 @@ export abstract class AbstractCraftingMenu extends AbstractContainerMenu {
   protected addResultSlot(x: number, y: number): ResultSlot {
     const slot = this.addSlot(new ResultSlot(this.resultSlots, 0, x, y)) as ResultSlot;
     slot.onTakeRecipe = (player) => this.consumeCraftingIngredients(player as MenuPlayer | null);
+    slot.onCrafted = (name, count) => this.onCrafted?.(name, count);
     return slot;
   }
 

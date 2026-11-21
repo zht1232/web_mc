@@ -27,6 +27,9 @@ export class Creeper extends Monster {
   explode(): void {
     const world = this.getWorld();
     const power = this.powered ? 6 : 3;
+    // Explosion.finalizeExplosion skips the source entity: remove the creeper
+    // first so the blast cannot damage (and drop loot for) the creeper itself.
+    this.remove();
     if (world) {
       if (world.explode) {
         world.explode(this.x, this.y + 0.5, this.z, power);
@@ -41,6 +44,5 @@ export class Creeper extends Monster {
         }
       }
     }
-    this.remove();
   }
 }

@@ -10,11 +10,11 @@ import type { SoundEngine, SoundLevel } from './SoundEngine.js';
 
 export type MusicSituation = 'day' | 'night' | 'nether' | 'end' | 'creative' | 'menu' | 'underwater';
 
-/** Vanilla music event ids (not present as ogg in this pack; see report). */
+/** Vanilla music event ids (imported from the launcher assets by scripts/build-sounds.mjs). */
 export const DEFAULT_MUSIC_TRACKS: Record<MusicSituation, readonly string[]> = {
   day: ['music.game', 'music.creative'],
   night: ['music.game', 'music.creative'],
-  nether: ['music.nether'],
+  nether: ['music.nether.nether_wastes', 'music.nether.crimson_forest', 'music.nether.soul_sand_valley', 'music.nether.basalt_deltas'],
   end: ['music.end'],
   creative: ['music.creative'],
   menu: ['music.menu'],

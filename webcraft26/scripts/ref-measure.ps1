@@ -1,5 +1,5 @@
 param(
-  [string]$Dir = 'G:\web_mc\webcraft26\shots\ref'
+  [string]$Dir = 'webcraft26\shots\ref'
 )
 
 Add-Type -AssemblyName System.Drawing

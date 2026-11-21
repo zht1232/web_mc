@@ -10,7 +10,11 @@ import {
 } from './vanmodel.mjs';
 import { packModels, decodeStates, POS_SCALE, UV_SCALE } from './statepack.mjs';
 
-const SRC = process.env.MC_ASSETS || 'G:/ck-web26/vanilla/assets/minecraft';
+const SRC = process.env.MC_ASSETS;
+if (!SRC) {
+  console.error('Set MC_ASSETS to the assets/minecraft directory extracted from your own Minecraft 26.2 client.jar.');
+  process.exit(1);
+}
 const OUT = path.resolve('public/mc');
 
 // Expected totals, measured in research/blockstate-inventory.json. If a change

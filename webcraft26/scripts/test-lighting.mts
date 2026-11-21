@@ -1,6 +1,6 @@
 // Node test for src/client/EnvironmentLighting.ts (sky timeline + lightmap).
 //
-//   cd G:\web_mc\webcraft26 && npx tsx scripts/test-lighting.mts
+//   cd webcraft26 && npx tsx scripts/test-lighting.mts
 //
 // Expected values are hand-derived from the decompiled sources, not from the
 // implementation:

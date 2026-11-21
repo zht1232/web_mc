@@ -1,0 +1,33 @@
+﻿import { chromium } from "playwright";
+import { launchOptions } from "./lib/browser.mjs";
+const b = await chromium.launch(launchOptions());
+const p = await (await b.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })).newPage();
+await p.goto("http://127.0.0.1:5174/?play&perf=0", { waitUntil: "load" });
+await p.waitForFunction(() => !!window.__mc?.running, null, { timeout: 120000 });
+await p.waitForTimeout(6000);
+const place = async () => {
+  await p.evaluate(async () => {
+    const g = window.__mc;
+    const { Vec3 } = await import("/src/vanilla/core/Geometry.ts");
+    const px = Math.floor(g.player.pos.x), pz = Math.floor(g.player.pos.z);
+    const gy = g.level.getHeight(px, pz);
+    g.player.pos = new Vec3(px + 0.5, gy + 1.6, pz + 0.5);
+    g.player.vel = new Vec3(0, 0, 0);
+    g.player.yaw = 45; g.player.pitch = 80;
+  });
+  await p.waitForTimeout(1600);
+};
+await p.evaluate(() => { window.__mc.setShaders(true); window.__mc.setShaderQuality("high"); window.__mc.renderer.swayEnabled = false; });
+await place();
+await p.screenshot({ path: "shots/_blur-A-taa-fxaa.png" });
+await p.evaluate(() => { window.__mc.renderer.post.taaOff = true; });
+await p.waitForTimeout(1200);
+await p.screenshot({ path: "shots/_blur-B-fxaa.png" });
+await p.evaluate(() => { window.__mc.renderer.post.taaOff = false; window.__mc.setShaderQuality("low"); });
+await p.waitForTimeout(1200);
+await p.screenshot({ path: "shots/_blur-C-low.png" });
+await p.evaluate(() => { window.__mc.setShaderQuality("high"); window.__mc.setShaders(false); });
+await p.waitForTimeout(1200);
+await p.screenshot({ path: "shots/_blur-D-off.png" });
+console.log("done");
+await b.close();

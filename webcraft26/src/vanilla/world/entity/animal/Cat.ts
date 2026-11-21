@@ -13,8 +13,12 @@ export class Cat extends Animal {
     super(type, level);
     this.speed = 0.3;
     this.maxHealth = 10; this.health = 10;
+    this.baseScale = 0.8;
     this.scale = 0.8;
   }
+
+  /** ItemTags.CAT_FOOD (Ocelot inherits). */
+  protected getTemptingItems(): readonly string[] { return ['cod', 'salmon']; }
 }
 
 /** Source: net.minecraft.world.entity.animal.Ocelot. */

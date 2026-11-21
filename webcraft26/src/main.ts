@@ -14,15 +14,21 @@ const app = document.getElementById('app')!;
 
 const loading = document.createElement('div');
 loading.className = 'loading-screen';
+// The packaged mojangstudios.png is the square "interleaved" mark (MOJ / STU / ANG / DIOS
+// stacked in four rows). The user wants the horizontal wordmark: four slices of that same
+// atlas are laid out on one baseline with CSS (`background-position`), so the pixels stay the
+// official asset and nothing is redrawn. Offsets are source-pixel coordinates of the PNG.
 loading.innerHTML = `
-  <div class="loading-center">
-    <img class="loading-logo" src="/mc/textures/gui/title/mojangstudios.png" alt="Mojang Studios" />
-  </div>
-  <div class="loading-bottom">
-    <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
-    <div class="loading-row">
-      <div class="loading-status" id="loading-status">正在加载…</div>
-      <div class="loading-percent" id="loading-percent">0%</div>
+  <div class="loading-stack">
+    <div class="loading-logo" role="img" aria-label="Mojang Studios">
+      <i class="wm wm-moj"></i><i class="wm wm-ang"></i><i class="wm wm-stu"></i><i class="wm wm-dios"></i>
+    </div>
+    <div class="loading-progress">
+      <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
+      <div class="loading-row">
+        <div class="loading-status" id="loading-status">正在加载…</div>
+        <div class="loading-percent" id="loading-percent">0%</div>
+      </div>
     </div>
   </div>
 `;
@@ -32,6 +38,15 @@ const fill = loading.querySelector('#loading-fill') as HTMLDivElement;
 const status = loading.querySelector('#loading-status') as HTMLDivElement;
 const percent = loading.querySelector('#loading-percent') as HTMLDivElement;
 
+/**
+ * Cold-boot breakdown, read by `scripts/perf-audit.mjs` (and inspectable in devtools as
+ * `__bootTimings`). Every `Game.onStatus` stage gets a timestamp so a slow boot can be
+ * attributed to one asset load instead of guessed at.
+ */
+const bootTimings: { stage: string; at: number; progress: number }[] = [];
+(window as unknown as { __bootTimings: unknown }).__bootTimings = bootTimings;
+const bootStart = performance.now();
+
 async function boot() {
   const params = new URLSearchParams(location.search);
   const workers = params.has('workers') ? Number(params.get('workers')) : undefined;
@@ -39,6 +54,7 @@ async function boot() {
   const seed = params.get('seed') ?? undefined;
   const game = new Game(app, seed, workers);
   game.onStatus = (text, progress) => {
+    bootTimings.push({ stage: text, at: +(performance.now() - bootStart).toFixed(1), progress });
     const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
     fill.style.width = `${pct}%`;
     percent.textContent = `${pct}%`;
@@ -47,6 +63,7 @@ async function boot() {
 
   try {
     await game.init();
+    bootTimings.push({ stage: 'ready', at: +(performance.now() - bootStart).toFixed(1), progress: 1 });
     loading.classList.add('hidden');
     setTimeout(() => loading.remove(), 400);
     game.start();

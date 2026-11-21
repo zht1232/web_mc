@@ -7,6 +7,7 @@
 import type { GuiGraphics } from '../GuiGraphics.js';
 import { Screen } from './Screen.js';
 import { EditBox } from '../components/EditBox.js';
+import { Button } from '../components/Button.js';
 import { wrapText } from '../components/wordWrap.js';
 import {
   CHAT_EDIT_X,
@@ -39,8 +40,20 @@ export class ChatScreen extends Screen {
     while (this.chatLines.length > 200) this.chatLines.shift();
   }
 
+  private get touch(): boolean { return !!this.env.deps.touchInput; }
+
+  /**
+   * 输入框的 y（GUI 坐标）。
+   * 触屏：放到屏幕上部 18% 处 —— 底部会被系统手势条、触屏按钮和软键盘盖住，
+   * 手机上也没有 Esc 可以退出，所以另外加一个「完成」按钮。
+   */
+  private inputY(): number {
+    return this.touch ? Math.max(24, Math.round(this.height * 0.18)) : this.height - 12;
+  }
+
   protected build(): void {
-    this.input = new EditBox(CHAT_EDIT_X, this.height - 12, this.width - 4, CHAT_EDIT_HEIGHT, this.t('chat.editBox'))
+    const y = this.inputY();
+    this.input = new EditBox(CHAT_EDIT_X, y, this.width - 4, CHAT_EDIT_HEIGHT, this.t('chat.editBox'))
       .setMaxLength(CHAT_EDIT_MAX_LENGTH)
       .setBordered(false)
       .setCanLoseFocus(false);
@@ -48,17 +61,25 @@ export class ChatScreen extends Screen {
     this.input.setFocused(true);
     this.addRenderableWidget(this.input);
     this.setFocusedWidget(this.input);
+    if (this.touch) {
+      // 手机没有 Esc：给一个显式的「完成」（发送并关闭）
+      this.addRenderableWidget(new Button(this.width - 48, Math.max(4, y - 24), 44, 20, this.t('gui.done'), () => this.submit()));
+    }
   }
 
   protected renderBackground(g: GuiGraphics, _mx: number, _my: number, _pt: number): void {
     // Vanilla chat box: a dark strip behind the input, plus per-line backdrops.
-    g.fill(CHAT_EDIT_X - 2, this.height - 14, this.width - 2, this.height - 2, 0x80000000);
+    const y = this.inputY();
+    g.fill(CHAT_EDIT_X - 2, y - 2, this.width - 2, y + CHAT_EDIT_HEIGHT, 0x80000000);
   }
 
   protected renderForeground(g: GuiGraphics, _mx: number, _my: number, _pt: number): void {
     const start = Math.max(0, this.chatLines.length - CHAT_MAX_LINES - this.scroll);
     const visible = this.chatLines.slice(start, start + CHAT_MAX_LINES);
-    let y = this.height - 14 - visible.length * CHAT_LINE_HEIGHT - 2;
+    // 桌面：历史消息在输入框上方往上堆（vanilla）；触屏输入框在上面，消息往下排。
+    let y = this.touch
+      ? this.inputY() + CHAT_EDIT_HEIGHT + 6
+      : this.inputY() - 2 - visible.length * CHAT_LINE_HEIGHT - 2;
     for (const line of visible) {
       g.fill(CHAT_EDIT_X - 2, y - 1, CHAT_EDIT_X - 2 + CHAT_WIDTH, y + CHAT_LINE_HEIGHT, CHAT_BACKGROUND);
       g.drawString(line, CHAT_EDIT_X, y, 0xffffffff, true);

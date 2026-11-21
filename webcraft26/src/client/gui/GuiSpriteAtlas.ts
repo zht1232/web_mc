@@ -249,6 +249,21 @@ export const CORE_SPRITES = [
   'widget/slot_frame', 'widget/cross_button', 'widget/cross_button_highlighted',
   'tooltip/background', 'tooltip/frame',
   'toast/system', 'toast/advancement', 'toast/recipe', 'toast/tutorial',
+  'header_separator', 'footer_separator',
+  'container/slot',
+  // Statistics screen (StatsScreen): column headers, sort arrows and per-row icons.
+  'statistics/block_mined', 'statistics/item_broken', 'statistics/item_crafted',
+  'statistics/item_used', 'statistics/item_picked_up', 'statistics/item_dropped',
+  'statistics/header', 'statistics/sort_up', 'statistics/sort_down',
+  // Enchanting table offer buttons.
+  'container/enchanting_table/level_1', 'container/enchanting_table/level_2',
+  'container/enchanting_table/level_3', 'container/enchanting_table/level_1_disabled',
+  'container/enchanting_table/level_2_disabled', 'container/enchanting_table/level_3_disabled',
+  'container/enchanting_table/enchantment_slot', 'container/enchanting_table/enchantment_slot_disabled',
+  'container/enchanting_table/enchantment_slot_highlighted',
+  // Brewing stand: fuel bar, rising progress column, bubbles + fuel slot outline.
+  'container/brewing_stand/brew_progress', 'container/brewing_stand/bubbles',
+  'container/brewing_stand/fuel_length', 'container/slot/brewing_fuel',
   'container/slot_highlight_back', 'container/slot_highlight_front',
   // Every creative tab sprite (columns 1..7, selected/unselected, top/bottom). Only preloading
   // variant 1 left tabs 2..7 with no cached sprite, so they fell back to flat grey rectangles.

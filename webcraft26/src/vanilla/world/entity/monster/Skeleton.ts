@@ -7,6 +7,7 @@
 import { Monster } from './Monster.js';
 import { RangedBowAttackGoal } from '../ai/goal/RangedBowAttackGoal.js';
 import { Arrow } from '../projectile/Arrow.js';
+import { EquipmentSlot } from '../EquipmentSlot.js';
 import { entityType } from '../EntityType.js';
 import type { EntityType } from '../EntityType.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
@@ -18,10 +19,19 @@ export class Skeleton extends Monster {
     this.speed = 0.25;
     this.maxHealth = 20; this.health = 20;
     this.attackDamage = 2;
+    // SkeletonRenderer's bow layer is chosen from the actual main-hand equipment.
+    this.setItemSlot(EquipmentSlot.MAINHAND, { id: 'minecraft:bow', count: 1 });
   }
 
   protected registerAttackGoals(): void {
     this.goalSelector.addGoal(2, new RangedBowAttackGoal(this, 1.0));
+  }
+
+  override finalizeSpawn(): void {
+    const type = this.getTypeName();
+    if (type === 'skeleton' || type === 'stray' || type === 'bogged' || type === 'parched') {
+      this.equipRandomArmor(0.10);
+    }
   }
 
   rangedAttack(target: Targetable): void {

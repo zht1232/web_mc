@@ -20,4 +20,9 @@ export class Zombie extends Monster {
   protected registerAttackGoals(): void {
     this.goalSelector.addGoal(2, new MeleeAttackGoal(this, 1.0));
   }
+
+  override finalizeSpawn(): void {
+    const type = this.getTypeName();
+    if (type === 'zombie' || type === 'husk') this.equipRandomArmor(0.15);
+  }
 }

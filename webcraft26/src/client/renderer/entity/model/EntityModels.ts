@@ -115,6 +115,21 @@ export const SheepModel: BakedModel = withAnimator(bakeModel(
     B(-2, 0, -2, 4, 12, 4, 0, 16), 3, 7, -5, 64, 32, false, true),
 ), quadrupedAnim);
 
+/**
+ * Source: net.minecraft.client.model.animal.sheep.SheepFurModel.createFurLayer.
+ * Same skeleton as SheepModel, but the head is the short 6x6x6 wool cap (the bare
+ * face stays visible). Vanilla inflates the head by 0.6, the body by 1.75 and the
+ * legs by 0.5 so the layer hides the sheared skin underneath.
+ */
+export const SheepFurModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32, [
+  P('head', 0, 6, -8, [B(-3, -4, -4, 6, 6, 6, 0, 0, false, 0.6)]),
+  P('body', 0, 5, 2, [B(-4, -10, -7, 8, 16, 6, 28, 8, false, 1.75)], { rx: HALF_PI }),
+  P('right_hind_leg', -3, 12, 7, [B(-2, 0, -2, 4, 12, 4, 0, 16, true, 0.5)]),
+  P('left_hind_leg', 3, 12, 7, [B(-2, 0, -2, 4, 12, 4, 0, 16, false, 0.5)]),
+  P('right_front_leg', -3, 12, -5, [B(-2, 0, -2, 4, 12, 4, 0, 16, true, 0.5)]),
+  P('left_front_leg', 3, 12, -5, [B(-2, 0, -2, 4, 12, 4, 0, 16, false, 0.5)]),
+])), quadrupedAnim);
+
 /** Source: net.minecraft.client.model.animal.cow.CowModel.createBaseCowModel. */
 export const CowModel: BakedModel = withAnimator(bakeModel(makeModel(64, 64, [
   P('head', 0, 4, -8, [
@@ -209,6 +224,60 @@ export const PlayerModel: BakedModel = withAnimator(bakeModel(humanoid(
   0, 0, 2, 12, 5, 1.9,
 )), humanoidAnim);
 
+// ---------------------------------------------------------------------------
+// Humanoid armor layers (net.minecraft.client.model.HumanoidArmorModel)
+// ---------------------------------------------------------------------------
+
+function armorHeadAnim(model: BakedModel, ctx: AnimContext): void {
+  const head = pose(model, 'head');
+  head.rx = ctx.headPitch;
+  head.ry = ctx.headYaw;
+}
+
+function armorArmsAnim(model: BakedModel, ctx: AnimContext): void {
+  const ap = ctx.limbSwing, as = ctx.limbSwingAmount;
+  const rightArm = pose(model, 'right_arm');
+  const leftArm = pose(model, 'left_arm');
+  rightArm.rx = Math.cos(ap * 0.6662 + Math.PI) * 2.0 * as * 0.5;
+  leftArm.rx = Math.cos(ap * 0.6662) * 2.0 * as * 0.5;
+  bobModelPart(rightArm, ctx.ageInTicks, 1.0);
+  bobModelPart(leftArm, ctx.ageInTicks, -1.0);
+}
+
+function armorLegsAnim(model: BakedModel, ctx: AnimContext): void {
+  const ap = ctx.limbSwing, as = ctx.limbSwingAmount;
+  const rightLeg = pose(model, 'right_leg');
+  const leftLeg = pose(model, 'left_leg');
+  rightLeg.rx = Math.cos(ap * 0.6662) * 1.4 * as;
+  leftLeg.rx = Math.cos(ap * 0.6662 + Math.PI) * 1.4 * as;
+  rightLeg.ry = 0.005; leftLeg.ry = -0.005;
+  rightLeg.rz = 0.005; leftLeg.rz = -0.005;
+}
+
+/** Helmet layer (equipment/humanoid texture, head UV 0,0, inflated by 1.0). */
+export const ArmorHelmetModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32, [
+  P('head', 0, 0, 0, [B(-4, -8, -4, 8, 8, 8, 0, 0, false, 1.0)]),
+])), armorHeadAnim);
+
+/** Chestplate layer (body + arms, equipment/humanoid texture, inflated by 1.0). */
+export const ArmorChestModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32, [
+  P('body', 0, 0, 0, [B(-4, 0, -2, 8, 12, 4, 16, 16, false, 1.0)]),
+  P('right_arm', -5, 2, 0, [B(-3, -2, -2, 4, 12, 4, 40, 16, false, 1.0)]),
+  P('left_arm', 5, 2, 0, [B(-1, -2, -2, 4, 12, 4, 40, 16, true, 1.0)]),
+])), armorArmsAnim);
+
+/** Leggings layer (legs, humanoid_leggings texture, inflated by 0.5). */
+export const ArmorLegsModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32, [
+  P('right_leg', -2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 16, false, 0.5)]),
+  P('left_leg', 2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 16, true, 0.5)]),
+])), armorLegsAnim);
+
+/** Boots layer (legs, equipment/humanoid texture, inflated by 1.0). */
+export const ArmorBootsModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32, [
+  P('right_leg', -2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 16, false, 1.0)]),
+  P('left_leg', 2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 16, true, 1.0)]),
+])), armorLegsAnim);
+
 /** Source: net.minecraft.client.model.monster.zombie.ZombieModel / GaintZombie family. */
 export const ZombieModel: BakedModel = withAnimator(bakeModel(humanoid(
   64, 64,
@@ -233,48 +302,13 @@ export const ZombieModel: BakedModel = withAnimator(bakeModel(humanoid(
   bobModelPart(leftArm, ctx.ageInTicks, -1.0);
 });
 
-/** Source: net.minecraft.client.model.monster.skeleton.SkeletonModel.setupAnim + BOW_AND_ARROW arm pose. */
-// Bow tints: arm UV (40,16) texels average ~147/255 (0.576); tint compensates so the wood
-// lands on vanilla bow brown (~#6b4a29) and the string on near-white.
-const BOW_WOOD = [0.73, 0.5, 0.28] as const;
-const BOW_STRING = [1.6, 1.6, 1.5] as const;
+/** Source: net.minecraft.client.model.monster.skeleton.SkeletonModel.setupAnim. */
+// The bow is an equipment layer (SkeletonRenderer.getLayers), not a model child: it is drawn
+// only while the skeleton's main hand actually contains a bow.
 export const SkeletonModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32, [
   P('head', 0, 0, 0, [B(-4, -8, -4, 8, 8, 8, 0, 0)]),
   P('body', 0, 0, 0, [B(-4, 0, -2, 8, 12, 4, 16, 16)]),
-  // The skeleton is always rendered in BOW_AND_ARROW, so the bow travels with the right arm.
-  // Three-segment stave (grip + two 2-segment limbs curving toward the string) reads as a real
-  // bow at gameplay distance. All bow boxes sample the arm's UV region (40,16 — the only large
-  // fully-opaque area of skeleton.png; the previous straight stave sampled transparent texels
-  // and rendered near-black). String = 4 thin segments so each box's UV unwrap (2*(d+w) wide)
-  // still fits inside that opaque region. Both use per-part tint (ModelBox.append).
-  // In the aim pose (arm rx = -PI/2) the arm's local +z maps to world-up and local +y to the
-  // shooter side, so limbs rotate rx = -/+ to curve the tips back toward the string.
-  P('right_arm', -5, 2, 0, [B(-1, -2, -1, 2, 12, 2, 40, 16)], {}, [
-    {
-      name: 'bow', pose: { x: 0, y: 10, z: 1 },
-      boxes: [B(-0.5, -0.5, -1.5, 1, 1, 3, 40, 16)], tint: BOW_WOOD,
-      children: [
-        {
-          name: 'bow_limb_top1', pose: { x: 0, y: 0, z: 1.5, rx: -0.25 },
-          boxes: [B(-0.5, -0.5, 0, 1, 1, 2.5, 40, 16)], tint: BOW_WOOD,
-          children: [
-            { name: 'bow_limb_top2', pose: { x: 0, y: 0, z: 2.5, rx: -0.25 }, boxes: [B(-0.5, -0.5, 0, 1, 1, 2.5, 40, 16)], tint: BOW_WOOD },
-          ],
-        },
-        {
-          name: 'bow_limb_bot1', pose: { x: 0, y: 0, z: -1.5, rx: 0.25 },
-          boxes: [B(-0.5, -0.5, -2.5, 1, 1, 2.5, 40, 16)], tint: BOW_WOOD,
-          children: [
-            { name: 'bow_limb_bot2', pose: { x: 0, y: 0, z: -2.5, rx: 0.25 }, boxes: [B(-0.5, -0.5, -2.5, 1, 1, 2.5, 40, 16)], tint: BOW_WOOD },
-          ],
-        },
-        { name: 'bow_string_0', boxes: [B(-0.2, 1.7, -6.1, 0.4, 0.4, 3.05, 40, 16)], tint: BOW_STRING },
-        { name: 'bow_string_1', boxes: [B(-0.2, 1.7, -3.05, 0.4, 0.4, 3.05, 40, 16)], tint: BOW_STRING },
-        { name: 'bow_string_2', boxes: [B(-0.2, 1.7, 0, 0.4, 0.4, 3.05, 40, 16)], tint: BOW_STRING },
-        { name: 'bow_string_3', boxes: [B(-0.2, 1.7, 3.05, 0.4, 0.4, 3.05, 40, 16)], tint: BOW_STRING },
-      ],
-    },
-  ]),
+  P('right_arm', -5, 2, 0, [B(-1, -2, -1, 2, 12, 2, 40, 16)]),
   P('left_arm', 5, 2, 0, [B(-1, -2, -1, 2, 12, 2, 40, 16, true)]),
   P('right_leg', -2, 12, 0, [B(-1, 0, -1, 2, 12, 2, 0, 16)]),
   P('left_leg', 2, 12, 0, [B(-1, 0, -1, 2, 12, 2, 0, 16, true)]),
@@ -858,3 +892,87 @@ export const ItemCubeModel: BakedModel = singleBoxModel(-2, 20, -2, 4, 4, 4, 0, 
 
 /** Thin elongated box used for arrows (ArrowRenderer). */
 export const ArrowModel: BakedModel = singleBoxModel(-0.5, 20, -8, 1, 1, 16, 0, 0, 16, 16);
+
+// ---------------------------------------------------------------------------
+// Primed TNT (TntRenderer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Vanilla TNT is a block, not an entity-unwrapped box: each of its six faces
+ * samples a full 16x16 block texture (tnt_side / tnt_top / tnt_bottom). The
+ * generic box baker produces cross-layout UVs, so the cube is emitted here as
+ * six explicit quads with 0..1 UVs.
+ *
+ * The quad is authored in plain world-like coordinates (y = 0..1 sits on the
+ * entity's feet), then pre-transformed by the inverse of EntityRenderer's root
+ * matrix (x -> -x, y -> 1.501 - y). The root transform would otherwise mirror
+ * the TNT lettering upside down; pre-applying it keeps the block texture
+ * upright and the cube at world y = 0..1.
+ */
+function tntFace(
+  x0: number, y0: number, z0: number,
+  x1: number, y1: number, z1: number,
+  x2: number, y2: number, z2: number,
+  x3: number, y3: number, z3: number,
+  shade: number,
+): number[] {
+  // Corner order is (bottom-right, bottom-left, top-left, top-right) as seen
+  // from outside each face, so u runs 1 -> 0 to keep the lettering readable.
+  const uvs: readonly [number, number][] = [[1, 1], [0, 1], [0, 0], [1, 0]];
+  const xs = [x0, x1, x2, x3], ys = [y0, y1, y2, y3], zs = [z0, z1, z2, z3];
+  const order = [0, 1, 2, 0, 2, 3];
+  const out: number[] = [];
+  for (const i of order) {
+    out.push(-xs[i], 1.501 - ys[i], zs[i], uvs[i][0], uvs[i][1], shade);
+  }
+  return out;
+}
+
+function manualModel(verts: number[]): BakedModel {
+  const model = bakeModel({ texW: 1, texH: 1, children: [{ name: 'cube' }] });
+  model.parts[0].verts = new Float32Array(verts);
+  model.vertexCount = verts.length / 6;
+  return model;
+}
+
+const TNT_LO = 0;
+const TNT_HI = 1;
+
+/** TntRenderer base cube (side texture, all four sides). */
+export const TntModel: BakedModel = manualModel([
+  // north (z = -0.5)
+  ...tntFace(-0.5, TNT_LO, -0.5, 0.5, TNT_LO, -0.5, 0.5, TNT_HI, -0.5, -0.5, TNT_HI, -0.5, 0.8),
+  // south (z = +0.5)
+  ...tntFace(0.5, TNT_LO, 0.5, -0.5, TNT_LO, 0.5, -0.5, TNT_HI, 0.5, 0.5, TNT_HI, 0.5, 0.8),
+  // west (x = -0.5)
+  ...tntFace(-0.5, TNT_LO, 0.5, -0.5, TNT_LO, -0.5, -0.5, TNT_HI, -0.5, -0.5, TNT_HI, 0.5, 0.6),
+  // east (x = +0.5)
+  ...tntFace(0.5, TNT_LO, -0.5, 0.5, TNT_LO, 0.5, 0.5, TNT_HI, 0.5, 0.5, TNT_HI, -0.5, 0.6),
+]);
+
+/** TntRenderer top cap: slightly above the cube to avoid z-fighting. */
+export const TntTopModel: BakedModel = manualModel(
+  tntFace(-0.5, TNT_HI + 0.01, -0.5, 0.5, TNT_HI + 0.01, -0.5, 0.5, TNT_HI + 0.01, 0.5, -0.5, TNT_HI + 0.01, 0.5, 1.0),
+);
+
+/** TntRenderer bottom cap. */
+export const TntBottomModel: BakedModel = manualModel(
+  tntFace(-0.5, TNT_LO - 0.01, 0.5, 0.5, TNT_LO - 0.01, 0.5, 0.5, TNT_LO - 0.01, -0.5, -0.5, TNT_LO - 0.01, -0.5, 0.5),
+);
+
+// ---------------------------------------------------------------------------
+// Fishing bobber (FishingHookRenderer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Two tiny boxes (white lower half, red upper half) sampled from the 1x1 white
+ * texture and tinted per part. Model units match the arrow size: y=20..22 maps
+ * to ~0.13-0.25 blocks above the entity position through the root transform.
+ */
+export const FishingBobberModel: BakedModel = bakeModel(makeModel(16, 16, [
+  { name: 'bottom', pose: { x: 0, y: 20, z: 0 }, boxes: [B(-1, 0, -1, 2, 1, 2, 0, 0)], tint: [1, 1, 1] },
+  { name: 'top', pose: { x: 0, y: 21, z: 0 }, boxes: [B(-1, 0, -1, 2, 1, 2, 0, 0)], tint: [0.85, 0.15, 0.15] },
+]));
+
+/** Thrown egg (ThrownEggRenderer): small off-white box. */
+export const EggModel: BakedModel = singleBoxModel(-2, 19, -2, 4, 5, 4, 0, 0, 16, 16);

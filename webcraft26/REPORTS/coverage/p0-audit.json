@@ -1,0 +1,98 @@
+{
+  "generatedAt": "2026-11-21T15:19:54.802Z",
+  "total": 13,
+  "gaps": 0,
+  "results": [
+    {
+      "id": "P0-01",
+      "area": "entities",
+      "title": "掉落物渲染使用占位 cube，而不是物品模型/图标",
+      "status": "PASS",
+      "evidence": "已使用真实物品模型"
+    },
+    {
+      "id": "P0-02",
+      "area": "inventory",
+      "title": "创造物品栏没有盔甲/副手/合成/预览槽位",
+      "status": "PASS",
+      "evidence": "创造屏包含装备/副手/合成/预览槽位"
+    },
+    {
+      "id": "P0-03",
+      "area": "inventory",
+      "title": "创造格点击绕过父类拖放状态机，抬起不会 PICKUP",
+      "status": "PASS",
+      "evidence": "创造格点击复用父类状态机"
+    },
+    {
+      "id": "P0-04",
+      "area": "inventory",
+      "title": "空栈（count=0 但 item 非空）仍被手部和 HUD 当成有物品",
+      "status": "PASS",
+      "evidence": "空栈已统一按 isEmpty() 处理"
+    },
+    {
+      "id": "P0-05",
+      "area": "mobs",
+      "title": "TemptGoal 不检查玩家手持食物，动物无条件跟随",
+      "status": "PASS",
+      "evidence": "TemptGoal 检查食物"
+    },
+    {
+      "id": "P0-06",
+      "area": "mobs",
+      "title": "NearestAttackableTargetGoal 没有创造/旁观/Peaceful 过滤",
+      "status": "PASS",
+      "evidence": "目标选择过滤创造/旁观"
+    },
+    {
+      "id": "P0-07",
+      "area": "mobs",
+      "title": "苦力怕膨胀/爆炸没有创造模式、难度、mobGriefing 判定",
+      "status": "PASS",
+      "evidence": "爆炸有模式/规则判定"
+    },
+    {
+      "id": "P1-08",
+      "area": "models",
+      "title": "羊毛层 body 膨胀 0.6，原版 1.75",
+      "status": "PASS",
+      "evidence": "羊毛 body 尺寸已修正"
+    },
+    {
+      "id": "P0-09",
+      "area": "models",
+      "title": "骷髅弓是模型内置件，isHoldingBow 永远为 true",
+      "status": "PASS",
+      "evidence": "没有生物手持物 layer"
+    },
+    {
+      "id": "P1-10",
+      "area": "audio",
+      "title": "没有 music/record 资源，music.* 被别名到水/水下音效",
+      "status": "PASS",
+      "evidence": "music/record 目录=true，索引事件=31，music 别名=true"
+    },
+    {
+      "id": "P1-11",
+      "area": "render",
+      "title": "天空/地形同期，但 GL clear 与天空 disc 边缘可能在日落露底",
+      "status": "PASS",
+      "evidence": "terrainForward=true，skyForward=true，clear 用原始 fog=false，skyDisc 512 裁边=false"
+    },
+    {
+      "id": "P1-12",
+      "area": "render",
+      "title": "阴影乘子作用在整张 lightmap，火把光被硬切",
+      "status": "PASS",
+      "evidence": "阴影只影响天光项"
+    },
+    {
+      "id": "P1-13",
+      "area": "gui",
+      "title": "主界面全景是 2D strip，不是 cube map",
+      "status": "PASS",
+      "evidence": "已使用 cube map"
+    }
+  ]
+}

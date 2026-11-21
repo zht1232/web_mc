@@ -53,6 +53,13 @@ interface RegionGpu {
   dirty: boolean;
   minY: number;
   maxY: number;
+  /**
+   * Lowest surface height of the 16 chunks in this region (the shadow pass skips regions that
+   * cannot see the sun). Cached: recomputing it per frame meant 16 chunks x 256 columns x 2
+   * cascades of array reads, ~2.4 ms of the main thread every frame while standing still.
+   */
+  minSurface: number;
+  surfaceDirty: boolean;
   /** Reused staging buffers (fresh arrays per rebuild caused GC hitches). */
   scratchV: Uint8Array;
   scratchI: Uint32Array;
@@ -148,6 +155,8 @@ export class LevelRenderer {
   private readonly lightDir: [number, number, number] = [0, 1, 0];
   private readonly sunColor: [number, number, number] = [1, 1, 1];
   private shadowsActive = false;
+  /** Sun elevation factor for the shadow term (0 at night, so no moon shadows). */
+  private shadowDay = 0;
   /** Diagnostics for the Phase B acceptance test (sections/draws submitted to the shadow map). */
   readonly shadowStats = { sections: 0, draws: 0, size: 0 };
 
@@ -163,6 +172,11 @@ export class LevelRenderer {
   private readonly shadowLight: [number, number, number] = [0, 1, 0];
   private lastShadowSize = 0;
   private readonly lastShadowMatrix = new Float32Array(16);
+  /**
+   * Waving foliage (Complementary WAVING_BLOCKS, see SectionMesher). On by default; the TAA
+   * stability test turns it off because a static camera is otherwise never pixel-identical.
+   */
+  swayEnabled = true;
 
   private readonly view = new Float32Array(16);
   private readonly proj = new Float32Array(16);
@@ -303,8 +317,10 @@ export class LevelRenderer {
     return {
       tint: (stateId, tintIndex, x, y, z) => {
         if (tintIndex < 0) return [1, 1, 1];
-        const biome = level.getBiome(x, y, z);
         const block = this.mc.blockOf(stateId).name;
+        // RedStoneWireBlock.getColorForPower / COLORS: the dust texture is greyscale.
+        if (block === 'redstone_wire') return redstoneWireTint(this.mc.getProp(stateId, 'power'));
+        const biome = level.getBiome(x, y, z);
         // BlockColors.createDefault(): leaves/grass/water/redstone/stems all have explicit
         // tint sources; blocks without one must stay white (cherry/pale_oak leaves, lava, ...).
         return this.biomeColors.blockTint(block, biome, tintIndex, x, z, y);
@@ -346,11 +362,19 @@ export class LevelRenderer {
         if (chunk.surfaceHeight) {
           for (let i = 0; i < 256; i++) surface = Math.min(surface, chunk.surfaceHeight[i]);
         }
-        const cutoff = Math.min(surface, camY) - 32;
+        // 站在地表时，相机下方 32 格以外的 section 看不到，可以跳过（这是当初 1 万条网格
+        // 积压的主要来源）。但地下/洞穴里往下能看很远，按这个规则会直接挖空地形、看起来
+        // 像"透视"。所以只有明确在地表以上时才裁。
+        const underground = camY < surface - 8;
+        const cutoff = underground ? Number.NEGATIVE_INFINITY : Math.min(surface, camY) - 32;
         for (let sy = chunk.minSectionY; sy <= chunk.maxSectionY; sy++) {
           if (sy * 16 + 16 <= cutoff) continue;
-          if (this.sections.get(sectionKey(chunk.x, chunk.z, sy))?.empty) continue;
           const key = sectionKey(chunk.x, chunk.z, sy);
+          const prev = this.sections.get(key);
+          // `empty` 只是"上次建网格时是空的"这一缓存，用于跳过开局那批空 section。玩家在
+          // 空中放方块后该 section 不再是空的；只靠 dirtySections 不可靠（存盘会清掉它），
+          // 所以直接看区块数据里现在有没有方块，没有才跳过。
+          if (prev?.empty && !this.sectionHasBlocks(chunk, sy)) continue;
           if (this.queuedSections.has(key)) continue;
           this.queuedSections.add(key);
           this.rebuildQueue.push({ chunkX: chunk.x, chunkZ: chunk.z, sectionY: sy });
@@ -389,6 +413,18 @@ export class LevelRenderer {
   /** Chunk -> first time it was found waiting for a neighbour (see neighboursReady). */
   private readonly waitingSince = new WeakMap<object, number>();
   private lastCamY = 0;
+
+  /** 该 section 现在还有没有方块（用来判断 `empty` 缓存是否失效）。 */
+  private sectionHasBlocks(
+    chunk: { getSection(sy: number): { states: { get(i: number): number } } | undefined },
+    sy: number,
+  ): boolean {
+    const section = chunk.getSection(sy);
+    if (!section) return false;
+    const states = section.states;
+    for (let i = 0; i < 4096; i++) if (states.get(i) !== 0) return true;
+    return false;
+  }
 
   /**
    * A section is meshed from an 18x18x18 copy of its surroundings, and a missing neighbour chunk reads as
@@ -480,13 +516,14 @@ export class LevelRenderer {
         rx, rz,
         opaqueVao: null, opaqueVbo: null, opaqueIbo: null, opaqueCount: 0,
         transVao: null, transVbo: null, transIbo: null, transCount: 0,
-        dirty: true, minY: 0, maxY: 0, dist: 0,
+        dirty: true, minY: 0, maxY: 0, minSurface: Number.NaN, surfaceDirty: true, dist: 0,
         scratchV: EMPTY_BYTES, scratchI: EMPTY_U32,
         tScratchV: EMPTY_BYTES, tScratchI: EMPTY_U32,
       };
       this.regions.set(key, region);
     }
     region.dirty = true;
+    region.surfaceDirty = true;
   }
 
   /**
@@ -856,6 +893,8 @@ export class LevelRenderer {
       return t * t * (3 - 2 * t);
     };
 
+    this.shadowDay = this.sunDir[1] > 0 ? smoothstep(0.0, 0.30, this.sunDir[1]) : 0;
+
     if (this.sunDir[1] > 0) {
       // Day: warm-white direct sun, dying out in the last few degrees above the horizon.
       const up = this.sunDir[1];
@@ -896,6 +935,11 @@ export class LevelRenderer {
 
     this.shadow.setSize(this.post.shadowSize);
     this.shadow.update(camera, this.lightDir);
+    // Waving plants/leaves must displace in the shadow pass too, otherwise the shadows lag behind
+    // the geometry whenever the map is re-rendered. The voxel-result cache stays as-is: while the
+    // camera is still the map is reused and the sub-texel sway difference is invisible.
+    const swayTime = this.swayEnabled ? performance.now() / 1000 : 0;
+    this.shadow.swayTime = swayTime;
 
     const program = this.shadow.programHandle;
     const minSurface = new Map<number, number>();
@@ -919,18 +963,23 @@ export class LevelRenderer {
         const minX = cx1 << 4, minZ = cz1 << 4;
         if (!boxInFrustum(this.shadow.frustumOf(ci), minX, region.minY, minZ,
           minX + REGION_CHUNKS * 16, region.maxY, minZ + REGION_CHUNKS * 16)) continue;
-        let surface = 32767;
-        for (let dz = 0; dz < REGION_CHUNKS; dz++) {
-          for (let dx = 0; dx < REGION_CHUNKS; dx++) {
-            const ck = chunkKey(cx1 + dx, cz1 + dz);
-            let s2 = minSurface.get(ck);
-            if (s2 === undefined) {
-              const chunk = level.getChunk(cx1 + dx, cz1 + dz);
-              s2 = chunk ? chunk.surfaceHeight.reduce((a, b) => Math.min(a, b), 32767) : level.minY;
-              minSurface.set(ck, s2);
+        let surface = region.minSurface;
+        if (region.surfaceDirty || Number.isNaN(surface)) {
+          surface = 32767;
+          for (let dz = 0; dz < REGION_CHUNKS; dz++) {
+            for (let dx = 0; dx < REGION_CHUNKS; dx++) {
+              const ck = chunkKey(cx1 + dx, cz1 + dz);
+              let s2 = minSurface.get(ck);
+              if (s2 === undefined) {
+                const chunk = level.getChunk(cx1 + dx, cz1 + dz);
+                s2 = chunk ? chunk.surfaceHeight.reduce((a, b) => Math.min(a, b), 32767) : level.minY;
+                minSurface.set(ck, s2);
+              }
+              surface = Math.min(surface, s2);
             }
-            surface = Math.min(surface, s2);
           }
+          region.minSurface = surface;
+          region.surfaceDirty = false;
         }
         if (region.maxY <= surface) continue;
         shadowSections++;
@@ -1077,6 +1126,7 @@ export class LevelRenderer {
     const waves = this.post.enabled && waterStill >= 0;
     this.terrain.set2i('uWaterLayers', waves ? waterStill : -1, waves ? waterFlow : -1);
     this.terrain.set1f('uWaveTime', performance.now() / 1000);
+    this.terrain.set1f('uSwayTime', this.swayEnabled ? performance.now() / 1000 : 0);
     // Direct sun / moon term is only enabled when a shadow map was rendered this frame; with
     // uUseShadows = 0 the fragment shader keeps the exact vanilla lightmap result.
     this.terrain.set1i('uUseShadows', this.shadowsActive ? 1 : 0);
@@ -1087,8 +1137,18 @@ export class LevelRenderer {
     this.terrain.set3f('uSunDir', this.lightDir[0], this.lightDir[1], this.lightDir[2]);
     this.terrain.set3f('uSunColor', this.sunColor[0], this.sunColor[1], this.sunColor[2]);
     this.terrain.set1f('uShadowTexel', this.shadow.cascadeTexel(0));
-
+    this.terrain.set1f('uShadowDay', this.shadowDay);
+    // Water-reflection samplers must be backed by a complete 2D texture on every draw of this
+    // program (WebGL validates active samplers even when uWaterReflect turns the branch off).
+    this.terrain.set1i('uWaterReflect', 0);
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this.post.waterColor ?? this.post.blackTexture);
+    this.terrain.set1i('uSceneColor', 5);
+    gl.activeTexture(gl.TEXTURE6);
+    gl.bindTexture(gl.TEXTURE_2D, this.post.waterDepth ?? this.post.blackTexture);
+    this.terrain.set1i('uSceneDepth', 6);
     gl.activeTexture(gl.TEXTURE0);
+
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
     this.terrain.set1i('uAtlas', 0);
     gl.activeTexture(gl.TEXTURE1);
@@ -1120,6 +1180,9 @@ export class LevelRenderer {
 
     // translucent, back to front, no depth write. The callback above may have changed the
     // program, VAO and blend state, so everything this pass needs is re-bound.
+    // Snapshot the opaque scene first: the water reflects it and cannot sample its own target.
+    // Only pay for the full-screen copy when translucent geometry is actually visible.
+    if (translucent.length > 0) this.post.captureWaterSource();
     this.terrain.use();
     this.terrain.setMat4('uViewProj', this.viewProj);
     this.terrain.set3f('uFogColor', fog.color[0], fog.color[1], fog.color[2]);
@@ -1139,8 +1202,20 @@ export class LevelRenderer {
     this.terrain.set3f('uSunDir', this.lightDir[0], this.lightDir[1], this.lightDir[2]);
     this.terrain.set3f('uSunColor', this.sunColor[0], this.sunColor[1], this.sunColor[2]);
     this.terrain.set1f('uShadowTexel', this.shadow.cascadeTexel(0));
+    this.terrain.set1f('uShadowDay', this.shadowDay);
     this.terrain.set2i('uWaterLayers', waves ? waterStill : -1, waves ? waterFlow : -1);
     this.terrain.set1f('uWaveTime', performance.now() / 1000);
+    this.terrain.set1f('uSwayTime', this.swayEnabled ? performance.now() / 1000 : 0);
+    // Water reflections need a real snapshot; the low tier and the shaders-off path skip them.
+    const waterReflect = this.post.enabled && this.post.quality !== 'low'
+      && this.post.waterColor !== null;
+    this.terrain.set1i('uWaterReflect', waterReflect ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this.post.waterColor ?? this.post.blackTexture);
+    this.terrain.set1i('uSceneColor', 5);
+    gl.activeTexture(gl.TEXTURE6);
+    gl.bindTexture(gl.TEXTURE_2D, this.post.waterDepth ?? this.post.blackTexture);
+    this.terrain.set1i('uSceneDepth', 6);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
     this.terrain.set1i('uAtlas', 0);
@@ -1236,6 +1311,44 @@ export class LevelRenderer {
     return { ms: this.lastMeshMs, count: this.meshCount, sections: this.sections.size };
   }
 
+  /**
+   * Diagnostics for the perf report: sections within `radius` chunks of the camera that have
+   * blocks but no mesh (and are not cached as empty). Each one is a hole you can see the sky or
+   * the void through - the "terrain renders slowly / can see through it" report.
+   */
+  nearMissingStats(
+    level: ClientLevel, camX: number, camY: number, camZ: number, radius = 2,
+  ): { missing: number; below: number; queued: number } {
+    const cx = Math.floor(camX) >> 4;
+    const cz = Math.floor(camZ) >> 4;
+    // Same 32-block window the renderer uses to skip unreachable sections while on the surface,
+    // so the count is "holes you can actually see", not "sections intentionally skipped".
+    const sy0 = Math.floor((camY - 32) / 16);
+    const sy1 = Math.floor((camY + 32) / 16);
+    let missing = 0;
+    let below = 0;
+    let queued = 0;
+    for (let dz = -radius; dz <= radius; dz++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const chunk = level.getChunk(cx + dx, cz + dz);
+        if (!chunk) continue;
+        const lo = Math.max(chunk.minSectionY, sy0);
+        const hi = Math.min(chunk.maxSectionY, sy1);
+        for (let sy = lo; sy <= hi; sy++) {
+          const key = sectionKey(chunk.x, chunk.z, sy);
+          if (this.queuedSections.has(key)) queued++;
+          if (!this.sectionHasBlocks(chunk, sy)) continue;
+          const gpu = this.sections.get(key);
+          if (!gpu || gpu.empty) {
+            missing++;
+            if (sy * 16 + 16 <= camY) below++;
+          }
+        }
+      }
+    }
+    return { missing, below, queued };
+  }
+
   /** Sections still waiting for a remesh (tests wait for this to reach 0 after editing blocks). */
   get pendingRebuilds(): number { return this.rebuildQueue.length; }
 }
@@ -1244,4 +1357,14 @@ const vaoBuffers = new WeakMap<WebGLVertexArrayObject, { vbo: WebGLBuffer | null
 
 function sectionKey(cx: number, cz: number, sy: number): number {
   return ((cx + 32768) * 65536 + (cz + 32768)) * 128 + (sy + 32);
+}
+
+/** RedStoneWireBlock.getColorForPower (vanilla COLORS table). */
+function redstoneWireTint(powerValue: string | undefined): [number, number, number] {
+  const power = Math.max(0, Math.min(15, Number(powerValue ?? 0)));
+  const f = power / 15;
+  const r = f * 0.6 + (power > 0 ? 0.4 : 0.3);
+  const g = Math.max(0, Math.min(1, f * f * 0.7 - 0.5));
+  const b = Math.max(0, Math.min(1, f * f * 0.6 - 0.7));
+  return [r, g, b];
 }

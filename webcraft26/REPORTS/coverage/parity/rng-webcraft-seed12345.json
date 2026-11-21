@@ -1,0 +1,264 @@
+{
+  "kind": "rng",
+  "seed": "12345",
+  "source": "webcraft",
+  "generatedAt": "2026-11-21T10:30:03.863Z",
+  "samples": [
+    {
+      "op": "nextLong",
+      "i": 0,
+      "bits": "0x8f5558a8725fe51a"
+    },
+    {
+      "op": "nextLong",
+      "i": 1,
+      "bits": "0x3981933f11056729"
+    },
+    {
+      "op": "nextLong",
+      "i": 2,
+      "bits": "0x904054103100e22b"
+    },
+    {
+      "op": "nextLong",
+      "i": 3,
+      "bits": "0x0f6262d2cfafea33"
+    },
+    {
+      "op": "nextLong",
+      "i": 4,
+      "bits": "0x99678e8854ca873b"
+    },
+    {
+      "op": "nextLong",
+      "i": 5,
+      "bits": "0x5f0f5b094c0f0af0"
+    },
+    {
+      "op": "nextLong",
+      "i": 6,
+      "bits": "0x7b9a8557069d7f7a"
+    },
+    {
+      "op": "nextLong",
+      "i": 7,
+      "bits": "0xc87a1122a61ffb81"
+    },
+    {
+      "op": "nextLong",
+      "i": 8,
+      "bits": "0xcc24c359694d3667"
+    },
+    {
+      "op": "nextLong",
+      "i": 9,
+      "bits": "0x6d80d593e01e7c09"
+    },
+    {
+      "op": "nextLong",
+      "i": 10,
+      "bits": "0x4c6010f5c8dc4184"
+    },
+    {
+      "op": "nextLong",
+      "i": 11,
+      "bits": "0xd1cd3f1de9877d55"
+    },
+    {
+      "op": "nextLong",
+      "i": 12,
+      "bits": "0x7ca8a178b216c432"
+    },
+    {
+      "op": "nextLong",
+      "i": 13,
+      "bits": "0x45ab95a05fc6ff1d"
+    },
+    {
+      "op": "nextLong",
+      "i": 14,
+      "bits": "0x2dc94720df2d4b56"
+    },
+    {
+      "op": "nextLong",
+      "i": 15,
+      "bits": "0x3e98d92ccee151d1"
+    },
+    {
+      "op": "nextInt",
+      "i": 0,
+      "bound": 1000,
+      "value": 514
+    },
+    {
+      "op": "nextInt",
+      "i": 1,
+      "bound": 1000,
+      "value": 184
+    },
+    {
+      "op": "nextInt",
+      "i": 2,
+      "bound": 1000,
+      "value": 141
+    },
+    {
+      "op": "nextInt",
+      "i": 3,
+      "bound": 1000,
+      "value": 422
+    },
+    {
+      "op": "nextInt",
+      "i": 4,
+      "bound": 1000,
+      "value": 98
+    },
+    {
+      "op": "nextInt",
+      "i": 5,
+      "bound": 1000,
+      "value": 692
+    },
+    {
+      "op": "nextInt",
+      "i": 6,
+      "bound": 1000,
+      "value": 186
+    },
+    {
+      "op": "nextInt",
+      "i": 7,
+      "bound": 1000,
+      "value": 80
+    },
+    {
+      "op": "nextInt",
+      "i": 8,
+      "bound": 1000,
+      "value": 171
+    },
+    {
+      "op": "nextInt",
+      "i": 9,
+      "bound": 1000,
+      "value": 7
+    },
+    {
+      "op": "nextInt",
+      "i": 10,
+      "bound": 1000,
+      "value": 424
+    },
+    {
+      "op": "nextInt",
+      "i": 11,
+      "bound": 1000,
+      "value": 133
+    },
+    {
+      "op": "nextInt",
+      "i": 12,
+      "bound": 1000,
+      "value": 410
+    },
+    {
+      "op": "nextInt",
+      "i": 13,
+      "bound": 1000,
+      "value": 689
+    },
+    {
+      "op": "nextInt",
+      "i": 14,
+      "bound": 1000,
+      "value": 517
+    },
+    {
+      "op": "nextInt",
+      "i": 15,
+      "bound": 1000,
+      "value": 971
+    },
+    {
+      "op": "nextFloat",
+      "i": 0,
+      "bits": "0x3f776a8c"
+    },
+    {
+      "op": "nextFloat",
+      "i": 1,
+      "bits": "0x3ea2a324"
+    },
+    {
+      "op": "nextFloat",
+      "i": 2,
+      "bits": "0x3f28cdc9"
+    },
+    {
+      "op": "nextFloat",
+      "i": 3,
+      "bits": "0x3f0aad95"
+    },
+    {
+      "op": "nextFloat",
+      "i": 4,
+      "bits": "0x3f59a8d8"
+    },
+    {
+      "op": "nextFloat",
+      "i": 5,
+      "bits": "0x3e9874a6"
+    },
+    {
+      "op": "nextFloat",
+      "i": 6,
+      "bits": "0x3d1b4170"
+    },
+    {
+      "op": "nextFloat",
+      "i": 7,
+      "bits": "0x3f765baf"
+    },
+    {
+      "op": "nextDouble",
+      "i": 0,
+      "bits": "0x3fe5cbd1a9c5c762"
+    },
+    {
+      "op": "nextDouble",
+      "i": 1,
+      "bits": "0x3fb9a0c478399b0c"
+    },
+    {
+      "op": "nextDouble",
+      "i": 2,
+      "bits": "0x3fc77da9b137a9b2"
+    },
+    {
+      "op": "nextDouble",
+      "i": 3,
+      "bits": "0x3fec5819924eacb1"
+    },
+    {
+      "op": "nextDouble",
+      "i": 4,
+      "bits": "0x3febc278f0e03cf2"
+    },
+    {
+      "op": "nextDouble",
+      "i": 5,
+      "bits": "0x3fd75cb08dc5d392"
+    },
+    {
+      "op": "nextDouble",
+      "i": 6,
+      "bits": "0x3fe0813413ab0bc7"
+    },
+    {
+      "op": "nextDouble",
+      "i": 7,
+      "bits": "0x3fe24c04f21b56bb"
+    }
+  ]
+}

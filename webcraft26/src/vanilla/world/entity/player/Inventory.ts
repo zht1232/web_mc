@@ -104,7 +104,11 @@ export class PlayerInventory extends AbstractContainer {
   override removeItem(slot: number, count: number): ItemStack {
     if (slot < INVENTORY_SIZE) return ContainerHelper.removeItem(this.items, slot, count);
     const stack = this.equipment.get(slot);
-    if (stack && !stack.isEmpty()) return stack.split(count);
+    if (stack && !stack.isEmpty()) {
+      const removed = stack.split(count);
+      if (stack.isEmpty()) this.equipment.set(slot, ItemStack.EMPTY);
+      return removed;
+    }
     return ItemStack.EMPTY;
   }
   override setChanged(): void { this.timesChanged++; }
@@ -141,19 +145,24 @@ export class PlayerInventory extends AbstractContainer {
   }
 
   private addResource(slot: number, stack: ItemStack): number {
-    let count = stack.getCount();
-    let inSlot = this.getItem(slot);
+    const inSlot = this.getItem(slot);
+    // An empty slot is filled from a split copy: a count-0 seed stack no longer works now
+    // that setCount(0) clears `item` (it could never grow back into a real item).
     if (inSlot.isEmpty()) {
-      inSlot = stack.copyWithCount(0);
-      this.setItem(slot, inSlot);
+      const toAdd = Math.min(stack.getCount(), this.getMaxStackSizeFor(stack));
+      if (toAdd <= 0) return stack.getCount();
+      const placed = stack.split(toAdd);
+      this.setItem(slot, placed);
+      placed.setPopTime(5);
+      return stack.getCount();
     }
     const maxToAdd = this.getMaxStackSizeFor(inSlot) - inSlot.getCount();
-    const toAdd = Math.min(count, maxToAdd);
-    if (toAdd === 0) return count;
-    count -= toAdd;
+    const toAdd = Math.min(stack.getCount(), maxToAdd);
+    if (toAdd === 0) return stack.getCount();
+    stack.shrink(toAdd);
     inSlot.grow(toAdd);
     inSlot.setPopTime(5);
-    return count;
+    return stack.getCount();
   }
 
   /** Inventory.add(-1, stack): returns true if at least one item was stored. */

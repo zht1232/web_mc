@@ -86,7 +86,7 @@ export class SelectWorldScreen extends Screen {
     this.deleteButton.active = false;
     this.addRenderableWidget(this.deleteButton);
     this.addRenderableWidget(new Button(cx - 154 + SMALL_BUTTON_WIDTH + 4, by - 24, SMALL_BUTTON_WIDTH, BUTTON_DEFAULT_HEIGHT,
-      this.t('selectWorld.edit'), () => this.toast('Edit World')));
+      this.t('selectWorld.edit'), () => this.toast(this.t('selectWorld.edit'))));
     this.addRenderableWidget(new Button(cx + 4, by - 24, BUTTON_WIDTH, BUTTON_DEFAULT_HEIGHT,
       this.t('gui.cancel'), () => this.goBack()));
 

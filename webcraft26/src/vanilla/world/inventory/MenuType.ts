@@ -17,6 +17,8 @@ export const MenuType = {
   GENERIC_9x5: 'minecraft:generic_9x5',
   GENERIC_9x6: 'minecraft:generic_9x6',
   CREATIVE: 'minecraft:creative',
+  ENCHANTING: 'minecraft:enchanting_table',
+  BREWING: 'minecraft:brewing_stand',
   STONECUTTER: 'minecraft:stonecutter',
   SMITHING: 'minecraft:smithing',
 } as const;

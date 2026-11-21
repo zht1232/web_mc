@@ -9,6 +9,7 @@ import { MeleeAttackGoal } from '../ai/goal/MeleeAttackGoal.js';
 import { RandomStrollGoal } from '../ai/goal/RandomStrollGoal.js';
 import { LookAtPlayerGoal } from '../ai/goal/LookAtPlayerGoal.js';
 import { RandomLookAroundGoal } from '../ai/goal/RandomLookAroundGoal.js';
+import { TemptGoal } from '../ai/goal/TemptGoal.js';
 import { NearestAttackableTargetGoal } from '../ai/goal/NearestAttackableTargetGoal.js';
 import { HurtByTargetGoal } from '../ai/goal/HurtByTargetGoal.js';
 import { entityType } from '../EntityType.js';
@@ -25,9 +26,15 @@ export class Wolf extends Mob {
   protected registerGoals(): void {
     this.goalSelector.addGoal(0, new FloatGoal(this));
     this.goalSelector.addGoal(1, new MeleeAttackGoal(this, 1.0));
-    this.goalSelector.addGoal(2, new RandomStrollGoal(this, 0.8));
-    this.goalSelector.addGoal(3, new LookAtPlayerGoal(this, 8));
-    this.goalSelector.addGoal(4, new RandomLookAroundGoal(this));
+    // ItemTags.WOLF_FOOD (untamed wolves follow meat).
+    this.goalSelector.addGoal(2, new TemptGoal(this, 1.0, [
+      'beef', 'chicken', 'mutton', 'porkchop', 'rabbit', 'cod', 'salmon', 'rotten_flesh',
+      'cooked_beef', 'cooked_chicken', 'cooked_mutton', 'cooked_porkchop', 'cooked_rabbit',
+      'cooked_cod', 'cooked_salmon',
+    ]));
+    this.goalSelector.addGoal(3, new RandomStrollGoal(this, 0.8));
+    this.goalSelector.addGoal(4, new LookAtPlayerGoal(this, 8));
+    this.goalSelector.addGoal(5, new RandomLookAroundGoal(this));
     this.targetSelector.addGoal(1, new HurtByTargetGoal(this));
     this.targetSelector.addGoal(2, new NearestAttackableTargetGoal(this, 16, this.playerPredicate));
   }

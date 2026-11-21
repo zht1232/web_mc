@@ -1,24 +1,41 @@
 // Port of net.minecraft.client.renderer.Panorama / CubeMap (26.2).
 //
-// Vanilla renders the six 1024x1024 faces as a rotating cube map, so neighbouring faces are
-// continuous by construction. Two problems with the previous flat-screen approximation here:
-//   * it drew 4-6 independently cover-fitted 1024x1024 images EVERY frame (the title-screen
-//     stutter), and each face had its own crop, so a hard vertical seam appeared at every
-//     quarter of the screen (the "obvious stitching" report);
-//   * `Math.round(offset + i * faceW)` plus a 1px overlap left hairline gaps.
-//
-// This version pre-composites the four side faces ONCE into an offscreen strip, with a
-// per-column linear cross-fade at each face boundary, then performs a single drawImage per
-// frame. The strip is 1.5x the screen width so the slow pan never exposes an edge.
+// Vanilla renders the six 1024x1024 faces as a rotating cube map. The old flat
+// composite strip produced a visible seam at every face boundary and was
+// reprocessed on resize. This version uploads the six faces into a real
+// TEXTURE_CUBE_MAP in a private WebGL2 context, samples it with the same
+// yaw-only camera the vanilla panorama uses, and blits the result into the
+// Canvas2D GUI. The title screen keeps its 2s fade-in and dark overlay.
 
 import type { GuiGraphics } from '../GuiGraphics.js';
 import type { GuiTextures } from '../Hud.js';
+import { cameraBasis } from '../../renderer/gl/Gl.js';
 
 const FACE_COUNT = 6;
-const SIDE_FACES = 4;
 const PANORAMA_SPIN_SPEED = 0.035; // rad/s (~2 deg/s, vanilla Panorama#tick)
-/** Half-width of the cross-fade used to hide the discontinuity between two cube faces. */
-const BLEND = 40;
+
+const PANORAMA_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec2 aPos;
+out vec2 vNdc;
+void main() { vNdc = aPos; gl_Position = vec4(aPos, 0.0, 1.0); }`;
+
+const PANORAMA_FS = `#version 300 es
+precision highp float;
+in vec2 vNdc;
+uniform samplerCube uCube;
+uniform vec3 uRight;
+uniform vec3 uUp;
+uniform vec3 uForward;
+uniform float uTanHalfFov;
+uniform float uAspect;
+out vec4 fragColor;
+void main() {
+  vec3 dir = normalize(uForward
+    + uRight * (vNdc.x * uTanHalfFov * uAspect)
+    + uUp * (vNdc.y * uTanHalfFov));
+  fragColor = vec4(texture(uCube, dir).rgb, 1.0);
+}`;
 
 export class PanoramaRenderer {
   private faces: HTMLImageElement[] = [];
@@ -28,11 +45,12 @@ export class PanoramaRenderer {
   private fadingStart = 0;
   private fading = false;
 
-  /** Pre-composited side-face strip. Rebuilt only when the viewport size changes. */
-  private strip: HTMLCanvasElement | null = null;
-  private stripW = 0;
-  private stripH = 0;
-  private stripFaceW = 0;
+  private glCanvas: HTMLCanvasElement | null = null;
+  private gl: WebGL2RenderingContext | null = null;
+  private program: WebGLProgram | null = null;
+  private vao: WebGLVertexArrayObject | null = null;
+  private cubeTex: WebGLTexture | null = null;
+  private cubeReady = false;
 
   async load(textures: GuiTextures): Promise<void> {
     const paths: string[] = [];
@@ -41,7 +59,7 @@ export class PanoramaRenderer {
     await textures.preload(paths);
     this.faces = paths.slice(0, FACE_COUNT).map((p) => textures.get(p)).filter((x): x is HTMLImageElement => !!x);
     this.overlay = textures.get(paths[FACE_COUNT]);
-    this.strip = null; // force a rebuild with the newly decoded images
+    if (this.faces.length === FACE_COUNT) this.initCubeMap();
   }
 
   /** TitleScreen calls panorama.startSpin() on construction. */
@@ -63,58 +81,95 @@ export class PanoramaRenderer {
     return Math.max(0, Math.min(1, t));
   }
 
-  /**
-   * Bake the four side faces into one strip at the target resolution, then blend a band of
-   * `2*BLEND` columns around every seam. On the left of a seam the next face fades in; on the
-   * right the previous face fades out. Doing it in ImageData avoids drawImage clip/scale
-   * ambiguity and runs once per resize instead of once per frame.
-   */
-  private buildStrip(height: number, faceW: number): HTMLCanvasElement | null {
-    const sides = this.faces.slice(0, SIDE_FACES);
-    if (sides.length < SIDE_FACES) return null;
-    const w = Math.max(1, Math.ceil(faceW * SIDE_FACES));
-    const h = Math.max(1, Math.ceil(height));
+  /** Creates the private GL context, fullscreen quad and the six-face cube texture. */
+  private initCubeMap(): void {
     const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return null;
-    ctx.imageSmoothingEnabled = true;
+    const gl = canvas.getContext('webgl2', {
+      alpha: false, antialias: false, depth: false, premultipliedAlpha: false,
+    });
+    if (!gl) return;
+    this.glCanvas = canvas;
+    this.gl = gl;
 
-    const scale = h / sides[0].height;
-    for (let i = 0; i < SIDE_FACES; i++) {
-      const img = sides[i];
-      // Keep the FULL horizontal extent (no centre crop) so the cube faces stay continuous.
-      ctx.drawImage(img, 0, 0, img.width, img.height, i * faceW, 0, img.width * scale, h);
+    const vs = compile(gl, gl.VERTEX_SHADER, PANORAMA_VS);
+    const fs = compile(gl, gl.FRAGMENT_SHADER, PANORAMA_FS);
+    if (!vs || !fs) return;
+    const prog = gl.createProgram()!;
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.warn('[panorama] program link failed', gl.getProgramInfoLog(prog));
+      return;
     }
+    this.program = prog;
 
-    const fade = Math.min(BLEND, Math.floor(faceW / 2), Math.floor(1024 * scale / 2));
-    if (fade > 0) {
-      const data = ctx.getImageData(0, 0, w, h);
-      const px = data.data;
-      for (let i = 0; i < SIDE_FACES - 1; i++) {
-        const seam = (i + 1) * faceW;
-        for (let k = 0; k < fade; k++) {
-          const t = (k + 1) / (fade + 1);
-          // Left of the seam: mix in the first `fade` columns of the NEXT face.
-          const nextSrcX = (i + 1) * faceW + k;
-          const leftDstX = seam - fade + k;
-          // Right of the seam: mix in the last `fade` columns of the PREVIOUS face.
-          const prevSrcX = (i + 1) * faceW - fade + k;
-          const rightDstX = seam + k;
-          for (let y = 0; y < h; y++) {
-            mixPixel(px, y * w + leftDstX, y * w + nextSrcX, t);
-            mixPixel(px, y * w + rightDstX, y * w + prevSrcX, 1 - t);
-          }
-        }
-      }
-      ctx.putImageData(data, 0, 0);
+    const vao = gl.createVertexArray()!;
+    gl.bindVertexArray(vao);
+    const vbo = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+    gl.bindVertexArray(null);
+    this.vao = vao;
+
+    const tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_CUBE_MAP, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+    // panorama_0 front, 1 right, 2 back, 3 left, 4 top, 5 bottom.
+    const targets = [
+      gl.TEXTURE_CUBE_MAP_POSITIVE_Z,
+      gl.TEXTURE_CUBE_MAP_POSITIVE_X,
+      gl.TEXTURE_CUBE_MAP_NEGATIVE_Z,
+      gl.TEXTURE_CUBE_MAP_NEGATIVE_X,
+      gl.TEXTURE_CUBE_MAP_POSITIVE_Y,
+      gl.TEXTURE_CUBE_MAP_NEGATIVE_Y,
+    ];
+    for (let i = 0; i < FACE_COUNT; i++) {
+      gl.texImage2D(targets[i], 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.faces[i]);
     }
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    // WebGL2 defines seamlessness as a core enum, but lib.dom types it as an extension constant.
+    const seamless = (gl as unknown as { TEXTURE_CUBE_MAP_SEAMLESS?: number }).TEXTURE_CUBE_MAP_SEAMLESS;
+    if (seamless !== undefined) gl.enable(seamless);
+    this.cubeTex = tex;
+    this.cubeReady = true;
+    this.faces = []; // textures own the image data after upload
+  }
 
-    this.stripW = w;
-    this.stripH = h;
-    this.stripFaceW = faceW;
-    return canvas;
+  private renderCube(width: number, height: number): boolean {
+    const gl = this.gl;
+    const canvas = this.glCanvas;
+    if (!gl || !canvas || !this.program || !this.vao || !this.cubeTex || !this.cubeReady) return false;
+    // Render at the GUI canvas' physical resolution (capped) so the panorama is sharp on high-DPI
+    // windows without paying for a 4K cubemap on huge displays.
+    const w = Math.max(320, Math.min(2048, Math.round(width)));
+    const h = Math.max(180, Math.min(2048, Math.round(height)));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    gl.viewport(0, 0, w, h);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.useProgram(this.program);
+    const { right, up, forward } = cameraBasis(this.angle, 0);
+    gl.uniform3f(gl.getUniformLocation(this.program, 'uRight')!, right[0], right[1], right[2]);
+    gl.uniform3f(gl.getUniformLocation(this.program, 'uUp')!, up[0], up[1], up[2]);
+    gl.uniform3f(gl.getUniformLocation(this.program, 'uForward')!, forward[0], forward[1], forward[2]);
+    gl.uniform1f(gl.getUniformLocation(this.program, 'uTanHalfFov')!, Math.tan((70 * Math.PI) / 360));
+    gl.uniform1f(gl.getUniformLocation(this.program, 'uAspect')!, w / h);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.cubeTex);
+    gl.uniform1i(gl.getUniformLocation(this.program, 'uCube')!, 0);
+    gl.bindVertexArray(this.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindVertexArray(null);
+    return true;
   }
 
   render(g: GuiGraphics, width: number, height: number, alpha = 1): void {
@@ -125,23 +180,10 @@ export class PanoramaRenderer {
     ctx.filter = 'none';
     const fade = this.fadeAlpha();
 
-    const faceW = Math.max(1, Math.ceil((width * 1.5) / SIDE_FACES));
-    if (!this.strip || this.stripH !== Math.ceil(height) || this.stripFaceW !== faceW) {
-      this.strip = this.buildStrip(height, faceW);
-    }
-
-    if (this.strip) {
-      ctx.imageSmoothingEnabled = false; // strip is already at target resolution
+    if (this.renderCube(width, height) && this.glCanvas) {
       ctx.globalAlpha = alpha * fade;
-      const stripW = this.stripW;
-      const shift = (((this.angle / (Math.PI / 2)) % 1) + 1) % 1;
-      const pan = shift * this.stripFaceW;
-      // start far enough left that the first tile covers the viewport, then wrap
-      let offset = -((pan + (stripW - width) / 2) % stripW);
-      if (offset > 0) offset -= stripW;
-      for (let x = offset; x < width; x += stripW) {
-        ctx.drawImage(this.strip, Math.round(x), 0, stripW, height);
-      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(this.glCanvas, 0, 0, width, height);
     } else {
       ctx.globalAlpha = alpha * fade;
       ctx.fillStyle = '#3a5a7a';
@@ -162,11 +204,15 @@ export class PanoramaRenderer {
   }
 }
 
-/** Linear blend of pixel `src` into pixel `dst` with weight `t` (0..1). */
-function mixPixel(px: Uint8ClampedArray, dst: number, src: number, t: number): void {
-  const d = dst * 4, s = src * 4;
-  px[d] = px[d] * (1 - t) + px[s] * t;
-  px[d + 1] = px[d + 1] * (1 - t) + px[s + 1] * t;
-  px[d + 2] = px[d + 2] * (1 - t) + px[s + 2] * t;
-  px[d + 3] = 255;
+function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader | null {
+  const sh = gl.createShader(type);
+  if (!sh) return null;
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    console.warn('[panorama] shader compile failed', gl.getShaderInfoLog(sh));
+    gl.deleteShader(sh);
+    return null;
+  }
+  return sh;
 }

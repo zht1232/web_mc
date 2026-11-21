@@ -1,122 +1,134 @@
-# Minecraft 26.2 浏览器复刻
+# WebCraft26
 
-用本机官方 **Minecraft Java Edition 26.2（Chaos Cubed）** 客户端资源，在浏览器里运行的复刻客户端：
-TypeScript + WebGL2 + Canvas2D GUI，可走动、建造、带光影和移动端触控。
+A browser port of **Minecraft 26.2 (Java Edition)** built with TypeScript, WebGL2 and a
+Canvas2D GUI. It runs entirely in the browser and loads the game assets from your own
+local Minecraft installation.
 
-> 这是粉丝复刻，不是 Mojang 官方产品。`public/mc/` 下的官方贴图/模型/字体/音效只允许在本机私人使用，
-> **不要提交公开仓库或公开部署**（详见文末「资源授权」）。
+> **Fan project, not affiliated with Mojang or Microsoft.** Minecraft is a trademark of
+> Mojang Synergies AB. No Minecraft assets (textures, models, sounds, fonts, language
+> files) are distributed with this repository. See [Asset and licence notes](#asset-and-licence-notes).
 
-## 运行
+中文简介：这是用 TypeScript + WebGL2 + Canvas2D 写的 Minecraft 26.2 浏览器复刻，
+存档、区块流式加载、光影、GUI、实体与红石都在浏览器里运行；仓库不包含官方素材，
+需要用自己的正版客户端导入。
 
-需要 Node.js 24+、支持 WebGL2 的浏览器。
+## Status
+
+The single-player core loop is playable and covered by automated tests:
+
+- terrain streaming, block breaking/placing, survival and creative mode
+- crafting table, chest, furnace, brewing stand, enchanting table, recipe book
+- mobs, combat, bows/arrows, potions, farming/breeding, fishing, sleeping
+- redstone: wire, levers, buttons, plates, torches (including burnout), repeaters,
+  comparators, observers, daylight detectors, tripwires, pistons, lamps, doors,
+  trapdoors, fence gates, TNT, rails
+- IndexedDB saves plus `.mca` region import/export
+- WebGL2 renderer with smooth lighting, sun shadows (PCF), HDR/bloom, SSAO, TAA,
+  water, weather, particles and a first-person hand
+
+This is **not** full parity yet. Missing areas include villagers/trading, advancements,
+the Nether and the End, vanilla structure templates, minecarts, and several rendering
+details. The authoritative, continuously updated gap list is
+[`REPORTS/STATUS.md`](REPORTS/STATUS.md).
+
+## Quick start
+
+Requirements: Node.js 20.19+ (or 22.12+), npm, and a WebGL2-capable browser.
+You also need a legally owned copy of Minecraft: Java Edition 26.2.
 
 ```bash
 npm install
-npm run assets   # 首次/更新官方 26.2 资源后：build-assets + build-states + build-mobs
-npm run dev      # http://127.0.0.1:5174/  （或双击 Start-WebCraft.bat）
+
+# Point MC_ASSETS at the `assets/minecraft` folder inside your 26.2 client jar.
+# PowerShell:
+$env:MC_ASSETS = "C:\path\to\client-26.2\assets\minecraft"
+# bash:
+# export MC_ASSETS=/path/to/client-26.2/assets/minecraft
+
+# Optional: the launcher asset store that contains the .ogg files and font data.
+# Defaults to %APPDATA%/.minecraft/assets on Windows and ~/.minecraft/assets elsewhere.
+# $env:MC_EXTERNAL = "$env:APPDATA\.minecraft\assets"
+
+npm run assets   # imports models/textures/states/entity textures into public/mc/
+npm run dev      # http://127.0.0.1:5174/
 ```
 
-启动后是 **26.2 风格主菜单**（官方 logo / splash / 全景 / 按钮）：
+`public/mc/` is generated locally and is ignored by git. If you want to run the app
+without importing assets, place a compatible `public/mc/` tree there yourself.
 
-- **Singleplayer**：选择世界（IndexedDB 存档列表）→ Play；或 Create New World 新建。
-- **Options / Language / Accessibility** 等子界面来自原版 GUI 移植。
-- 暂停菜单的「Save and Quit to Title」会先存档再回标题。
+`Start-WebCraft.bat` is a Windows convenience launcher: it installs dependencies,
+imports assets if `public/mc/manifest.json` is missing, starts the dev server and opens
+the browser.
 
-URL 参数：
+### URL parameters
 
-| 参数 | 作用 |
+| Parameter | Effect |
 |---|---|
-| `?play` / `?preview` | 跳过主菜单直接进世界（截图/测试脚本用） |
-| `?touch=1` / `?touch=0` | 强制开/关触屏层（默认按 `pointer: coarse`） |
-| `?seed=<字符串>` | 启动种子（数字或任意字符串） |
-| `?world=<id>` | 打开指定存档（世界选择/新建后自动带） |
-| `?workers=N` | 区块生成 worker 数 |
+| `?play` / `?preview` | Skip the title screen and enter a world (used by tests/screenshots) |
+| `?touch=1` / `?touch=0` | Force the touch control layer on/off |
+| `?seed=<string>` | World seed (number or arbitrary string) |
+| `?world=<id>` | Open a saved world directly |
+| `?perf=0` / `?perf=20` | Disable performance sampling / open the perf panel |
 
-资源读取路径：模型/贴图 `G:/ck-web26/vanilla/assets/minecraft`（官方 26.2 `client.jar` 解包），
-音效/字体外部资源 `C:/Users/zht/AppData/Roaming/.minecraft/assets`，可用 `MC_ASSETS` / `MC_EXTERNAL` 覆盖。
+## Controls
 
-## 操作
+**Desktop:** WASD move, Space jump (double-tap to fly), Shift sneak/descend, Ctrl sprint,
+F fly, E inventory, T chat, Esc pause, F3 debug screen, F6 toggle shaders. Left click
+mine/attack, right click use/place, middle click pick block, wheel/1-9 hotbar.
 
-**桌面**：WASD 移动，Space 跳跃/双击飞行，Shift 潜行/下降，Ctrl 疾跑，F 飞行，E 背包，T 聊天，
-Esc 暂停，F3 调试屏，**F6 光影开关**；左键挖/攻击、右键放/使用、中键取方块；滚轮/1-9 热栏。
+**Touch:** left stick to move, drag the right side to look; on-screen buttons for jump,
+sneak, mine, place, use, inventory, chat and pause. Flight adds up/down buttons.
 
-**触屏**（自动或 `?touch=1`）：左侧摇杆移动，右侧拖动视角；右下按钮 跳跃/潜行/挖掘/放置/使用/背包/聊天/暂停，
-飞行时出现上/下按钮，双击跳跃切换飞行，底部热栏点按选格。
+**Chat commands:** `/time set …`, `/weather …`, `/gamemode …`, `/tp …`, `/give …`,
+`/summon …`, `/kill`, `/gamerule advance_time false`.
 
-**聊天命令**（T）：
+`window.__mc` exposes the running `Game` instance for debugging.
 
+## Architecture
+
+```text
+src/client/Game.ts                  startup, world lifecycle, input, render loop, menu wiring
+src/client/gui/                     vanilla-style screens (title, world select, options, inventory, containers)
+src/client/renderer/                WebGL2 renderer: chunks, entities, sky/clouds/weather, shadows, post-processing, hand
+src/client/world/                   chunk streaming, spawn selection, IndexedDB saves
+src/client/audio|particle|interaction/  sound, particles, placement rules
+src/vanilla/                        26.2 class-library port: world/entity/item/levelgen/lighting/redstone/NBT
+bridge/                             historical Paper WebSocket plugin (not wired into the browser client)
+scripts/                            asset importers, unit tests, browser probes, screenshot tools
+public/mc/                          locally imported Minecraft assets (gitignored)
 ```
-/time set midnight|night|day|18000   /weather rain|thunder|clear
-/gamemode survival|creative          /tp ~ ~50 ~     /give torch 16
-/summon zombie ~4 ~ ~                /kill          /gamerule advance_time false
-```
 
-调试：`window.__mc` 是 `Game` 实例（`level.time`、`player`、`setShaders(bool)`、`setShaderQuality(...)`、`sounds.stats`）。
+The simulation layer intentionally keeps vanilla class and method names where practical,
+so behaviour can be compared against the decompiled 26.2 sources and against
+[Horizon](https://github.com/horizon-rust/horizon) (Rust, LGPL-3.0-or-later).
 
-## 当前实现（2026-11-08）
-
-- **渲染/光影**：官方 16×16 材质、模型、GUI、字体、音效；原版光照曲线 + 平滑光照 + 天光/方块光；
-  日月星云、雾、水下色调；太阳阴影（1024–4096）+ PCF；HDR + Bloom + 色调映射 + FXAA + 太阳光轴（F6 开关）；**SSAO + TAA**（high/ultra 档，深度快照驱动）；
-  水面顶点波（Fresnel/反射/高光）；第一人称手臂/手持方块/破坏裂纹；原生 GUI 分辨率渲染。
-- **夜景 1:1**：与真实 26.2 客户端参考截图逐区域平均色差约 ±3/255（光影关），月亮 25×28 px vs 原版 24×28。
-- **世界/玩法**：程序化湖岸世界（13×13 区块）、村庄/遗迹/营地、完整昼夜与天气状态机、
-  挖掘/放置/生存（血量/饥饿/掉落/重生）、自然刷怪、25 种可渲染生物（含 12 种本轮补齐的模型）。
-- **原版 GUI**：创造物品栏（官方 tab 精灵/滚动/悬停 tooltip）、Survival Inventory、暂停/选项/视频设置、
-  世界选择/创建世界、聊天屏、死亡屏、Toast。
-- **容器真实交互**（right click 打开）：合成台 3×3 合成（真实配方）、箱子 27 格存取（会话内持久）、
-  熔炉熔炼（燃料表 + 烹饪进度，GUI 打开时推进，火焰/箭头动画联动）。
-- **洞穴环境音**：地下黑暗处随机播放 `ambient.cave`（带冷却）。
-- **音频**：959 个原版音效事件（4341 个 ogg，`scripts/build-sounds.mjs` 可重现）、按 SoundType 的脚步/破坏/放置、
-  生物叫声/受伤/死亡、雨声循环/雷声。
-- **触屏**：Bedrock 风格整套控制层（本日从 M2 找回并适配新输入模型）。
-- **Paper 桥接**（`bridge/`）：服务端 WebSocket 插件与协议是历史资产，浏览器端**未接**（按用户要求没动）。
-
-## 验证脚本
+## Verification
 
 ```bash
-npx tsc --noEmit                                  # 类型检查
-for t in scripts/test-*.mts; do npx tsx $t; done  # 18 套单测
-npx tsx scripts/test-mobs-render.mts              # 生物渲染 19 项
-npx tsx scripts/test-glmath.mts                   # 矩阵工具 6 项
-node scripts/test-ao.mjs                          # SSAO 6 项
-node scripts/test-taa.mjs                         # TAA 8 项
-node scripts/test-containers.mjs                  # 容器交互 19 项
-node scripts/test-ambience.mjs                    # 洞穴环境音 6 项
-node scripts/test-menu.mjs                        # 主菜单/世界选择 9 项
-node scripts/test-touch.mjs                       # 触屏 15 项
-node scripts/smoke.mjs                            # 浏览器冒烟 19 场景（默认 ?play）
-node scripts/mgr-shots.mjs <outDir> <steps.json>  # 多步骤截图
-node scripts/verify-timelines.mts                 # 原版昼夜时间线逐帧比对
-node scripts/build-sounds.mjs                     # 从启动器资源重新导入声音
-node scripts/ref-capture.mjs                      # 真实 26.2 客户端参考图
+npx tsc --noEmit
+node scripts/test-redstone.mjs        # redstone long tail + pistons + rails (browser)
+node scripts/test-containers.mjs      # container click rules
+node scripts/test-menu.mjs            # title/world select screens
+node scripts/test-hud-dirty.mjs       # HUD redraw policy
+node scripts/test-icons.mjs           # item icon atlas
+node scripts/test-taa.mjs             # TAA
+npx tsx scripts/test-mobs-render.mts  # entity rendering
+npx tsx scripts/test-placement.mts    # block placement rules
+npx tsx scripts/test-mesher.mts       # chunk meshing
+node scripts/smoke.mjs                # 19-scenario browser smoke test
 ```
 
-## 还不是 1:1
+The browser-based scripts need Playwright's Chromium (`npx playwright install chromium`)
+and a running dev server on `http://127.0.0.1:5174` (the test scripts accept `--url`).
+`node scripts/smoke.mjs` writes screenshots to `shots/` (gitignored).
 
-- 光影没有水面反射/折射、体积光/云（SSAO 与 TAA 已在 high/ultra 档提供）。
-- 容器已可实际使用，但没有方块实体系统：熔炉只在 GUI 打开时熔炼、箱子/熔炉内容不写入存档、箱子固定 3 行；
-  饥饿效果、药水、附魔、红石、幼年生物变体未做。
-- 生物模型有已知近似（见 `REPORTS/overnight/mobs2.md` 第 5 节）；结构是程序化近似，不是原版 NBT 模板。
-- 世界为有限程序化世界，不是真实 Anvil 世界；Paper 联机未接。
-- 参考截图 `shots/ref/INDEX.md` 里的 FOV=70 记录是错的（实际 FOV=110，见 `REPORTS/HANDOFF.md` §3）。
+## Asset and licence notes
 
-## 目录
-
-```
-src/client/Game.ts            启动、世界生命周期、输入、渲染循环、菜单接线
-src/client/gui/               原版 GUI 移植（ScreenManager、Title/SelectWorld/CreateWorld/Options/库存…）
-src/client/renderer/          WebGL2 渲染器：区块/实体/天空/云/天气/阴影/后处理/手持
-src/client/touch/             Bedrock 风格触屏层（TouchControls.ts + touch.css）
-src/client/world/             区块流式加载、出生点、存档（IndexedDB）
-src/client/audio|particle|interaction/  音效、粒子、放置交互
-src/vanilla/                  Minecraft 26.2 类库的 TypeScript 移植（world/entity/item/levelgen…)
-bridge/                       Paper 26.2 WebSocket 插件 + 协议 + 测试客户端（历史，未接）
-scripts/                      build-*（资源导入）、test-*（单测/回归）、smoke/shot/mgr-*（截图）
-REPORTS/HANDOFF.md            夜班（夜晚 1:1 + 光影）交付说明
-REPORTS/HANDOFF-2.md          本日接管记录（菜单/触屏回归 + 生物模型）
-```
-
-## 资源授权
-
-`public/mc/` 属于 Mojang/Microsoft。仅本机私人运行。公网发布时必须让访问者提供自己的官方客户端资源，
-或替换为授权/自制素材；不要提交该目录或部署到公网。
+- **Code:** LGPL-3.0-or-later. See [`../LICENSE`](../LICENSE) and [`../NOTICE`](../NOTICE).
+  Parts of the simulation layer are ported from Horizon (LGPL-3.0-or-later).
+- **Game assets:** textures, models, sounds, fonts, language files and other data are
+  Mojang/Microsoft property. They are **not** included in this repository; `public/mc/`
+  is generated locally from a legally owned game installation. Do not commit that
+  directory or deploy it publicly.
+- **No game code:** this project does not distribute Mojang code or a Minecraft client.
+  You must own Minecraft: Java Edition to import its assets.

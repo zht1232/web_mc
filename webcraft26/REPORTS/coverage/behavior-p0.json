@@ -1,0 +1,29 @@
+{
+  "generatedAt": "2026-11-21T15:20:07.935Z",
+  "results": [
+    {
+      "id": "B-01",
+      "title": "空栈残留 item + 手部仍显示",
+      "status": "PASS",
+      "detail": "count=0 isEmpty=true item=false hand="
+    },
+    {
+      "id": "B-02",
+      "title": "创造格拖到热栏后光标仍持有物品",
+      "status": "PASS",
+      "detail": "pick={\"itemId\":1,\"count\":1} drop=null hotbar={\"itemId\":1,\"count\":1}"
+    },
+    {
+      "id": "B-03",
+      "title": "创造模式玩家仍是怪物目标",
+      "status": "PASS",
+      "detail": "zombie=null creeper=null swell=0 spawned=true/true"
+    },
+    {
+      "id": "B-04",
+      "title": "页面错误",
+      "status": "PASS",
+      "detail": "none"
+    }
+  ]
+}

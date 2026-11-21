@@ -337,6 +337,35 @@ function computeLayer(stateId: number, mc: MinecraftData): RenderLayer {
   return RenderLayer.SOLID;
 }
 
+/**
+ * Complementary's waving-blocks list, reduced to what we ship: cross/flat plants sway from their
+ * root, leaves use a smaller weight so the canopy breathes without detaching from the trunk.
+ * The weight ends up in the vertex colour alpha (255 = static), which neither the terrain shader
+ * nor the shadow pass reads for anything else.
+ */
+function swayWeightOf(state: number, mc: MinecraftData): number {
+  const meta = mc.blocks[mc.stateBlock[state]];
+  const name = meta.name;
+  if (name.endsWith('_leaves')) return 0.45;
+  switch (meta.cls) {
+    case 'FlowerBlock':
+    case 'BushBlock':
+    case 'SaplingBlock':
+    case 'CropBlock':
+    case 'DoublePlantBlock':
+    case 'SugarCaneBlock':
+    case 'StemBlock':
+    case 'AttachedStemBlock':
+    case 'TallGrassBlock':
+      return 1;
+    default:
+      break;
+  }
+  if (name === 'grass' || name === 'short_grass' || name === 'fern' || name === 'tall_grass'
+    || name === 'large_fern' || name === 'vine' || name === 'glow_lichen') return 1;
+  return 0;
+}
+
 /** names that vanilla renders with RenderType.translucent */
 function isTranslucentName(name: string): boolean {
   switch (name) {
@@ -762,6 +791,7 @@ class SectionMesher {
     const emissive = this.mc.lightEmission[state] !== 0;
     // `ambientOcclusion && blockState.getLightEmission() == 0 && parts.getFirst().useAmbientOcclusion()`
     const useAo = model.ao && !emissive;
+    const sway = swayWeightOf(state, this.mc);
 
     const ox = this.input.originX + x;
     const oy = this.input.originY + y;
@@ -800,7 +830,7 @@ class SectionMesher {
       if (useAo) this.aoQuad(quad, state, ox, oy, oz, tr, tg, tb);
       else this.flatQuad(quad, state, ox, oy, oz, tr, tg, tb);
 
-      this.writeQuad(buf, quad, x, y, z);
+      this.writeQuad(buf, quad, x, y, z, sway);
       emitted++;
     }
 
@@ -1058,12 +1088,23 @@ class SectionMesher {
   }
 
   /** writes the 4 vertices collected in vLight/vColor plus the 6 indices */
-  private writeQuad(buf: QuadBuffer, quad: DecodedQuad, ox: number, oy: number, oz: number): void {
+  private writeQuad(
+    buf: QuadBuffer, quad: DecodedQuad, ox: number, oy: number, oz: number, sway: number,
+  ): void {
     const base = buf.beginQuad();
     const p = quad.p;
     const uv = quad.uv;
     const tex = quad.tex;
     for (let i = 0; i < 4; i++) {
+      // Wind weight in the colour alpha: 255 (opaque) means static, lower means the vertex follows
+      // the wind. The weight is the vertex height inside the block (root = 0, tip = 1), so a plant
+      // stays planted; leaves get a smaller scale from swayWeightOf().
+      let color = this.vColor[i];
+      if (sway > 0) {
+        const w = Math.max(0, Math.min(1, p[i * 3 + 1])) * sway;
+        const a = 255 - Math.round(254 * w);
+        color = ((color & 0x00ffffff) | (a << 24)) >>> 0;
+      }
       buf.putVertex(
         base + i,
         ox + p[i * 3],
@@ -1073,7 +1114,7 @@ class SectionMesher {
         Math.round(uv[i * 2 + 1] * 256),
         tex,
         this.vLight[i],
-        this.vColor[i],
+        color,
       );
     }
     buf.putQuadIndices(base);

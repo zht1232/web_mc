@@ -106,9 +106,14 @@ export class ResultSlot extends Slot {
   protected removeCount = 0;
   /** Set by the owning AbstractCraftingMenu to consume inputs on take. */
   onTakeRecipe?: (player: PlayerRef, carried: ItemStack) => void;
+  /** Set by the owning menu: Stats.ITEM_CRAFTED (item short name + taken count). */
+  onCrafted?: (itemName: string, count: number) => void;
+  private lastRemovedItem: string | null = null;
 
   override mayPlace(_stack: ItemStack): boolean { return false; }
   override remove(amount: number): ItemStack {
+    const stack = this.getItem();
+    if (stack.item) this.lastRemovedItem = stack.item.name;
     if (this.hasItem()) this.removeCount += Math.min(amount, this.getItem().getCount());
     return super.remove(amount);
   }
@@ -116,7 +121,11 @@ export class ResultSlot extends Slot {
   protected override onSwapCraft(count: number): void { this.removeCount += count; }
   override onTake(player: PlayerRef, carried: ItemStack): void {
     if (this.onTakeRecipe) this.onTakeRecipe(player, carried);
+    if (this.onCrafted && this.lastRemovedItem && this.removeCount > 0) {
+      this.onCrafted(this.lastRemovedItem, this.removeCount);
+    }
     this.removeCount = 0;
+    this.lastRemovedItem = null;
     super.onTake(player, carried);
   }
   override isFake(): boolean { return true; }
@@ -137,13 +146,29 @@ export class ArmorSlot extends Slot {
 
 /** Furnace result slot: cannot place; grants stored experience on take. */
 export class FurnaceResultSlot extends Slot {
+  /** Set by the owning AbstractFurnaceMenu: Stats.ITEM_CRAFTED on take. */
+  onCrafted?: (itemName: string, count: number) => void;
+  private lastRemovedItem: string | null = null;
+  private takenCount = 0;
+
   constructor(
     container: Container, slot: number, x: number, y: number,
     private readonly experienceTaker: (player: PlayerRef) => void,
   ) { super(container, slot, x, y); }
   override mayPlace(_stack: ItemStack): boolean { return false; }
+  override remove(amount: number): ItemStack {
+    const stack = this.getItem();
+    if (stack.item) this.lastRemovedItem = stack.item.name;
+    if (this.hasItem()) this.takenCount += Math.min(amount, this.getItem().getCount());
+    return super.remove(amount);
+  }
   override onTake(player: PlayerRef, carried: ItemStack): void {
     this.experienceTaker(player);
+    if (this.onCrafted && this.lastRemovedItem && this.takenCount > 0) {
+      this.onCrafted(this.lastRemovedItem, this.takenCount);
+    }
+    this.takenCount = 0;
+    this.lastRemovedItem = null;
     super.onTake(player, carried);
   }
 }

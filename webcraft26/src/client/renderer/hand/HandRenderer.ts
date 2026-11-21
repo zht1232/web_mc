@@ -353,7 +353,8 @@ export class HandRenderer {
     this.oAttack = this.attack;
     this.attack = clamp(player.swingProgress, 0, 1);
 
-    const nextId = survival.getSelectedStack().item?.namespacedId ?? '';
+    const selected = survival.getSelectedStack();
+    const nextId = selected.isEmpty() ? '' : selected.item?.namespacedId ?? '';
     if (this.debugHeldItem !== undefined) {
       this.visibleItemId = this.debugHeldItem === '' ? '' : (this.debugHeldItem.includes(':') ? this.debugHeldItem : `minecraft:${this.debugHeldItem}`);
       this.mainHandHeight = 1;

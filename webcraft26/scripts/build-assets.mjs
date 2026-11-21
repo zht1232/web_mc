@@ -5,8 +5,20 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { PNG } from 'pngjs';
 
-const SRC = process.env.MC_ASSETS || 'G:/ck-web26/vanilla/assets/minecraft';
+const SRC = process.env.MC_ASSETS;
+if (!SRC) {
+  console.error('Set MC_ASSETS to the assets/minecraft directory extracted from your own Minecraft 26.2 client.jar.');
+  process.exit(1);
+}
 const OUT = path.resolve('public/mc');
+
+/** Default launcher asset root: %APPDATA%/.minecraft/assets on Windows, ~/.minecraft/assets elsewhere. */
+function defaultExternalAssets() {
+  const base = process.platform === 'win32' && process.env.APPDATA
+    ? process.env.APPDATA
+    : (process.env.HOME || process.env.USERPROFILE || '');
+  return path.join(base, '.minecraft', 'assets');
+}
 
 const DIRS = ['down', 'up', 'north', 'south', 'west', 'east'];
 const DIR_INDEX = Object.fromEntries(DIRS.map((d, i) => [d, i]));
@@ -327,7 +339,7 @@ const SOUND_EVENTS = [
 ];
 
 async function buildSounds() {
-  const ext = process.env.MC_EXTERNAL || 'C:/Users/zht/AppData/Roaming/.minecraft/assets';
+  const ext = process.env.MC_EXTERNAL || defaultExternalAssets();
   const idxPath = path.join(ext, 'indexes', '32.json');
   if (!existsSync(idxPath)) { console.warn('sound index not found:', idxPath); return { events: {} }; }
   const index = JSON.parse(await fs.readFile(idxPath, 'utf8')).objects;
@@ -380,7 +392,7 @@ async function copyTree(src, dst) {
 // A real 26.2 client stores the six 1024x1024 faces in the assets object store;
 // copy those official faces (never from the network) when they are available.
 async function copyMenuAssets() {
-  const ext = process.env.MC_EXTERNAL || 'C:/Users/zht/AppData/Roaming/.minecraft/assets';
+  const ext = process.env.MC_EXTERNAL || defaultExternalAssets();
   const idxDir = path.join(ext, 'indexes');
   const objDir = path.join(ext, 'objects');
   const faces = [];

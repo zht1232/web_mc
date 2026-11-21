@@ -1,6 +1,6 @@
 // Faithful port of Minecraft 26.2's blockstate/model baking pipeline.
 // Every rule here mirrors a specific class in the decompiled client jar
-// (G:/ck-web26/src-vanilla); the source is named in the comment above it.
+// (src-vanilla); the source is named in the comment above it.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { existsSync } from 'node:fs';

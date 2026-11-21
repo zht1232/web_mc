@@ -172,7 +172,7 @@ export abstract class AbstractContainerScreen extends Screen {
   protected hoveredSlot = -1;
   private containerDragButton = -1;
   /** Slot the current press started on (used to place a stack on release). */
-  private pressedSlot = -1;
+  protected pressedSlot = -1;
   private dragStartSlot = -1;
   private dragMoved = false;
   private doubleClick = false;
@@ -181,7 +181,7 @@ export abstract class AbstractContainerScreen extends Screen {
   private lastClickTime = 0;
   private readonly quickCraftSlots = new Set<number>();
   /** True when the background sheet already contains the slot frames (vanilla sheets do). */
-  private textureBacked = false;
+  protected textureBacked = false;
 
   constructor(
     env: ConstructorParameters<typeof Screen>[0],
@@ -204,18 +204,26 @@ export abstract class AbstractContainerScreen extends Screen {
   protected abstract buildSlots(): SlotDef[];
 
   protected build(): void {
-    const o = containerOrigin(this.width, this.height, this.imageWidth, this.imageHeight);
-    this.leftPos = o.leftPos;
-    this.topPos = o.topPos;
-    this.inventoryLabelY = this.imageHeight - CONTAINER_INVENTORY_LABEL_Y_OFFSET;
-    this.slots = this.buildSlots();
-    this.cancelDrag();
+    this.relayout();
     if (this.env.deps.touchInput) {
       this.addRenderableWidget(new Button(this.width - 48, 4, 44, 20, this.t('gui.done'), () => {
         this.onClose();
         this.close();
       }));
     }
+  }
+
+  /**
+   * Recomputes the origin + slot list. Used when a screen changes its panel size at runtime
+   * (the creative Survival Inventory tab is 195x166 while the item tabs are 195x136).
+   */
+  protected relayout(): void {
+    const o = containerOrigin(this.width, this.height, this.imageWidth, this.imageHeight);
+    this.leftPos = o.leftPos;
+    this.topPos = o.topPos;
+    this.inventoryLabelY = this.imageHeight - CONTAINER_INVENTORY_LABEL_Y_OFFSET;
+    this.slots = this.buildSlots();
+    this.cancelDrag();
   }
 
   protected slotRects(): Rect[] {
@@ -242,9 +250,21 @@ export abstract class AbstractContainerScreen extends Screen {
     g.pushPose();
     g.translate(this.leftPos, this.topPos);
 
-    // The vanilla container sheet already contains the panel bevel and every slot frame. Drawing
-    // a second #C6C6C6 fill / outline / slot frame on top produced the light-grey grid lines the
-    // player saw around every slot. Only use the procedural fallback when the texture is missing.
+    this.drawContainerBackground(g);
+
+    this.drawLabels(g);
+    this.drawSlotHighlight(g, SLOT_HIGHLIGHT_BACK);
+    this.drawSlots(g);
+    this.drawSlotHighlight(g, SLOT_HIGHLIGHT_FRONT);
+    g.popPose();
+  }
+
+  /**
+   * The vanilla container sheet already contains the panel bevel and every slot frame. Drawing
+   * a second #C6C6C6 fill / outline / slot frame on top produced the light-grey grid lines the
+   * player saw around every slot. Only use the procedural fallback when the texture is missing.
+   */
+  protected drawContainerBackground(g: GuiGraphics): void {
     const hasTexture = !!g.textures.get(this.backgroundTexture);
     if (!hasTexture) {
       g.fill(0, 0, this.imageWidth, this.imageHeight, 0xffc6c6c6);
@@ -253,12 +273,6 @@ export abstract class AbstractContainerScreen extends Screen {
       g.blit(this.backgroundTexture, 0, 0, this.imageWidth, this.imageHeight);
     }
     this.textureBacked = hasTexture;
-
-    this.drawLabels(g);
-    this.drawSlotHighlight(g, SLOT_HIGHLIGHT_BACK);
-    this.drawSlots(g);
-    this.drawSlotHighlight(g, SLOT_HIGHLIGHT_FRONT);
-    g.popPose();
   }
 
   protected drawLabels(g: GuiGraphics): void {

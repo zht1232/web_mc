@@ -122,7 +122,7 @@ export class TitleScreen extends Screen {
 
   protected onMouseClicked(mx: number, my: number, button: number): boolean {
     if (button === 0 && isInside(mx, my, this.layout.copyright)) {
-      this.toast('Credits & Attribution');
+      this.toast(this.t('options.credits_and_attribution'));
       return true;
     }
     return false;

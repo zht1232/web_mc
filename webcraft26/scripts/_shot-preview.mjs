@@ -1,0 +1,23 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright';
+import { launchOptions } from './lib/browser.mjs';
+const out = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../shots/diag');
+const b = await chromium.launch(launchOptions());
+const p = await (await b.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
+p.on('pageerror', (e) => console.log('ERR', String(e).slice(0, 300)));
+p.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text().slice(0, 200)); });
+await p.goto('http://127.0.0.1:5174/?play', { waitUntil: 'load' });
+await p.waitForFunction(() => !!window.__mc?.running, null, { timeout: 120000 });
+await p.waitForTimeout(4000);
+await p.evaluate(() => window.__mc.screens.open('inventory'));
+await p.waitForTimeout(1200);
+const info = await p.evaluate(() => {
+  const s = window.__mc.screens.current;
+  return { hasHook: typeof s.env.deps.renderEntityPreview === 'function', gl: window.__mc.gl.getError() };
+});
+console.log(JSON.stringify(info));
+const r = await p.evaluate(() => { const s = window.__mc.screens.current; return { l: s.leftPos, t: s.topPos, g: window.__mc.guiScale }; });
+await p.screenshot({ path: path.join(out, 'inv-preview.png'), clip: { x: (r.l + 20) * r.g, y: (r.t + 4) * r.g, width: 62 * r.g, height: 80 * r.g } });
+await p.screenshot({ path: path.join(out, 'inv-full.png') });
+await b.close();

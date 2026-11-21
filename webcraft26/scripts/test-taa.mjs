@@ -116,11 +116,16 @@ try {
 
   console.log('=== 2. static frame is temporally stable ===');
   await clearMobs();
+  // Waving grass/leaves (Complementary WAVING_BLOCKS) keeps animating with a frozen camera, so the
+  // temporal-stability metric only makes sense with the wind off.
+  await ev(() => { window.__mc.renderer.swayEnabled = false; });
+  await sleep(400);
   const a = readPng(await page.screenshot({ path: `${outDir}/01-taa-static-a.png` }));
   await sleep(450);
   const b = readPng(await page.screenshot({ path: `${outDir}/02-taa-static-b.png` }));
   const jitterDiff = meanAbsDiff(a, b, 500, 430, 780, 640);
   check('converged frame has no flicker', jitterDiff < 3.5, `meanAbsDiff=${jitterDiff.toFixed(3)}`);
+  await ev(() => { window.__mc.renderer.swayEnabled = true; });
 
   console.log('=== 3. TAA resolves aliasing (edge energy) ===');
   const taaEnergy = edgeEnergy(a, 200, 140, 1080, 620);

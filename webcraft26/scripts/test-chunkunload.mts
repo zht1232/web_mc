@@ -4,7 +4,7 @@
 //
 // Mirrors the vanilla client drop path:
 //   net.minecraft.client.multiplayer.ClientChunkCache.drop / Storage.inRange / Storage.drop
-//   (G:/ck-web26/src-vanilla/net/minecraft/client/multiplayer/ClientChunkCache.java:60-68,
+//   (src-vanilla/net/minecraft/client/multiplayer/ClientChunkCache.java:60-68,
 //    159-161, 258-265, 318-320)
 // Vanilla keeps its storage range at max(2, viewRange) + 3 chunks, i.e. 3 chunks of hysteresis
 // between the load radius (render distance) and the unload radius. These checks pin that policy:

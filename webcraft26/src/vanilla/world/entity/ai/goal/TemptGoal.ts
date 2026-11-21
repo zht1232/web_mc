@@ -10,10 +10,25 @@ import type { Targetable } from '../../Entity.js';
 export class TemptGoal extends Goal {
   private player: Targetable | null = null;
   private timer = 0;
+  private readonly foodItems: ReadonlySet<string>;
 
-  constructor(private readonly mob: Mob, private readonly speed: number, private readonly range = 10) {
+  constructor(
+    private readonly mob: Mob,
+    private readonly speed: number,
+    foodItems: readonly string[] = [],
+    private readonly range = 10,
+  ) {
     super();
+    this.foodItems = new Set(foodItems);
     this.setFlags(GoalFlag.MOVE);
+  }
+
+  /** TemptGoal.shouldFollow: main hand or offhand holds one of the species' foods. */
+  private hasFood(): boolean {
+    if (this.foodItems.size === 0) return false;
+    const held = this.mob.getWorld()?.getPlayerHeldItems?.() ?? [];
+    for (let i = 0; i < held.length; i++) if (this.foodItems.has(held[i])) return true;
+    return false;
   }
 
   canUse(): boolean {
@@ -21,6 +36,7 @@ export class TemptGoal extends Goal {
     if ((this.mob.tickCount + this.mob.id * 3) % 20 !== 0) return false;
     const p = this.mob.world ? this.mob.world.getPlayer() : null;
     if (!p || !p.isAlive()) return false;
+    if (!this.hasFood()) return false;
     if (this.mob.distanceToSqr(p.x, p.y, p.z) > this.range * this.range) return false;
     if (this.mob.getRandom().nextInt(3) !== 0) return false;
     this.player = p;
@@ -29,7 +45,7 @@ export class TemptGoal extends Goal {
 
   canContinueToUse(): boolean {
     const p = this.player;
-    return p !== null && p.isAlive() && this.timer > 0
+    return p !== null && p.isAlive() && this.timer > 0 && this.hasFood()
       && this.mob.distanceToSqr(p.x, p.y, p.z) < (this.range + 4) * (this.range + 4)
       && this.mob.distanceToSqr(p.x, p.y, p.z) > 2.25;
   }

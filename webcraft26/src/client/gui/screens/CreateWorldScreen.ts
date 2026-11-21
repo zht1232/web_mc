@@ -98,11 +98,11 @@ export class CreateWorldScreen extends Screen {
         (v) => { this.state.bonusChest = v; }));
     } else {
       this.addRenderableWidget(new Button(left, y0, NAME_BOX_WIDTH, BUTTON_DEFAULT_HEIGHT,
-        this.t('selectWorld.gameRules'), () => this.toast('Game Rules')));
+        this.t('selectWorld.gameRules'), () => this.toast(this.t('selectWorld.gameRules'))));
       this.addRenderableWidget(new Button(left, y0 + 28, NAME_BOX_WIDTH, BUTTON_DEFAULT_HEIGHT,
-        this.t('selectWorld.dataPacks'), () => this.toast('Data Packs')));
+        this.t('selectWorld.dataPacks'), () => this.toast(this.t('selectWorld.dataPacks'))));
       this.addRenderableWidget(new Button(left, y0 + 56, NAME_BOX_WIDTH, BUTTON_DEFAULT_HEIGHT,
-        this.t('selectWorld.moreWorldOptions'), () => this.toast('More World Options')));
+        this.t('selectWorld.moreWorldOptions'), () => this.toast(this.t('selectWorld.moreWorldOptions'))));
     }
 
     // Footer: Create (w/2 - 155) / Cancel (w/2 + 5).

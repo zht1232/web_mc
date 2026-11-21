@@ -1,0 +1,15 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright';
+import { launchOptions } from './lib/browser.mjs';
+const out = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../shots/diag');
+const b = await chromium.launch(launchOptions());
+const p = await (await b.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
+await p.goto('http://127.0.0.1:5174/?play', { waitUntil: 'load' });
+await p.waitForFunction(() => !!window.__mc?.running, null, { timeout: 120000 });
+await p.waitForTimeout(9000);
+await p.screenshot({ path: path.join(out, 'world-after.png') });
+await p.evaluate(() => { window.__mc.player.pos = { x: window.__mc.player.pos.x, y: window.__mc.player.pos.y + 30, z: window.__mc.player.pos.z }; window.__mc.player.flying = true; });
+await p.waitForTimeout(2500);
+await p.screenshot({ path: path.join(out, 'world-air.png') });
+await b.close();

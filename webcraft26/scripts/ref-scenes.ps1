@@ -1,8 +1,8 @@
 param(
   [int]$JavaPid = 0,
-  [string]$OutDir = 'G:\web_mc\webcraft26\shots\ref',
-  [string]$ShotDir = 'G:\ck-web26\shotdir\screenshots',
-  [string]$LogFile = 'G:\web_mc\webcraft26\shots\ref\_capture.log',
+  [string]$OutDir = (Join-Path $PSScriptRoot '..\shots\ref'),
+  [string]$ShotDir = 'ck-web26\shotdir\screenshots',
+  [string]$LogFile = (Join-Path $PSScriptRoot '..\shots\ref\_capture.log'),
   [string]$Only = '',
   [int]$GapMs = 10500,
   [int]$ScreenW = 1280,

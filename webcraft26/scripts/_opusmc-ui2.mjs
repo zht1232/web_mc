@@ -1,0 +1,12 @@
+import { chromium } from 'playwright';
+import { launchOptions } from './lib/browser.mjs';
+const b = await chromium.launch(launchOptions());
+const p = await b.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+await p.goto('http://127.0.0.1:5175/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+await p.waitForTimeout(9000);
+const ok = await p.evaluate(() => { try { window.game.ui.open(new CraftingScreen(window.game, 2)); return true; } catch (e) { return String(e); } });
+console.log('open', ok);
+await p.waitForTimeout(800);
+await p.screenshot({ path: 'shots/opusmc-ui-crafting.png' });
+console.log('screen', await p.evaluate(() => window.game?.ui?.screen?.constructor?.name));
+await b.close();

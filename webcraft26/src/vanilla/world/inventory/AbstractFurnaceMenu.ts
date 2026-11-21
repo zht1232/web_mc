@@ -118,6 +118,8 @@ export abstract class AbstractFurnaceMenu extends AbstractContainerMenu {
 
   /** Set by SurvivalState to route smelting XP into the player. */
   onExperience?: (points: number) => void;
+  /** Stats.ITEM_CRAFTED hook wired by the game layer. */
+  onCrafted?: (itemName: string, count: number) => void;
 
   constructor(
     menuType: string,
@@ -138,7 +140,9 @@ export abstract class AbstractFurnaceMenu extends AbstractContainerMenu {
 
     this.addSlot(new Slot(this.container, 0, 56, 17));
     this.addSlot(new FurnaceFuelSlot(this.container, 1, 56, 53, (s) => this.fuelValues.isFuel(s)));
-    this.addSlot(new FurnaceResultSlot(this.container, 2, 116, 35, () => this.popExperience()));
+    const result = new FurnaceResultSlot(this.container, 2, 116, 35, () => this.popExperience());
+    result.onCrafted = (name, count) => this.onCrafted?.(name, count);
+    this.addSlot(result);
     this.addStandardInventorySlots(playerInventory, 8, 84);
     this.addDataSlots(this.data);
   }

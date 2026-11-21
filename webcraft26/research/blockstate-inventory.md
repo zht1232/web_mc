@@ -2,7 +2,7 @@
 
 复现方式：`python research/inventory.py`（只读脚本，不写 src/scripts/public）。
 产物：`research/blockstate-inventory.json`（机器可读，烘焙校验用）、`research/_inventory_dump.txt`（本报告全部数字的原始输出行）、`research/_multipart_complex.json`（3 个最复杂 multipart 文件的完整 condition 树）。
-数据源：`G:\ck-web26\vanilla\assets\minecraft\{blockstates,models,textures}` + `G:\ck-web26\src-vanilla`。
+数据源：`<MC_ASSETS>\{blockstates,models,textures}` + `src-vanilla`。
 文法出处（不是 wiki 记忆，是本机反编译源码）：
 `net/minecraft/client/renderer/block/dispatch/BlockStateModelDispatcher.java`、`BlockStateModel.java`、`Variant.java`、`VariantSelector.java`、`multipart/{Condition,CombinedCondition,KeyValueCondition,Selector,MultiPartModel}.java`、
 `net/minecraft/client/resources/model/{BlockStateModelLoader,ResolvedModel,UnbakedModel}.java`、`sprite/TextureSlots.java`、`cuboid/{CuboidModel,CuboidModelElement,CuboidFace,CuboidRotation,UnbakedCuboidGeometry,FaceBakery}.java`。

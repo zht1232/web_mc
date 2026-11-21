@@ -101,6 +101,10 @@ export function createTextureArray(
   if (mipmaps) {
     gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
     gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAX_LEVEL, 4);
+    // Do NOT enable EXT_texture_filter_anisotropic here. Measured on ANGLE/D3D11 with this
+    // mipmapped array: 4x anisotropy made every magnified texel a smooth gradient - the world
+    // looked out of focus ("all blocks became blurry"), and the item icons (ItemIconAtlas shares
+    // this texture) blurred with it. With anisotropy off the mag filter is a hard NEAREST again.
   }
   return { texture: tex, layerCount, size };
 }

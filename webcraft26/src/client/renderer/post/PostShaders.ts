@@ -396,14 +396,25 @@ precision highp float;
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec2 aUV;      // texel space * 256, same encoding as TERRAIN_VERT
 layout(location = 2) in uint aLayer;
+layout(location = 4) in vec4 aColor;   // alpha = wind weight (255 = static), see SectionMesher
 uniform mat4 uLightViewProj;
 uniform vec3 uChunkOrigin;
+uniform float uSwayTime;
 out vec2 vUV;
 flat out uint vLayer;
 void main() {
   vUV = aUV / 4096.0;
   vLayer = aLayer;
-  gl_Position = uLightViewProj * vec4(aPos + uChunkOrigin, 1.0);
+  vec3 world = aPos + uChunkOrigin;
+  // Same wind formula as TERRAIN_VERT so plant/leaf shadows follow the geometry.
+  float sway = 1.0 - aColor.a;
+  if (uSwayTime > 0.0 && sway > 0.004) {
+    float gust = sin(uSwayTime * 1.6 + world.x * 0.35 + world.z * 0.27)
+      + 0.5 * sin(uSwayTime * 3.3 - world.z * 0.6 + world.x * 0.12);
+    world.x += gust * 0.06 * sway;
+    world.z += cos(uSwayTime * 1.25 + world.z * 0.42 + world.x * 0.1) * 0.05 * sway;
+  }
+  gl_Position = uLightViewProj * vec4(world, 1.0);
 }`;
 
 export const SHADOW_FRAG = `#version 300 es

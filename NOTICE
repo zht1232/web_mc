@@ -1,0 +1,31 @@
+WebCraft26 — third-party notices
+================================
+
+Source code
+-----------
+The TypeScript source in this repository is licensed under the GNU Lesser
+General Public License, version 3 or later (see LICENSE).
+
+Parts of the simulation layer are ports of behaviour and algorithms from
+Horizon, a Minecraft client written in Rust:
+  https://github.com/horizon-rust/horizon
+Horizon is licensed under LGPL-3.0-or-later for its original work; code that
+was merged before its move from MIT remains available under the MIT licence.
+The ported portions in this repository keep the LGPL-3.0-or-later terms.
+
+Minecraft
+---------
+Minecraft is a trademark of Mojang Synergies AB / Microsoft. This project is
+not affiliated with, endorsed by, or supported by Mojang or Microsoft.
+
+This repository does not contain Minecraft game assets. Textures, models,
+sounds, fonts, language files and other data are imported locally by the user
+from a legally owned Minecraft: Java Edition installation. They remain the
+property of Mojang/Microsoft and are not covered by this project's licence.
+
+The `.mca` / region format and gameplay behaviour are interoperable with
+Minecraft: Java Edition; no Mojang code is distributed here.
+
+Dependencies
+------------
+Third-party npm packages keep their own licences (see package-lock.json).

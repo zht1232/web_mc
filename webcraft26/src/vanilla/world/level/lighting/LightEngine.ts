@@ -117,16 +117,17 @@ export class LightEngine {
   private setSkyLight(x: number, y: number, z: number, level: number): void {
     const chunk = this.chunkAt(x, z);
     if (!chunk) return;
-    const section = chunk.getSection(y >> 4);
-    if (!section) return;
+    // A newly placed light source can be in an empty air section that has no section object
+    // yet. Silently dropping the write made getSkyLight()/getBlockLight() keep returning the
+    // old value and the increase queue re-enqueued the same cells forever.
+    const section = chunk.getOrCreateSection(y >> 4);
     section.getSkyLight().set(x & 15, y & 15, z & 15, level);
   }
 
   private setBlockLight(x: number, y: number, z: number, level: number): void {
     const chunk = this.chunkAt(x, z);
     if (!chunk) return;
-    const section = chunk.getSection(y >> 4);
-    if (!section) return;
+    const section = chunk.getOrCreateSection(y >> 4);
     section.getBlockLight().set(x & 15, y & 15, z & 15, level);
   }
 
@@ -280,8 +281,14 @@ export class LightEngine {
         this.skyDecrease.push(x, y, z, prev);
         this.processSkyDecrease();
       }
-      // re-seed from the column above
-      const top = this.recomputeColumnSky(x, z, y);
+      // Re-seed from the column above. This cell must be written too: pushing it into the
+      // increase queue only spreads light to its neighbours, so a newly dug 1-deep hole (whose
+      // only open neighbour is above) stayed at sky light 0 and rendered pitch black.
+      const fromAbove = this.recomputeColumnSky(x, z, y);
+      const top = mc.propagatesSky(newState)
+        ? fromAbove
+        : Math.max(0, fromAbove - Math.max(1, newDamp));
+      this.setSkyLight(x, y, z, top);
       if (top > 0) this.skyIncrease.push(x, y, z, top);
       this.processSkyIncrease();
     }
@@ -317,7 +324,12 @@ export class LightEngine {
         if (!chunk) continue;
         const state = chunk.getBlockState(nx & 15, ny, nz & 15);
         const damp = Math.max(1, mc.dampOf(state));
-        const target = Math.max(0, level - damp);
+        // Skylight travels straight down an open column without losing a level (vanilla
+        // SkyLightSectionStorage); only horizontal/upward steps and non-transparent blocks
+        // attenuate it. Without this a 15-level shaft was dark two blocks down.
+        const target = dy === -1 && mc.propagatesSky(state)
+          ? level
+          : Math.max(0, level - damp);
         if (target <= 0) continue;
         if (this.getSkyLight(nx, ny, nz) < target) {
           this.setSkyLight(nx, ny, nz, target);

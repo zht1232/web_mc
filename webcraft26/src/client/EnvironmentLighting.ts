@@ -5,7 +5,7 @@
 //
 // 26.2 drives sky colour, fog, stars and the lightmap through timed attribute tracks
 // instead of hard-coded day/night branches. Everything below is copied from those
-// sources (the file:line references point at G:/ck-web26/src-vanilla/...), so the
+// sources (the file:line references point at src-vanilla/...), so the
 // lighting matches the original client instead of "looking about right".
 //
 // Sources:

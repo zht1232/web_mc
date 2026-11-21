@@ -2,6 +2,8 @@
   "name": "webcraft26",
   "private": true,
   "version": "0.1.0",
+  "description": "A browser port of Minecraft 26.2 (TypeScript + WebGL2) that runs on assets from your own game installation.",
+  "license": "LGPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5174",
@@ -9,7 +11,6 @@
     "assets": "node scripts/build-assets.mjs && node scripts/build-states.mjs && node scripts/build-mobs.mjs",
     "states": "node scripts/build-states.mjs",
     "verify:states": "node research/verify-geometry.mjs",
-    "bundle": "node scripts/export-bundle.mjs --out G:/ck-web26/export --with-assets",
     "preview": "vite preview --host 0.0.0.0 --port 5174"
   },
   "devDependencies": {

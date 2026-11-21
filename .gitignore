@@ -17,3 +17,8 @@ desktop.ini
 /webcraft26/logs/
 /webcraft26/node_modules/
 
+
+# Local decompiled/reference material and private development reports (not published)
+/_src/
+/dump/
+/REPORTS/

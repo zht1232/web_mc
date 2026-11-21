@@ -6,7 +6,7 @@
 
 import { Entity } from '../Entity.js';
 import { entityType } from '../EntityType.js';
-import type { ItemStack } from '../LivingEntity.js';
+import type { ItemStack } from '../../item/ItemStack.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
 
 export class ItemEntity extends Entity {
@@ -14,7 +14,10 @@ export class ItemEntity extends Entity {
   age = 0;
   pickupDelay = 10;
   health = 5;
-  /** render bob phase */
+  /** render bob phase (vanilla ItemEntity.bobOffs, rolled from the entity RNG on first tick) */
+  bobOffs = 0;
+  private bobInit = false;
+  /** render height offset / Y rotation, recomputed from age in tick() */
   bob = 0;
   spin = 0;
 
@@ -22,7 +25,6 @@ export class ItemEntity extends Entity {
     super(entityType('item'), level);
     this.setPos(x, y, z);
     this.item = item;
-    this.scale = 0.4;
   }
 
   getItem(): ItemStack { return this.item; }
@@ -41,10 +43,17 @@ export class ItemEntity extends Entity {
 
   tick(): void {
     this.baseTick();
+    if (!this.bobInit) {
+      this.bobInit = true;
+      this.bobOffs = this.random.nextFloat() * Math.PI * 2;
+    }
     this.age++;
     if (this.pickupDelay > 0) this.pickupDelay--;
-    this.bob += 0.04;
-    this.spin += 0.03;
+    // ItemEntityRenderer: bob = sin(age/10 + bobOffs) * 0.1 + 0.1; spin = age/20 radians.
+    this.bob = Math.sin(this.age / 10 + this.bobOffs) * 0.1 + 0.1;
+    this.spin = (this.age / 20) * Math.PI * 2 + this.bobOffs;
+    this.yRotO = this.yaw;
+    this.yaw = (this.spin * 180) / Math.PI;
 
     // vanilla ItemEntity gravity/drag
     this.vy = (this.vy - 0.04) * 0.98;

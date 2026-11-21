@@ -10,14 +10,14 @@
 import { MobRenderer } from '../src/client/renderer/entity/MobRenderer.ts';
 import { EntityBatch, FLOATS_PER_VERTEX } from '../src/client/renderer/entity/EntityRenderer.ts';
 import {
-  QuadrupedModel, PigModel, CowModel, SheepModel, ChickenModel,
+  QuadrupedModel, PigModel, CowModel, SheepModel, SheepFurModel, ChickenModel,
   ZombieModel, SkeletonModel, CreeperModel, SpiderModel, EndermanModel,
   SilverfishModel, WolfModel, RabbitModel, BatModel,
   SlimeModel, WitchModel, ZombieVillagerModel, FelineModel, FoxModel,
   ParrotModel, SquidModel, CodModel, SalmonModel,
 } from '../src/client/renderer/entity/model/EntityModels.ts';
 import {
-  MODEL_REGISTRY, ALL_TEXTURE_KEYS, getModelEntry,
+  MODEL_REGISTRY, ALL_TEXTURE_KEYS, getModelEntry, WHITE_TEXTURE, ITEM_ICON_TEXTURE,
 } from '../src/client/renderer/entity/model/ModelRegistry.ts';
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -43,6 +43,8 @@ interface FakeOpts {
   aggressive?: boolean; swell?: number;
   skyLight?: number; blockLight?: number;
   onGround?: boolean; tickCount?: number; scale?: number;
+  /** Sheep: wool colour index (DyeColor) and the sheared flag. */
+  woolColor?: number; sheared?: boolean;
 }
 
 const GROUND = 64;
@@ -70,6 +72,8 @@ function fakeEntity(typeName: string, opts: FakeOpts = {}): Entity {
     hurtTime: opts.hurtTime ?? 0,
     isAggressive: () => opts.aggressive ?? false,
     swell: opts.swell ?? 0,
+    woolColor: opts.woolColor ?? 0,
+    sheared: opts.sheared ?? false,
   } as unknown as Entity;
 }
 
@@ -124,7 +128,8 @@ function lightOf(typeName: string, opts: FakeOpts = {}): { sky: number; block: n
 
 const models: [string, { parts: unknown[]; vertexCount: number }][] = [
   ['QuadrupedModel', QuadrupedModel], ['PigModel', PigModel], ['CowModel', CowModel],
-  ['SheepModel', SheepModel], ['ChickenModel', ChickenModel], ['ZombieModel', ZombieModel],
+  ['SheepModel', SheepModel], ['SheepFurModel', SheepFurModel],
+  ['ChickenModel', ChickenModel], ['ZombieModel', ZombieModel],
   ['SkeletonModel', SkeletonModel], ['CreeperModel', CreeperModel], ['SpiderModel', SpiderModel],
   ['EndermanModel', EndermanModel], ['SilverfishModel', SilverfishModel], ['WolfModel', WolfModel],
   ['RabbitModel', RabbitModel], ['BatModel', BatModel],
@@ -140,7 +145,7 @@ for (const [name, m] of models) {
   totalVerts += m.vertexCount;
   if (m.parts.length === 0 || m.vertexCount <= 0) allModelsOk = false;
 }
-check('[1] 23 data-driven models baked', allModelsOk,
+check('[1] 24 data-driven models baked', allModelsOk,
   `parts=${models.reduce((s, [, m]) => s + m.parts.length, 0)} vertices=${totalVerts}`);
 
 const TYPES = ['zombie', 'skeleton', 'creeper', 'spider', 'enderman', 'silverfish',
@@ -342,13 +347,16 @@ for (const [type, entry] of Object.entries(MODEL_REGISTRY)) {
   if (!ALL_TEXTURE_KEYS.includes(entry.texture)) { texturesOk = false; textureDetail += `${type}:key-missing `; }
 }
 for (const key of ALL_TEXTURE_KEYS) {
-  if (key === '__white__') continue;
-  if (!existsSync(resolve(PROJECT_ROOT, 'public/mc/textures/entity', `${key}.png`))) {
+  // Generated textures (white fallback / GUI icon atlas) are uploaded at runtime, not PNG files.
+  if (key === WHITE_TEXTURE || key === ITEM_ICON_TEXTURE) continue;
+  // `block/...` keys (PrimedTnt) come from textures/block, not textures/entity.
+  const base = key.startsWith('block/') ? 'public/mc/textures' : 'public/mc/textures/entity';
+  if (!existsSync(resolve(PROJECT_ROOT, base, `${key}.png`))) {
     texturesOk = false; textureDetail += `${key}:png-missing `;
   }
 }
 check('[14] registry textures exist on disk and in ALL_TEXTURE_KEYS', texturesOk,
-  textureDetail || `${ALL_TEXTURE_KEYS.length - 1} entity png keys`);
+  textureDetail || `${ALL_TEXTURE_KEYS.length - 2} entity png keys`);
 
 // 15: the new models produce real, finite geometry at vanilla size. The squid is
 // the documented exception: SquidRenderer.setupRotations lowers the model by 0.7
@@ -435,6 +443,20 @@ for (const t of NEW_TYPES) {
 }
 check('[19] 12 new mobs x 5 render states produce finite vertices', newFuzzOk,
   `states=${NEW_TYPES.length * states.length}`);
+
+// 20: SheepRenderer's second layer — tinted by DyeColor, skipped when sheared.
+const sheepRenderer = new MobRenderer('sheep');
+const woolLayers = sheepRenderer.getLayers(fakeEntity('sheep', { woolColor: 14 }));
+const shearedLayers = sheepRenderer.getLayers(fakeEntity('sheep', { sheared: true }));
+const wool = woolLayers[0];
+const woolOk = !!wool && wool.texture === 'sheep/sheep_wool'
+  && wool.tint[0] > 0.6 && wool.tint[1] < 0.25 && wool.tint[2] < 0.2
+  && wool.model.vertexCount > 0;
+check('[20] sheep wool layer is tinted and hidden when sheared',
+  woolLayers.length === 1 && shearedLayers.length === 0 && woolOk,
+  `layers=${woolLayers.length} sheared=${shearedLayers.length}`
+    + ` tint=${wool ? wool.tint.map((v) => v.toFixed(2)).join(',') : '-'}`
+    + ` verts=${wool ? wool.model.vertexCount : 0}`);
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED  EXIT=0' : `\n${failures} CHECK(S) FAILED  EXIT=1`);
 process.exit(failures === 0 ? 0 : 1);

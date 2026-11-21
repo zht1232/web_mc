@@ -34,6 +34,20 @@ export interface Targetable {
 export interface MobWorld {
   readonly level: ClientLevel;
   getPlayer(): Targetable | null;
+  /** Local player game mode (survival / creative / spectator) for targeting conditions. */
+  getPlayerGameMode?(): string;
+  /** Non-empty main-hand + offhand item short names of the local player (TemptGoal). */
+  getPlayerHeldItems?(): readonly string[];
+  /** Called once when a living entity dies (loot / XP hook). */
+  onMobDeath?(e: Entity): void;
+  /** AgeableMob in love: the client spawns heart particles around `e`. */
+  onAnimalLove?(e: Entity): void;
+  /** Two animals bred successfully (Stats.ANIMALS_BRED). */
+  onAnimalBred?(e: Entity): void;
+  /** An adult chicken laid an egg (Chicken.eggTime). */
+  onChickenLayEgg?(e: Entity): void;
+  /** A thrown splash/lingering potion broke at (x,y,z); Game applies the area effects. */
+  onPotionSplash?(x: number, y: number, z: number, potionId: string, age: number, lingering: boolean): void;
   getEntities(): readonly Entity[];
   getGameTime(): number;
   isDay(): boolean;
@@ -44,8 +58,10 @@ export interface MobWorld {
   /**
    * Explosion hook (net/minecraft/world/level/Explosion): the main game listens
    * for it to damage the local player, break blocks and drop their loot.
+   * `interaction` is Level.ExplosionInteraction: mob explosions respect the
+   * mobGriefing gamerule, TNT always breaks blocks.
    */
-  explode?(x: number, y: number, z: number, power: number): void;
+  explode?(x: number, y: number, z: number, power: number, interaction?: 'mob' | 'tnt'): void;
 }
 
 export interface DamageSource {

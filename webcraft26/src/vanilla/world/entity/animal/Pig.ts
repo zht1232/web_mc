@@ -10,4 +10,7 @@ export class Pig extends Animal {
     this.speed = 0.25;
     this.maxHealth = 10; this.health = 10;
   }
+
+  /** ItemTags.PIG_FOOD. */
+  protected getTemptingItems(): readonly string[] { return ['carrot', 'potato', 'beetroot']; }
 }

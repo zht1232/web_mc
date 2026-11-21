@@ -39,11 +39,22 @@ export class ItemIconAtlas {
   private whiteLightmap: WebGLTexture;
   /** item index -> cell index */
   private cellOf = new Int32Array(0);
+  /** Per-icon fallback blits used only while the ImageBitmap snapshot is unavailable. */
+  private readonly iconCache = new Map<number, HTMLCanvasElement>();
   /** Physical pixels per atlas cell (16 * guiScale, clamped). */
   private cellSize = BASE_CELL;
   private atlasSize = BASE_CELL * DEFAULT_COLS;
   private atlasCols = DEFAULT_COLS;
   private builtScale = 0;
+  /** yaw(deg) -> iso view-projection, cached (225 generic, 135 stairs/fences/walls, 45 gates). */
+  private readonly isoVps = new Map<number, Float32Array>();
+  /** GPU-resident snapshot of the readback canvas; drawImage from a huge 2D canvas can be slow. */
+  private bitmap: ImageBitmap | null = null;
+  /** Per-frame draw cost, reported by PerfLog's HUD breakdown. */
+  readonly drawStats = { ms: 0, n: 0 };
+
+  /** Physical pixels per icon cell (diagnostics). */
+  get cellSizePx(): number { return this.cellSize; }
 
   constructor(
     private readonly gl: WebGL2RenderingContext,
@@ -62,6 +73,22 @@ export class ItemIconAtlas {
 
   get ready(): boolean { return this.canvas !== null; }
 
+  /** The baked atlas image (null before build / during a rebuild). */
+  get bakedCanvas(): HTMLCanvasElement | null { return this.canvas; }
+
+  /** Cell rectangle of an item in atlas pixels; null when the item has no icon yet. */
+  getCellRect(itemId: number): { x: number; y: number; size: number; atlas: number } | null {
+    if (!this.canvas || itemId < 0 || itemId >= this.cellOf.length) return null;
+    const cell = this.cellOf[itemId];
+    if (cell < 0) return null;
+    return {
+      x: (cell % this.atlasCols) * this.cellSize,
+      y: Math.floor(cell / this.atlasCols) * this.cellSize,
+      size: this.cellSize,
+      atlas: this.atlasSize,
+    };
+  }
+
   async loadModels(base = '/mc'): Promise<void> {
     const res = await fetch(`${base}/itemmodels.json`);
     if (!res.ok) return;
@@ -74,11 +101,14 @@ export class ItemIconAtlas {
    * the scale changed (window resize / moving to a different-DPI screen / video settings).
    */
   build(guiScale = 1): number {
-    const scale = Math.max(1, Math.min(4, Math.round(guiScale)));
+    // Cap at 6 (cell 96 px): guiScale 5 is what a 1.5x-DPI window picks, and baking a 64 px cell
+    // for a 90 px hotbar slot made every icon a blurry upscale ("item icons are fuzzy").
+    const scale = Math.max(1, Math.min(6, Math.round(guiScale)));
     if (this.canvas && this.builtScale === scale) return scale;
     this.builtScale = scale;
+    this.iconCache.clear();
     const gl = this.gl;
-    const wantCell = Math.min(64, BASE_CELL * scale);
+    const wantCell = Math.min(96, BASE_CELL * scale);
     // Keep all ~1537 items: 40 columns x 40 rows. Only shrink the cell (not the cell count)
     // if the atlas would exceed the GPU cap, so no item silently disappears at high DPI.
     let cols = DEFAULT_COLS;
@@ -128,6 +158,17 @@ export class ItemIconAtlas {
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
     this.program.set1i('uShadowMap1', 3);
+    // The water-reflection samplers are active in TERRAIN_FRAG too; icons never reflect, but every
+    // active sampler needs a complete texture or the draw is rejected.
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
+    this.program.set1i('uSceneColor', 5);
+    gl.activeTexture(gl.TEXTURE6);
+    gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
+    this.program.set1i('uSceneDepth', 6);
+    this.program.set1i('uWaterReflect', 0);
+    this.program.set2i('uWaterLayers', -1, -1);
+    gl.activeTexture(gl.TEXTURE0);
     this.program.set1f('uCascadeCount', 0);
     this.program.set1i('uUseShadows', 0);
     this.program.set1f('uFogStart', 1e9);
@@ -143,17 +184,25 @@ export class ItemIconAtlas {
 
     // Block items: vanilla display.gui rotation [30, 225, 0] => eye-space basis
     // R = Rx(30deg) * Ry(225deg); top + north + east faces are the visible ones.
+    // block/stairs, fence_inventory and wall_inventory override it to 135/45 in vanilla, so the
+    // icon is baked per model with the model's own yaw (see guiYawOf) - otherwise stairs/fences/
+    // walls appear mirrored ("the stairs in the inventory face the wrong way").
     const proj = ortho(-0.8, 0.8, -0.8, 0.8, -8, 8);
-    const yaw = (225 * Math.PI) / 180;
     const pitch = (30 * Math.PI) / 180;
-    const view = isoView(yaw, pitch);
-    const isoVp = mat4Mul(proj, view, new Float32Array(16));
+    const isoVpFor = (yawDeg: number): Float32Array => {
+      let vp = this.isoVps.get(yawDeg);
+      if (!vp) {
+        vp = mat4Mul(proj, isoView((yawDeg * Math.PI) / 180, pitch), new Float32Array(16));
+        this.isoVps.set(yawDeg, vp);
+      }
+      return vp;
+    };
     // Flat items: GuiItemAtlas.drawToSlot (net/minecraft/client/gui/render/GuiItemAtlas.java:103-108)
     // does *not* rotate a generated item model - it only translates to the slot centre and
     // scale(slotTextureSize), so the sprite faces the GUI camera and fills the whole slot.
     // Model space runs 0..1; centring it and using a 1-unit ortho box makes the quad fill the cell.
     const flatVp = ortho(-0.5, 0.5, -0.5, 0.5, -8, 8);
-    this.program.setMat4('uViewProj', isoVp);
+    this.program.setMat4('uViewProj', isoVpFor(225));
 
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
@@ -197,9 +246,10 @@ export class ItemIconAtlas {
 
       gl.viewport(cx, ATLAS - cy - CELL, CELL, CELL);
       gl.clear(gl.DEPTH_BUFFER_BIT);
-      // Flat sprites are drawn screen-aligned (see flatVp above); blocks use the iso camera.
+      // Flat sprites are drawn screen-aligned (see flatVp above); blocks use the iso camera
+      // with the model's vanilla display.gui yaw (stairs/fences/walls differ from cube blocks).
       const flatIcon = entry.kind === 'flat' || entry.kind === 'special';
-      this.program.setMat4('uViewProj', flatIcon ? flatVp : isoVp);
+      this.program.setMat4('uViewProj', flatIcon ? flatVp : isoVpFor(guiYawOf(name)));
 
       const tint = itemIconTint(name);
       if (entry.kind === 'block' && entry.model !== undefined) {
@@ -249,6 +299,14 @@ export class ItemIconAtlas {
     }
     ctx.putImageData(imageData, 0, 0);
     this.canvas = canvas;
+    // A 3200 px 2D canvas used as a drawImage source can hit a per-frame software upload path
+    // (one session measured 180 ms per HUD frame). Snapshot it into an ImageBitmap, which the
+    // compositor keeps as a GPU texture; fall back to the canvas if the browser refuses.
+    void createImageBitmap(canvas).then((bmp) => {
+      if (this.canvas !== canvas) { bmp.close(); return; }
+      this.bitmap?.close();
+      this.bitmap = bmp;
+    }).catch(() => undefined);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.deleteFramebuffer(fb);
@@ -381,14 +439,37 @@ export class ItemIconAtlas {
 
   /** Draws an item icon at GUI (logical) pixel coordinates; 1:1 with the baked physical texels. */
   draw(ctx: CanvasRenderingContext2D, itemId: number, x: number, y: number, size: number): void {
-    if (!this.canvas || itemId < 0 || itemId >= this.cellOf.length) return;
+    const src = this.bitmap ?? this.canvas;
+    if (!src || itemId < 0 || itemId >= this.cellOf.length) return;
     const cell = this.cellOf[itemId];
     if (cell < 0) return;
+    const t0 = performance.now();
     const CELL = this.cellSize;
     const columns = this.atlasCols;
     const cx = (cell % columns) * CELL;
     const cy = Math.floor(cell / columns) * CELL;
-    ctx.drawImage(this.canvas, cx, cy, CELL, CELL, x, y, size, size);
+    if (this.bitmap) {
+      ctx.drawImage(src, cx, cy, CELL, CELL, x, y, size, size);
+    } else {
+      // createImageBitmap failed or has not resolved yet. Drawing straight from the 3200 px atlas
+      // makes every icon a full-atlas software upload (90 ms for 9 hotbar slots). Extract the cell
+      // once into a tiny canvas and blit from that instead.
+      let icon = this.iconCache.get(itemId);
+      if (!icon && this.canvas) {
+        icon = document.createElement('canvas');
+        icon.width = CELL;
+        icon.height = CELL;
+        const c = icon.getContext('2d')!;
+        c.drawImage(this.canvas, cx, cy, CELL, CELL, 0, 0, CELL, CELL);
+        // Bound the cache: the visual inventory is far smaller than the item table, but a player
+        // browsing every creative tab must not pin one canvas per item forever.
+        if (this.iconCache.size >= 512) this.iconCache.clear();
+        this.iconCache.set(itemId, icon);
+      }
+      if (icon) ctx.drawImage(icon, 0, 0, CELL, CELL, x, y, size, size);
+    }
+    this.drawStats.ms += performance.now() - t0;
+    this.drawStats.n++;
   }
 
   /** True when the item has a rendered icon. */
@@ -403,12 +484,24 @@ export class ItemIconAtlas {
  */
 function itemIconTint(name: string): number {
   if (/leaves|vine|mangrove_roots|azalea/.test(name)) return 0x48b518;
-  if (/grass_block|short_grass|tall_grass|fern|potted_fern/.test(name)) return 0x7cbd6b;
+  if (/grass_block|short_grass|tall_grass|fern|potted_fern/.test(name)) return 0x91bd59;
   if (/water|bubble_column/.test(name)) return 0x3f76e4;
   if (/lily_pad/.test(name)) return 0x71c35c;
   if (/attached_melon_stem|attached_pumpkin_stem/.test(name)) return 0xe0c71c;
   if (/redstone_wire/.test(name)) return 0xff0000;
   return 0xffffff;
+}
+
+/**
+ * Vanilla model parents that override display.gui.rotation (verified against the 26.2 assets):
+ * block/stairs, block/*_fence_inventory and block/*_wall_inventory use [30, 135, 0];
+ * fence gates use [30, 45, 0]; everything else inherits block/block [30, 225, 0].
+ */
+function guiYawOf(itemName: string): number {
+  if (itemName.endsWith('_stairs')) return 135;
+  if (itemName.endsWith('_fence_gate')) return 45;
+  if (itemName.endsWith('_fence') || itemName.endsWith('_wall')) return 135;
+  return 225;
 }
 
 function faceShade(dir: number): number {

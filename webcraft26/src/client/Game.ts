@@ -42,6 +42,8 @@ import { Mob } from '../vanilla/world/entity/Mob.js';
 import { MobCategory } from '../vanilla/world/entity/MobCategory.js';
 import { Sheep } from '../vanilla/world/entity/animal/Sheep.js';
 import { Animal } from '../vanilla/world/entity/animal/Animal.js';
+import { Wolf } from '../vanilla/world/entity/animal/Wolf.js';
+import { Cat } from '../vanilla/world/entity/animal/Cat.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
 import { cameraBasis } from './renderer/gl/Gl.js';
 import { argbFromRgb, computeFogColor } from './renderer/environment/FogState.js';
@@ -2426,6 +2428,30 @@ export class Game {
     if (held.item?.name?.endsWith('shears') && entityTarget instanceof Sheep) {
       this.shearSheep(entityTarget);
       return;
+    }
+    // TameableAnimal.mobInteract: bones tame wolves, fish tame cats, and a later
+    // click toggles sitting. The item is consumed only for a taming attempt.
+    if ((entityTarget instanceof Wolf || entityTarget instanceof Cat) && held.item) {
+      const result = entityTarget.interact(held);
+      if (result) {
+        if ((result === 'tame' || result === 'fail') && this.options.gamemode !== 'creative') {
+          this.survival.inventory.removeFromSelected(false);
+        }
+        if (result === 'tame') {
+          spawnHearts(entityTarget.x, entityTarget.y + entityTarget.getHeight() * 0.8, entityTarget.z, 3);
+          this.sounds.play(entityTarget instanceof Cat ? 'entity.cat.ambient' : 'entity.wolf.ambient',
+            entityTarget.x, entityTarget.y, entityTarget.z, 1, 1);
+        } else if (result === 'toggle') {
+          this.sounds.play(entityTarget instanceof Cat ? 'entity.cat.ambient' : 'entity.wolf.ambient',
+            entityTarget.x, entityTarget.y, entityTarget.z, 1, 1);
+        } else {
+          this.sounds.play(entityTarget instanceof Cat ? 'entity.cat.ambient' : 'entity.wolf.growl',
+            entityTarget.x, entityTarget.y, entityTarget.z, 1, 0.8);
+        }
+        this.player.swingHand();
+        this.useCooldown = 8;
+        return;
+      }
     }
     if (held.item && entityTarget instanceof Animal && entityTarget.isFood(held.item.name)) {
       this.feedAnimal(entityTarget);

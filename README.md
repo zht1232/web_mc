@@ -107,6 +107,7 @@ can be compared against the decompiled 26.2 sources and against
 cd webcraft26
 npx tsc --noEmit
 node scripts/test-redstone.mjs        # redstone long tail + pistons + rails (browser)
+node scripts/test-taming.mjs          # wolf/cat taming, sitting and follow (browser)
 node scripts/test-containers.mjs      # container click rules
 node scripts/test-menu.mjs            # title/world select screens
 node scripts/test-hud-dirty.mjs       # HUD redraw policy

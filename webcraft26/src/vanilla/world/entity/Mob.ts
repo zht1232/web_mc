@@ -44,6 +44,10 @@ export class Mob extends LivingEntity {
   swell = 0;
   swellDir = -1;
   powered = false;
+  /** TameableAnimal state used by wolves and cats. */
+  tamed = false;
+  sitting = false;
+  owner = '';
 
   private goalsRegistered = false;
 
@@ -144,12 +148,22 @@ export class Mob extends LivingEntity {
   /** Vanilla Mob.serverAiStep. */
   serverAiStep(): void {
     if (!this.goalsRegistered) { this.goalsRegistered = true; this.registerGoals(); }
+    // TameableAnimal: a sitting pet holds its pose and runs no AI goals.
+    if (this.tamed && this.sitting) {
+      this.moveControl.reset();
+      this.navigation.stop();
+      this.setTarget(null);
+      return;
+    }
     // reset the movement intent each tick; the active movement goal refills it
     this.moveControl.reset();
     this.navigation.tick();
     this.targetSelector.tick();
     this.goalSelector.tick();
   }
+
+  /** Hook for species-specific tame effects (wolf stops targeting the player). */
+  protected onTamed(): void {}
 
   tick(): void {
     this.baseTick();

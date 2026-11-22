@@ -49,6 +49,7 @@ npx tsx scripts/test-mobs-render.mts          # 实体渲染 20 项
 node scripts/test-containers.mjs              # 容器交互 19 项
 node scripts/test-menu.mjs                    # 主菜单/世界选择 9 项
 node scripts/test-hud-dirty.mjs               # HUD 脏标记 / 菜单隐藏 5 项
+node scripts/test-advancements.mjs            # 进度：roots/可见数/触发器/界面/存档 7 项
 node scripts/test-icons.mjs                   # 物品图标
 node scripts/test-taa.mjs                     # TAA
 npx tsx scripts/test-mesher.mts               # 区块网格 64 项
@@ -100,7 +101,8 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 容器点击规则（左右键/Shift/拖拽/数字键/F/Q/双击） | ✅ | `test-containers` 19 项；`AbstractContainerScreen` |
 | 合成台/箱子/熔炉/配方书 | ✅ | 真实配方、箱子会话内持久、熔炉 GUI 打开时推进 |
 | 中文文案完整性 | ✅ | 2026-11-21 补齐 `menu.advancements`/`menu.stats`/`createWorld.create`/`selectWorld.difficulty` |
-| 进度（Advancements）/统计（Statistics）界面 | ⚠️ | 统计界面 ✅：General/Items/Mobs 三页、6 列排序、真实计数器（挖掘/放置/拾取/合成/击杀/死亡/伤害/距离/游玩时间）；进度界面仍只弹 toast |
+| 统计（Statistics）界面 | ✅ | General/Items/Mobs 三页、6 列排序、真实计数器（挖掘/放置/拾取/合成/击杀/死亡/伤害/距离/游玩时间） |
+| 进度（Advancements）界面 | ⚠️ | 数据驱动：126 个定义（117 可见，5 个 root）；暂停菜单打开按 root 分页的列表界面（图标/完成色/Goal/Challenge/done-total）；基础触发器 `inventory_changed`/`mine_block`/`consume_item`/`player_killed_entity`/`killed_by_entity`/`location`（需 dimension）/`tick`；完成弹 toast 并随存档保存。缺树状布局/连接线、完整条件（生物群系/结构/物品谓词/count/components）、配方解锁联动 |
 | 统计计数器 | ✅ | `Statistics` 随玩家 `Extra.stats` 保存；挖掘/放置/拾取/合成/熔炉/击杀/死亡/伤害/移动距离/动物繁殖均有埋点 |
 | 多人/LAN/资源包/皮肤设置/遥测 | ❌ | 按钮占位或没有入口 |
 
@@ -119,7 +121,8 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 状态效果 HUD | ✅ | 右上角一列 24x24 背景 + 18x18 图标、剩余时间、等级罗马数字；剩余 <10s 闪烁；中毒/凋零时心形变绿/黑 |
 | 红石 | ✅ | 红石线功率/连接形状、拉杆/按钮/压力板、红石火把（反相 + 2 tick 调度 + 8 次/60 tick burnout）、中继器（1–4 档延迟/单向）、比较器（容器/蛋糕/堆肥桶模拟输入、侧输入、compare/subtract、2 tick）、侦测器（2 tick 脉冲）、日光探测器（天空光 + 太阳角 + 反相）、拌线/拌线钩、红石灯、木/铁门、活板门、栅栏门、TNT 信号点燃、活塞（普通/粘性，推/拉/12 格/不可推方块）、铁轨形状与动力轨供电；缺粘液/蜂蜜牵引链、活塞 moving_piston 动画、矿车物理、物品展示框/讲台/唱片机的比较器模拟输出 |
 | 床睡觉 | ✅ | 夜晚/雷暴、8 格内无怪物、床上方无遮挡才能入睡；60 tick 后跳到次日清晨、清雨、设置重生点并持久化；黑屏淡入淡出；睡眠中禁止移动/挖掘/攻击 |
-| 村民交易/成就 | ❌ | |
+| 村民交易 | ❌ | 没有村民实体与交易界面 |
+| 成就（Advancements） | ⚠️ | 见「GUI」进度行：列表界面 + 7 类基础触发器可用；树状布局与完整条件待补 |
 | 经验球/掉落物 | ✅ | |
 
 ### 世界生成 / 存档
@@ -149,7 +152,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 **P1（原版核心玩法缺口）**
 4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；剩余：幼年专用模型、项圈渲染、野生动物实体存档。
 5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；剩余：药箭、TNT 归属（owner）与爆炸掉落衰减、比较器/活塞等红石长尾。
-6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；剩余：进度（Advancements）界面与触发器。
+6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成列表界面 + 7 类触发器；剩余：树状布局/连接线、完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
 7. 夜间怪物装备/掉落表与自然生成权重对齐（Looting/熟肉/装备掉落已完成）。
 
 **P2（长尾一致性）**
@@ -302,3 +305,23 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 仍未做：活塞 moving_piston 动画与 2 tick 移动过程、`piston_movement.rs` 的每 tick 0.51 位移上限、
   矿车与探测铁轨实体检测、物品展示框/讲台/唱片机的比较器模拟输出（需要对应方块实体数据）、
   string 按 StringItem 语义放在点击格（当前放在相邻格）。
+
+### 进度系统（Advancements，2026-11-22）
+
+- 数据：`scripts/build-advancements.mjs` 从 26.2 客户端数据生成 `data/advancements.json`
+  （126 个定义，117 个有 display，5 个 root：adventure/end/husbandry/nether/story）与
+  `data/tags.json`（item 224 / block 265 / entity_type 48）；`vite.config.ts` 的 `advancementData()`
+  在生产构建时把两个 JSON emit 到 `data/`。
+- 运行时 `src/vanilla/world/advancements/AdvancementManager.ts`：criteria/requirements（组内 OR、
+  组间 AND）、`#tag` 递归解析、hidden 过滤、`rows(root)` 按 parent 链算 depth 排序；
+  `toJSON/load` 随玩家 `Extra.advancements` 保存。
+- 触发器（只授予可评估条件，未覆盖的 trigger 不误发）：`inventory_changed`（每 10 tick 背包快照）、
+  `mine_block`（创造/生存两条破坏路径）、`consume_item`（食物/药水）、`player_killed_entity` /
+  `killed_by_entity`、`location`（必须解析出 dimension）、`tick`。
+- 界面 `AdvancementsScreen`：暂停菜单 → 进度；5 个 root 分页、列表行（图标/标题/描述、完成金色/
+  进行中白色/未开始灰色、Goal/Challenge 标签、滚动条）、底部完成按钮；完成时弹 `AdvancementToast`。
+- 验证：`tsc` 0；`node scripts/test-advancements.mjs` 7/7（roots、117 可见、crafting_table → `story/root`、
+  cobblestone 经 tag → `story/mine_stone`、界面打开、存档重载保留）；截图
+  `shots/diag/advancements-current.png`。
+- 剩余：树状布局与连接线、完整 criteria（生物群系/结构/物品谓词/count/components/effects）、
+  配方解锁联动、统计页与进度页互跳。

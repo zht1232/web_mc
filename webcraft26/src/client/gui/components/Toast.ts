@@ -66,3 +66,10 @@ export class RecipeToast extends Toast {
     super({ title, iconItem, kind: 'recipe' });
   }
 }
+
+/** net.minecraft.client.gui.components.toasts.AdvancementToast */
+export class AdvancementToast extends Toast {
+  constructor(title: string, iconItem?: number) {
+    super({ title, iconItem, kind: 'advancement' });
+  }
+}

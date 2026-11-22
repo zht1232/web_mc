@@ -82,6 +82,8 @@ import { PerfLog } from './PerfLog.js';
 import { runChatCommand, type CommandHost } from './ChatCommands.js';
 import { WorldSaveManager, type LoadedWorld } from './world/save/WorldSaveManager.js';
 import type { SavedPet } from '../vanilla/world/level/storage/LevelSummary.js';
+import { AdvancementManager } from '../vanilla/world/advancements/AdvancementManager.js';
+import { AdvancementToast } from './gui/components/Toast.js';
 import { Autosave } from './world/save/Autosave.js';
 import {
   ChunkSerializer, MinecraftDataBlockStateCodec, ReversibleBiomeCodec, type ChunkCodecOptions,
@@ -203,6 +205,7 @@ export class Game {
    */
   private levelLike!: LevelLike;
   saveManager?: WorldSaveManager;
+  advancements!: AdvancementManager;
   autosave?: Autosave;
   private chunkCodec!: ChunkCodecOptions;
 
@@ -394,14 +397,21 @@ export class Game {
     // independent fetches + parses. Loaded one after another they cost ~900 ms of the cold boot;
     // in one Promise.all the wall time is the slowest single load (~300 ms).
     this.onStatus?.('Loading client assets', 0.15);
-    const [modelsRes, worldgen, worldData] = await Promise.all([
+    const [modelsRes, worldgen, worldData, advancements] = await Promise.all([
       ModelSource.load('/mc'),
       loadWorldgenData('/mc'),
       loadWorldData('/mc'),
+      AdvancementManager.load('/data'),
       this.textures.load('/mc'),
       this.font.load('/mc'),
       this.guiTextures.preload([...HUD_SPRITES, ...MOB_EFFECT_TEXTURES]),
     ]);
+    this.advancements = advancements;
+    this.advancements.onComplete = (adv) => {
+      if (!adv.toast || !this.screens) return;
+      const iconId = this.survival?.registry.byName(adv.icon)?.id;
+      this.screens.toastManager.add(new AdvancementToast(DEFAULT_I18N.get(adv.title), iconId));
+    };
     this.models = modelsRes;
     this.hud = new Hud(this.font, this.guiTextures);
 
@@ -671,6 +681,7 @@ export class Game {
       // GameOptions has every field GuiOptions requires; the index signature is the only gap.
       options: this.options as unknown as GuiOptions,
       stats: this.stats,
+      advancements: this.advancements,
       playerLevel: () => this.survival.level,
       touchInput: this.touchDevice,
       container: this.containerAdapter(),
@@ -1370,6 +1381,7 @@ export class Game {
         }
       }
       this.stats.load((view.extra as { stats?: unknown } | undefined)?.stats);
+      this.advancements.load((view.extra as { advancements?: unknown } | undefined)?.advancements);
       const bed = (view.extra as { bedSpawn?: unknown } | undefined)?.bedSpawn;
       if (bed && typeof bed === 'object') {
         const b = bed as { x?: unknown; y?: unknown; z?: unknown };
@@ -1449,11 +1461,24 @@ export class Game {
       xpTotal: s.totalExperience,
       inventory,
       stats: this.stats.toJSON(),
+      advancements: this.advancements.toJSON(),
       bedSpawn: this.bedSpawn,
       effects: [...s.effects.entries()].map(([id, e]) => ({
         id, duration: e.duration, amplifier: e.amplifier,
       })),
     };
+  }
+
+  /** Event-driven triggers that need no per-event hook (roots and inventory). */
+  private tickAdvancements(): void {
+    if (!this.advancements) return;
+    this.advancements.trigger('tick');
+    const items: string[] = [];
+    for (let i = 0; i < 36; i++) {
+      const stack = this.survival.inventory.getItem(i);
+      if (!stack.isEmpty() && stack.item) items.push(stack.item.name);
+    }
+    this.advancements.trigger('inventory_changed', { items });
   }
 
   /** Tamed pets saved with the world (vanilla does not despawn tamed animals). */
@@ -1759,6 +1784,7 @@ export class Game {
     const hit = blockHit;
     const broken = this.level.getBlockState(hit.x, hit.y, hit.z);
     if (broken !== 0) this.stats.award('mined', this.mc.blockOf(broken).name);
+    if (broken !== 0) this.advancements.trigger('mine_block', { block: this.mc.blockOf(broken).name });
     this.level.setBlockState(hit.x, hit.y, hit.z, 0);
     this.updateNeighbors(hit.x, hit.y, hit.z);
     if (broken !== 0) this.breakEffects(broken, hit.x, hit.y, hit.z);
@@ -1817,6 +1843,7 @@ export class Game {
 
     const drops = this.survival.breakBlock((x, y, z) => this.level.getBlockState(x, y, z), hit.x, hit.y, hit.z);
     this.stats.award('mined', this.mc.blockOf(state).name);
+    this.advancements.trigger('mine_block', { block: this.mc.blockOf(state).name });
     this.level.setBlockState(hit.x, hit.y, hit.z, 0);
     this.updateNeighbors(hit.x, hit.y, hit.z);
     this.breakEffects(state, hit.x, hit.y, hit.z);
@@ -1846,6 +1873,7 @@ export class Game {
     if (playerKill) {
       this.stats.award('killed', type);
       this.stats.award('custom', 'mob_kills');
+      this.advancements.trigger('player_killed_entity', { entity: type });
     }
     // Baby animals drop neither loot nor experience (no loot table for babies).
     if (entity instanceof Mob && entity.isBaby()) return;
@@ -2400,6 +2428,7 @@ export class Game {
     // PotionItem.use: drink a potion, apply its effects, return the glass bottle.
     if (held.item?.name === 'potion') {
       this.drinkPotion(held);
+      this.advancements.trigger('consume_item', { item: held.item.name });
       return;
     }
     // ThrownPotion: splash / lingering potions break on impact.
@@ -2410,6 +2439,7 @@ export class Game {
     const food = held.item?.food;
     if (food && (this.survival.hunger < 20 || food.canAlwaysEat)) {
       this.survival.food.eatProperties(food.nutrition, food.saturation);
+      if (held.item) this.advancements.trigger('consume_item', { item: held.item.name });
       if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
       this.player.swingHand();
       this.useCooldown = 32;
@@ -3403,6 +3433,7 @@ export class Game {
     if (this.isTitleOpen() && this.worldActive) this.enterMenuMode();
     if (!this.worldActive) return;
     this.level.tick(1, this.daylightCycle); // one game tick (was 1/20, which made a day last 20x too long)
+    if (this.tickCount % 10 === 0) this.tickAdvancements();
 
     // Autosave resumes as soon as the last menu closes (E / Esc / a GUI button all go through
     // ScreenManager, so watching the transition is more reliable than hooking every path).

@@ -126,6 +126,8 @@ export interface ScreenDeps {
   options: GuiOptions;
   /** Live player statistics for the Statistics screen (StatsScreen). */
   stats?: StatisticsView;
+  /** Data-driven advancement definitions/progress for AdvancementsScreen. */
+  advancements?: import('../../vanilla/world/advancements/AdvancementManager.js').AdvancementManager;
   /** Live XP level (EnchantingScreen affordability). */
   playerLevel?: () => number;
   touchInput?: boolean;

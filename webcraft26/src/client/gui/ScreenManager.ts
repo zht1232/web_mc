@@ -36,6 +36,7 @@ import { LanguageSelectScreen } from './screens/options/LanguageSelectScreen.js'
 import { SoundOptionsScreen } from './screens/options/SoundOptionsScreen.js';
 import { PauseScreen } from './screens/PauseScreen.js';
 import { StatisticsScreen } from './screens/StatisticsScreen.js';
+import { AdvancementsScreen } from './screens/AdvancementsScreen.js';
 import { DeathScreen } from './screens/DeathScreen.js';
 import { ChatScreen } from './screens/ChatScreen.js';
 import { InventoryScreen } from './screens/inventory/InventoryScreen.js';
@@ -133,6 +134,7 @@ export class ScreenManager {
       sound: () => new SoundOptionsScreen(e),
       pause: () => new PauseScreen(e),
       stats: () => new StatisticsScreen(e),
+      advancements: () => new AdvancementsScreen(e),
       death: (cause?: unknown, score?: unknown) => new DeathScreen(e, String(cause ?? ''), String(score ?? '')),
       chat: (initial?: unknown) => new ChatScreen(e, String(initial ?? '')),
       inventory: () => new InventoryScreen(e),

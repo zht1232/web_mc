@@ -38,7 +38,7 @@ export class PauseScreen extends Screen {
       this.addRenderableWidget(new Button(left + col * (halfW + gap), y, halfW, BUTTON_DEFAULT_HEIGHT, label, action));
     };
 
-    addHalf(this.t('menu.advancements'), () => this.toast(this.t('menu.advancements')), 0);
+    addHalf(this.t('menu.advancements'), () => this.open('advancements'), 0);
     addHalf(this.t('menu.stats'), () => this.open('stats'), 1);
     y += BUTTON_DEFAULT_HEIGHT + PAUSE_BUTTON_PADDING;
 

@@ -42,8 +42,25 @@ function perfLogSink(): Plugin {
   };
 }
 
+/**
+ * Copies the committed advancement/tag definitions into the production bundle.
+ * Vite serves them from the project root in dev, but the build only emits public/.
+ */
+function advancementData(): Plugin {
+  return {
+    name: 'advancement-data',
+    generateBundle() {
+      for (const name of ['advancements.json', 'tags.json']) {
+        const file = path.resolve(process.cwd(), 'data', name);
+        if (!fs.existsSync(file)) continue;
+        this.emitFile({ type: 'asset', fileName: `data/${name}`, source: fs.readFileSync(file) });
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [perfLogSink()],
+  plugins: [perfLogSink(), advancementData()],
   server: {
     host: '0.0.0.0',
     port: 5174,

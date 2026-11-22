@@ -42,6 +42,7 @@ import { Cat, Ocelot } from './animal/Cat.js';
 import { Parrot } from './animal/Parrot.js';
 import { Bat } from './ambient/Bat.js';
 import { Villager } from './npc/Villager.js';
+import { Minecart } from './vehicle/Minecart.js';
 import { Squid, GlowSquid, Cod, Salmon } from './animal/WaterAnimal.js';
 import { ItemEntity } from './item/ItemEntity.js';
 import { PrimedTnt } from './item/PrimedTnt.js';
@@ -86,6 +87,8 @@ const CTORS: Record<string, Ctor> = {
   ocelot: l => new Ocelot(l),
   parrot: l => new Parrot(l),
   villager: l => new Villager(l),
+  minecart: l => new Minecart(l, 'minecart'),
+  chest_minecart: l => new Minecart(l, 'chest_minecart'),
   // ambient
   bat: l => new Bat(l),
   // water creatures

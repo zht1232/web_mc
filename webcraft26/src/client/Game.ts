@@ -46,6 +46,7 @@ import { Wolf } from '../vanilla/world/entity/animal/Wolf.js';
 import { Cat } from '../vanilla/world/entity/animal/Cat.js';
 import { Villager } from '../vanilla/world/entity/npc/Villager.js';
 import { VillagerTrades } from '../vanilla/world/entity/npc/VillagerTrades.js';
+import { Minecart } from '../vanilla/world/entity/vehicle/Minecart.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
 import { cameraBasis } from './renderer/gl/Gl.js';
 import { argbFromRgb, computeFogColor } from './renderer/environment/FogState.js';
@@ -617,6 +618,9 @@ export class Game {
         return Math.floor(fraction * 14) + (filled > 0 ? 1 : 0);
       },
     });
+    // Detector rails are powered by a minecart standing on them (Minecart.tickDetectorRail).
+    this.entityManager.minecartDetectorHandler = (x, y, z, occupied) =>
+      this.redstone.setDetectorRail(x, y, z, occupied);
     // PlayerTarget forwards mob/arrow damage here; the survival facade owns armor, i-frames and death.
     const pt = this.entityManager.getPlayerTarget();
     if (pt) pt.onHurt = (amount, attacker) => {
@@ -1809,6 +1813,12 @@ export class Game {
     const blockDistance = blockHit
       ? Math.hypot(blockHit.point.x - eye.x, blockHit.point.y - eye.y, blockHit.point.z - eye.z)
       : Infinity;
+    // Minecart.hurt: a cart is destroyed by a hit (survival drops it, creative does not).
+    const cart = this.findMinecartTarget(Math.min(3.5, blockDistance + 0.25));
+    if (cart) {
+      this.breakMinecart(cart);
+      return;
+    }
     const target = this.findEntityTarget(Math.min(3.5, blockDistance + 0.25));
     if (target) {
       const held = this.survival.getSelectedStack();
@@ -1848,6 +1858,39 @@ export class Game {
     let bestT = maxDistance;
     for (const entity of this.entityManager.getEntities()) {
       if (!(entity instanceof LivingEntity) || !entity.isAlive()) continue;
+      const box = entity.getBoundingBox().inflateAll(0.1);
+      let tmin = 1e-5;
+      let tmax = bestT;
+      let miss = false;
+      for (const [origin, delta, lo, hi] of [
+        [eye.x, dir.x, box.minX, box.maxX],
+        [eye.y, dir.y, box.minY, box.maxY],
+        [eye.z, dir.z, box.minZ, box.maxZ],
+      ] as const) {
+        if (Math.abs(delta) < 1e-8) {
+          if (origin < lo || origin > hi) { miss = true; break; }
+          continue;
+        }
+        let t1 = (lo - origin) / delta;
+        let t2 = (hi - origin) / delta;
+        if (t1 > t2) [t1, t2] = [t2, t1];
+        tmin = Math.max(tmin, t1);
+        tmax = Math.min(tmax, t2);
+        if (tmin > tmax) { miss = true; break; }
+      }
+      if (!miss && tmin < bestT) { best = entity; bestT = tmin; }
+    }
+    return best;
+  }
+
+  /** Same slab ray as findEntityTarget, but for minecarts (non-living vehicles). */
+  private findMinecartTarget(maxDistance: number): Minecart | null {
+    const eye = this.cameraEye();
+    const dir = this.lookVector();
+    let best: Minecart | null = null;
+    let bestT = maxDistance;
+    for (const entity of this.entityManager.getEntities()) {
+      if (!(entity instanceof Minecart) || entity.isRemoved()) continue;
       const box = entity.getBoundingBox().inflateAll(0.1);
       let tmin = 1e-5;
       let tmax = bestT;
@@ -2081,6 +2124,8 @@ export class Game {
 
   // ---- bed sleeping (ServerPlayer.startSleepInBed / stopSleepInBed) ----
   private sleeping = false;
+  /** Local player's active minecart ride (null when on foot). */
+  private ridingMinecart: Minecart | null = null;
   private sleepTicks = 0;
   /** 0..1 black overlay while falling asleep / waking up. */
   private sleepFade = 0;
@@ -2421,6 +2466,76 @@ export class Game {
     this.openScreen(isFurnace ? 'furnace' : 'chest');
   }
 
+  /** Destroy a cart: drop the cart item (survival) and any chest contents. */
+  private breakMinecart(cart: Minecart): void {
+    if (this.ridingMinecart === cart) this.dismountMinecart();
+    if (this.options.gamemode !== 'creative') {
+      const item = this.survival.registry.byName(cart.kind === 'chest_minecart' ? 'chest_minecart' : 'minecart');
+      if (item) this.dropItem(new ItemStack(item, 1), cart.x - 0.5, cart.y, cart.z - 0.5);
+      const slots = cart.inventory.getContainerSize();
+      for (let i = 0; i < slots; i++) {
+        const stack = cart.inventory.removeItemNoUpdate(i);
+        if (!stack.isEmpty()) this.dropItem(stack, cart.x - 0.5, cart.y + 0.2, cart.z - 0.5);
+      }
+    }
+    cart.remove();
+    this.player.swingHand();
+  }
+
+  /** MinecartItem.useOn: only rails accept a cart; a slope spawns it half a block higher. */
+  private placeMinecart(hit: { x: number; y: number; z: number }, kind: string): void {
+    const state = this.level.getBlockState(hit.x, hit.y, hit.z);
+    if (state === 0) return;
+    const name = this.mc.blockOf(state).name;
+    if (name !== 'rail' && name !== 'powered_rail' && name !== 'detector_rail' && name !== 'activator_rail') {
+      return;
+    }
+    const shape = this.mc.getProp(state, 'shape') ?? 'north_south';
+    const offset = shape.startsWith('ascending_') ? 0.5 : 0;
+    const x = hit.x + 0.5, y = hit.y + 0.0625 + offset, z = hit.z + 0.5;
+    for (const e of this.entityManager.getEntities()) {
+      if (e instanceof Minecart && !e.isRemoved()
+        && Math.abs(e.x - x) < 0.9 && Math.abs(e.z - z) < 0.9 && Math.abs(e.y - y) < 1) return;
+    }
+    if (!this.entityManager.spawn(kind, x, y, z)) return;
+    if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+    this.useCooldown = 8;
+  }
+
+  /** Minecart.interact: seat the player; the camera follows the cart's position. */
+  private mountMinecart(cart: Minecart): void {
+    this.ridingMinecart = cart;
+    cart.rider = this.player;
+    this.player.flying = false;
+    this.player.sneaking = false;
+    this.player.vel = new Vec3(0, 0, 0);
+    this.player.pos.x = cart.x;
+    this.player.pos.y = cart.y + 0.35;
+    this.player.pos.z = cart.z;
+  }
+
+  /** Sneak while riding: step off beside the cart (vanilla DismountHelper). */
+  private dismountMinecart(): void {
+    const cart = this.ridingMinecart;
+    if (!cart) return;
+    cart.rider = null;
+    this.ridingMinecart = null;
+    this.player.pos.x = cart.x + 1.1;
+    this.player.pos.y = cart.y + 0.2;
+    this.player.pos.z = cart.z;
+    this.player.vel = new Vec3(0, 0, 0);
+    this.player.onGround = false;
+    this.useCooldown = 8;
+  }
+
+  /** MinecartChest.interact: a chest menu bound to the cart's 27 slots. */
+  private openMinecartChest(cart: Minecart): void {
+    this.stats.award('custom', 'open_chest');
+    this.survival.openStorageContainer(cart);
+    this.openScreen('chest');
+    this.sounds.play('block.chest.open', cart.x, cart.y, cart.z, 1, 1);
+  }
+
   /** Villager.startTrading: open the merchant menu and bind the trade callback. */
   private openMerchant(villager: Villager): void {
     const menu = this.survival.openMerchant(villager);
@@ -2556,6 +2671,17 @@ export class Game {
       this.shearSheep(entityTarget);
       return;
     }
+    // Minecart.interact / MinecartChest.interact: mount an empty cart, open a chest cart.
+    const cartTarget = this.findMinecartTarget(Math.min(3.0, blockDistance + 0.25));
+    if (cartTarget) {
+      if (cartTarget.kind === 'chest_minecart' && !this.player.sneaking) {
+        this.openMinecartChest(cartTarget);
+      } else if (!this.player.sneaking && !this.ridingMinecart) {
+        this.mountMinecart(cartTarget);
+      }
+      this.useCooldown = 8;
+      return;
+    }
     // Villager.mobInteract: babies refuse, an offerless adult shakes its head,
     // otherwise the merchant screen opens. Talking is counted for statistics.
     if (entityTarget instanceof Villager) {
@@ -2615,6 +2741,10 @@ export class Game {
     // ItemBucket / FlintAndSteel useOn: consume the click before block placement.
     const heldUse = this.survival.getSelectedStack();
     const heldUseName = heldUse.item?.name ?? '';
+    if (heldUseName === 'minecart' || heldUseName === 'chest_minecart') {
+      this.placeMinecart(hit, heldUseName);
+      return;
+    }
     if (heldUseName === 'water_bucket' || heldUseName === 'lava_bucket') {
       this.placeFluidBucket(hit, heldUseName === 'water_bucket' ? 'water' : 'lava');
       return;
@@ -3573,7 +3703,26 @@ export class Game {
     if (this.sleeping) {
       input.forward = 0; input.strafe = 0; input.jump = false; input.sprint = false; input.sneak = false;
     }
-    this.player.tick(this.level, input);
+    // Riding a minecart locks the player to the cart; sneaking dismounts. The cart's
+    // own tick (EntityManager) drives the rail movement.
+    if (this.ridingMinecart) {
+      const cart = this.ridingMinecart;
+      if (cart.isRemoved()) {
+        this.ridingMinecart = null;
+        cart.rider = null;
+      } else if (input.sneak) {
+        this.dismountMinecart();
+      } else {
+        this.player.pos.x = cart.x;
+        this.player.pos.y = cart.y + 0.35;
+        this.player.pos.z = cart.z;
+        this.player.vel = new Vec3(0, 0, 0);
+        this.player.onGround = true;
+        this.player.fallDistance = 0;
+        this.player.flying = false;
+      }
+    }
+    if (!this.ridingMinecart) this.player.tick(this.level, input);
     this.hSpeedTrace[this.hSpeedIndex % this.hSpeedTrace.length] =
       Math.hypot(this.player.vel.x, this.player.vel.z);
     this.hSpeedIndex++;

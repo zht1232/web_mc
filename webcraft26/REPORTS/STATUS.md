@@ -51,6 +51,7 @@ node scripts/test-menu.mjs                    # 主菜单/世界选择 9 项
 node scripts/test-hud-dirty.mjs               # HUD 脏标记 / 菜单隐藏 5 项
 node scripts/test-advancements.mjs            # 进度：roots/可见数/触发器/界面/存档 7 项
 node scripts/test-villager-trade.mjs          # 村民：职业/报价/交易/等级/补货/存档 14 项
+node scripts/test-minecart.mjs                # 矿车：轨道/弯道/坡道/动力轨/检测轨/乘坐/箱子 11 项
 node scripts/test-icons.mjs                   # 物品图标
 node scripts/test-taa.mjs                     # TAA
 npx tsx scripts/test-mesher.mts               # 区块网格 64 项
@@ -93,7 +94,8 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 繁殖 / 喂养 / 幼年 | ✅ | 牛/猪/羊/鸡/兔/猫/豹猫/蘑菇牛：食物标签、600 tick 恋爱、6000 tick 冷却、幼年 0.5 缩放与成长、繁殖 XP、幼年无掉落；幼年专用几何体未接 |
 | 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
 | 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化；`test-villager-trade` 14 项 |
-| 更多 AI（铁傀儡、马、船、矿车） | ❌ | 实体工厂里没有这些类型 |
+| 矿车 | ✅ | 2026-11-22：普通/箱子矿车实体与模型；`NewMinecartBehavior` 轨道跟随（直线/拐弯/坡道/摩擦/动力轨加速/未供能动力轨刹停）、检测铁轨占用供电、物品放置、右键乘坐与潜行下车、箱子矿车 27 格 GUI、生存破坏掉落；`test-minecart` 11 项 |
+| 更多 AI（铁傀儡、马、船） | ❌ | 实体工厂里没有这些类型 |
 
 ### GUI / 物品栏 / 容器
 | 项 | 状态 | 说明 |
@@ -122,7 +124,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 附魔台 | ✅ | 书架功率 0–15、三档等级花费、青金石消耗、按物品类别随机词条与等级、`enchant_item` 统计与音效 |
 | 药水 / 酿造 | ✅ | 14 种药水 + 水/粗制/浓稠/平凡；红石延长、萤石强化、发酵蛛眼腐化；火药→喷溅、龙息→滞留；酿造台 3 瓶 + 原料 + 烈焰粉 20 燃料、400 tick；右键开酿造台；玻璃瓶装水；饮用应用效果并归还玻璃瓶；喷溅/滞留投掷物、距离衰减范围效果、滞留云（半径 3/600 tick/0.25 时长）；效果与 `potion` 组件随存档保存 |
 | 状态效果 HUD | ✅ | 右上角一列 24x24 背景 + 18x18 图标、剩余时间、等级罗马数字；剩余 <10s 闪烁；中毒/凋零时心形变绿/黑 |
-| 红石 | ✅ | 红石线功率/连接形状、拉杆/按钮/压力板、红石火把（反相 + 2 tick 调度 + 8 次/60 tick burnout）、中继器（1–4 档延迟/单向）、比较器（容器/蛋糕/堆肥桶模拟输入、侧输入、compare/subtract、2 tick）、侦测器（2 tick 脉冲）、日光探测器（天空光 + 太阳角 + 反相）、拌线/拌线钩、红石灯、木/铁门、活板门、栅栏门、TNT 信号点燃、活塞（普通/粘性，推/拉/12 格/不可推方块）、铁轨形状与动力轨供电；缺粘液/蜂蜜牵引链、活塞 moving_piston 动画、矿车物理、物品展示框/讲台/唱片机的比较器模拟输出 |
+| 红石 | ✅ | 红石线功率/连接形状、拉杆/按钮/压力板、红石火把（反相 + 2 tick 调度 + 8 次/60 tick burnout）、中继器（1–4 档延迟/单向）、比较器（容器/蛋糕/堆肥桶模拟输入、侧输入、compare/subtract、2 tick）、侦测器（2 tick 脉冲）、日光探测器（天空光 + 太阳角 + 反相）、拌线/拌线钩、红石灯、木/铁门、活板门、栅栏门、TNT 信号点燃、活塞（普通/粘性，推/拉/12 格/不可推方块）、铁轨形状与动力轨供电、检测铁轨由矿车占用供电；缺粘液/蜂蜜牵引链、活塞 moving_piston 动画、矿车实体碰撞推挤、物品展示框/讲台/唱片机的比较器模拟输出 |
 | 床睡觉 | ✅ | 夜晚/雷暴、8 格内无怪物、床上方无遮挡才能入睡；60 tick 后跳到次日清晨、清雨、设置重生点并持久化；黑屏淡入淡出；睡眠中禁止移动/挖掘/攻击 |
 | 村民交易 | ✅ | 成年村民右键打开交易界面；报价成本/结果/使用次数、补货（每天 2 次）、等级提升追加报价；地图交易与流浪商人未接 |
 | 成就（Advancements） | ⚠️ | 见「GUI」进度行：列表界面 + 8 类基础触发器（含 `villager_trade`）可用；树状布局与完整条件待补 |
@@ -307,7 +309,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 修复：火把的强信号方向写反（`getDirectSignal` 应指向火把上方的接收者，`dir==='down'`），
   否则火把会给自己脚下的方块强充能、被自己的底座点亮又熄灭，形成 2 tick 自振荡；由 burnout 回归测试发现。
 - 仍未做：活塞 moving_piston 动画与 2 tick 移动过程、`piston_movement.rs` 的每 tick 0.51 位移上限、
-  矿车与探测铁轨实体检测、物品展示框/讲台/唱片机的比较器模拟输出（需要对应方块实体数据）、
+  物品展示框/讲台/唱片机的比较器模拟输出（需要对应方块实体数据）、
   string 按 StringItem 语义放在点击格（当前放在相邻格）。
 
 ### 进度系统（Advancements，2026-11-22）
@@ -359,3 +361,24 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   `smoke` 19/19。截图 `shots/diag/villager-trade.png`、`villager-scroll.png`。
 - 剩余：地图交易（需要结构定位与已填充地图）、流浪商人、村民繁殖/铁傀儡/袭击、
   工作与睡眠日程、附魔书 tooltip 显示附魔名与光效、交易音效目前只用 `entity.villager.yes`。
+
+### 矿车 / 铁轨（2026-11-22）
+
+- 实体 `src/vanilla/world/entity/vehicle/Minecart.ts`：普通/箱子矿车，尺寸 0.98x0.7。
+  移植 `NewMinecartBehavior` 的核心：`adjustToRails`（吸到轨道中心/拐角投影/坡道抬升与 ±45° 俯仰）、
+  `calculateTrackSpeed`（坡道滑落 0.0078125+2%、未供能动力轨刹停、0.975/0.997 摩擦、
+  8 格/秒上限、供能动力轨 +0.06/0.2）、`stepAlongTrack`（轨道出口、拐角、坡道 √2 步长、
+  方块碰撞后清速）、`comeOffTrack`（重力 0.04、空气阻力 0.95）。
+- 检测铁轨：矿车进入/离开时通过 `MobWorld.onMinecartDetector` → `RedstoneSystem.setDetectorRail`
+  切换 `powered` 并触发邻居更新；`weakSignal`/`directSignal` 返回 15。
+- 交互：`MinecartItem.useOn` 只接受 4 种铁轨（坡道 +0.5 高），同格已有矿车时拒绝；
+  右键空矿车乘坐、玩家位置/相机跟随、潜行下车；箱子矿车右键打开 27 格 `ChestScreen`；
+  生存破坏掉落矿车本体与箱内物品。
+- 渲染：`MinecartModel`（64x32，26.2 `createBodyLayer`）+ 专用 `MinecartRenderer`，
+  根矩阵为 `T(pos) * RY(yaw) * RZ(-pitch) * T(0,0.375,0) * S(-1,-1,1)`；影子半径 0.7。
+- 验证：`tsc` 0；`node scripts/test-minecart.mjs` **11/11**（渲染器、吸附、摩擦、拐弯、
+  坡道、动力轨、检测轨、物品放置/消耗、乘坐/跟随/下车、箱子 GUI/内容、破坏掉落）；
+  回归 `test-redstone` 28/28、`test-mobs-render` 20/20、`test-entities`、`test-save`、`smoke`。
+  截图 `shots/diag/minecart.png`、`minecart-probe.png`、`minecart-chest.png`。
+- 剩余：矿车之间/矿车与生物的推挤拾取、hurt 动画与多段耐久、漏斗/TNT/熔炉矿车、
+  铁轨坡道的完整 `RailState.place`、矿车实体随区块存档、乘坐时第一人称视角偏移微调。

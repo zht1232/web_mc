@@ -678,6 +678,19 @@ export const VillagerModel: BakedModel = withAnimator(bakeModel(makeModel(64, 64
 });
 
 /**
+ * Source: net.minecraft.client.model.object.cart.MinecartModel.createBodyLayer
+ * (64x32): the flat bottom, four raised sides, all authored around y=4 and
+ * re-anchored by MinecartRenderer's 0.375 offset.
+ */
+export const MinecartModel: BakedModel = bakeModel(makeModel(64, 32, [
+  P('bottom', 0, 4, 0, [B(-10, -8, -1, 20, 16, 2, 0, 10)], { rx: HALF_PI }),
+  P('front', -9, 4, 0, [B(-8, -9, -1, 16, 8, 2, 0, 0)], { ry: Math.PI * 3 / 2 }),
+  P('back', 9, 4, 0, [B(-8, -9, -1, 16, 8, 2, 0, 0)], { ry: HALF_PI }),
+  P('left', 0, 4, -7, [B(-8, -9, -1, 16, 8, 2, 0, 0)], { ry: Math.PI }),
+  P('right', 0, 4, 7, [B(-8, -9, -1, 16, 8, 2, 0, 0)]),
+]));
+
+/**
  * Source: net.minecraft.client.model.monster.witch.WitchModel.createBodyLayer
  * (64x128) — VillagerModel.createBodyModel geometry, a replacement head, the
  * four-part hat (the wide hat_rim is inherited from the villager body model) and

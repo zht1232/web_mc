@@ -25,6 +25,7 @@ import { GlProgram, createTexture2D, loadImage } from '../gl/Gl.js';
 import { ENTITY_VERT, ENTITY_FRAG, SHADOW_VERT, SHADOW_FRAG } from './EntityShaders.js';
 import { EntityBatch, EntityRenderer, FLOATS_PER_VERTEX } from './EntityRenderer.js';
 import { MobRenderer } from './MobRenderer.js';
+import { MinecartRenderer } from './MinecartRenderer.js';
 import { SkeletonRenderer } from './SkeletonRenderer.js';
 import { ItemEntityRenderer, type ItemIconSource } from './ItemEntityRenderer.js';
 import { ArrowRenderer } from './ArrowRenderer.js';
@@ -148,6 +149,8 @@ export class EntityRenderDispatcher {
       if (name === 'skeleton' || name === 'stray' || name === 'bogged'
         || name === 'parched' || name === 'wither_skeleton') {
         this.renderers.set(name, new SkeletonRenderer(name));
+      } else if (name === 'minecart' || name === 'chest_minecart') {
+        this.renderers.set(name, new MinecartRenderer());
       } else {
         this.renderers.set(name, new MobRenderer(name));
       }

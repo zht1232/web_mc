@@ -58,6 +58,8 @@ export interface MobWorld {
   getBiomeName?(x: number, y: number, z: number): string;
   /** Item registry used to build villager trade offers. */
   getRegistry?(): ItemRegistry | null;
+  /** A minecart entered/left a detector rail. */
+  onMinecartDetector?(x: number, y: number, z: number, occupied: boolean): void;
   spawnEntity(e: Entity): void;
   removeEntity(e: Entity): void;
   /**

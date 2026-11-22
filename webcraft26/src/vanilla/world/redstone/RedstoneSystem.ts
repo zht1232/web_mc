@@ -447,6 +447,9 @@ export class RedstoneSystem {
     if (name === TRIPWIRE_HOOK) {
       return this.bool(state, 'powered') ? 15 : 0;
     }
+    if (name === 'detector_rail' || name === 'powered_rail' || name === 'activator_rail') {
+      return this.bool(state, 'powered') ? 15 : 0;
+    }
     return 0;
   }
 
@@ -483,6 +486,9 @@ export class RedstoneSystem {
     if (name === TRIPWIRE_HOOK) {
       // TripWireHookBlock.getDirectSignal: strong power toward the attached block.
       return this.bool(state, 'powered') && dir === this.prop(state, 'facing') ? 15 : 0;
+    }
+    if (name === 'detector_rail' || name === 'powered_rail' || name === 'activator_rail') {
+      return this.bool(state, 'powered') ? 15 : 0;
     }
     return 0;
   }
@@ -1406,6 +1412,14 @@ export class RedstoneSystem {
   }
 
   // ---------------------------------------------------------------- rails
+
+  /** DetectorRailBlock: a minecart entering/leaving toggles `powered`. */
+  setDetectorRail(x: number, y: number, z: number, occupied: boolean): void {
+    const state = this.state(x, y, z);
+    if (state === 0 || this.name(state) !== 'detector_rail') return;
+    if (this.bool(state, 'powered') === occupied) return;
+    this.set(x, y, z, this.mc.withProp(state, 'powered', occupied ? 'true' : 'false'));
+  }
 
   private updateRail(x: number, y: number, z: number, state: number): void {
     const name = this.name(state);

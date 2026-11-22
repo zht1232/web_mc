@@ -7,7 +7,7 @@
 import type { BakedModel } from './ModelBox.js';
 import {
   ZombieModel, PlayerModel, ZombieVillagerModel, SkeletonModel, CreeperModel, SpiderModel, EndermanModel,
-  SilverfishModel, SlimeModel, WitchModel, VillagerModel,
+  SilverfishModel, SlimeModel, WitchModel, VillagerModel, MinecartModel,
   PigModel, CowModel, SheepModel, SheepFurModel, ChickenModel, WolfModel, FoxModel, FelineModel, ParrotModel,
   RabbitModel, BatModel, SquidModel, CodModel, SalmonModel,
   QuadrupedModel,
@@ -40,6 +40,8 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   slime: { model: SlimeModel, texture: 'slime/slime' },
   witch: { model: WitchModel, texture: 'witch/witch' },
   villager: { model: VillagerModel, texture: 'villager/villager' },
+  minecart: { model: MinecartModel, texture: 'minecart/minecart' },
+  chest_minecart: { model: MinecartModel, texture: 'minecart/minecart' },
   cave_spider: { model: SpiderModel, texture: 'spider/cave_spider' },
   zombie_villager: { model: ZombieVillagerModel, texture: 'zombie_villager/zombie_villager' },
   fox: { model: FoxModel, texture: 'fox/fox' },

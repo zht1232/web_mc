@@ -184,6 +184,20 @@ function poseMatrix(out: M34, tx: number, ty: number, tz: number, rx: number, ry
   out[8] = -sy; out[9] = cy * sx; out[10] = cy * cx; out[11] = tz;
 }
 
+/** Minecart/vehicle root: T(pos) * RY(yaw) * RZ(-pitch) * T(0,yOffset,0) * S(-1,-1,1). */
+export function vehicleRootMatrix(
+  out: M34, x: number, y: number, z: number,
+  yawRad: number, pitchRad: number, yOffset = 0,
+): void {
+  translation(mT, x, y + yOffset, z);
+  rotY(mRy, yawRad);
+  rotZ(mRz, -pitchRad);
+  scaleMat(mS, -1, -1, 1);
+  mul(mA, mT, mRy);
+  mul(mB, mA, mRz);
+  mul(out, mB, mS);
+}
+
 function wrapDegrees(a: number): number {
   let d = a % 360;
   if (d >= 180) d -= 360;
@@ -250,6 +264,31 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
 
   append(e: T, batch: EntityBatch, texId: number, partialTick: number): void {
     this.appendModel(e, this.getModel(e), this.getTint(e), batch, texId, partialTick);
+  }
+
+  /**
+   * Builds the model's world matrix. Living entities use the vanilla feet-anchored
+   * root; vehicles (minecarts) override this with their own anchor.
+   */
+  protected rootMatrix(e: T, partialTick: number, out: M34, bodyRot: number, deathDeg: number): void {
+    const rx = e.xo + (e.x - e.xo) * partialTick;
+    const ry = e.yo + (e.y - e.yo) * partialTick;
+    const rz = e.zo + (e.z - e.zo) * partialTick;
+    this.getExtraScale(e, mExtra);
+    const entityScale = e.scale;
+
+    // T(pos) * S(scale) * RY(180 - bodyRot) * RX(pitch) * RZ(death) * ROOT
+    translation(mT, rx, ry + this.getRenderYOffset(e, partialTick), rz);
+    scaleMat(mS, mExtra[0] * entityScale, mExtra[1] * entityScale, mExtra[2] * entityScale);
+    rotY(mRy, (180 - bodyRot) * DEG);
+    rotZ(mRz, deathDeg * DEG);
+    rotX(mRx, this.getRotX(e));
+
+    mul(mA, mT, mS);
+    mul(mB, mA, mRy);
+    mul(mA, mB, mRx);
+    mul(mB, mA, mRz);
+    mul(out, mB, ROOT);
   }
 
   /** Emits one baked model for `e` into a texture bucket (used for extra layers too). */
@@ -334,21 +373,7 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     }
 
     // EntityRenderer pose scale (baby) then CreeperRenderer.scale
-    this.getExtraScale(e, mExtra);
-    const entityScale = e.scale;
-
-    // E = T(pos) * S(scale) * RY(180 - bodyRot) * RX(pitch) * RZ(death) * ROOT
-    translation(mT, rx, ry + this.getRenderYOffset(e, partialTick), rz);
-    scaleMat(mS, mExtra[0] * entityScale, mExtra[1] * entityScale, mExtra[2] * entityScale);
-    rotY(mRy, (180 - bodyRot) * DEG);
-    rotZ(mRz, deathDeg * DEG);
-    rotX(mRx, this.getRotX(e));
-
-    mul(mA, mT, mS);
-    mul(mB, mA, mRy);
-    mul(mA, mB, mRx);
-    mul(mB, mA, mRz);
-    mul(mE, mB, ROOT);
+    this.rootMatrix(e, partialTick, mE, bodyRot, deathDeg);
 
     // ---- per-part matrices ---------------------------------------------------
     const parts = model.parts;

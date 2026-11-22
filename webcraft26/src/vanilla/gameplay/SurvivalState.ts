@@ -466,6 +466,13 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
     return menu;
   }
 
+  /** Chest minecart: a 27-slot menu bound to the cart's own container. */
+  openStorageContainer(container: import('../world/inventory/Container.js').Container): ChestMenu {
+    const menu = new ChestMenu(0, this.inventory, container);
+    this.activeMenu = menu;
+    return menu;
+  }
+
   /** EnchantmentMenu: bookshelf power (0..15) comes from the block scan in Game. */
   openEnchantingTable(power: number): EnchantingMenu {
     const menu = new EnchantingMenu(0, this.inventory, power, this.random);

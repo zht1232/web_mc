@@ -120,6 +120,8 @@ export class EntityManager implements MobWorld {
   chickenEggHandler?: (e: Entity) => void;
   /** Set by Game: apply the splash potion's area effects. */
   potionSplashHandler?: (x: number, y: number, z: number, potionId: string, age: number, lingering: boolean) => void;
+  /** Set by Game: detector rail occupancy changes. */
+  minecartDetectorHandler?: (x: number, y: number, z: number, occupied: boolean) => void;
 
   readonly spawnStats: SpawnStats = {
     passes: 0, chunkAttempts: 0, spawned: 0, noType: 0, skippedEntries: 0, rulesFail: 0, chunkGenSpawns: 0,
@@ -151,6 +153,9 @@ export class EntityManager implements MobWorld {
   onChickenLayEgg(e: Entity): void { this.chickenEggHandler?.(e); }
   onPotionSplash(x: number, y: number, z: number, potionId: string, age: number, lingering: boolean): void {
     this.potionSplashHandler?.(x, y, z, potionId, age, lingering);
+  }
+  onMinecartDetector(x: number, y: number, z: number, occupied: boolean): void {
+    this.minecartDetectorHandler?.(x, y, z, occupied);
   }
   getEntities(): readonly Entity[] { return this.entities; }
   getGameTime(): number { return this.tickCounter; }
@@ -307,6 +312,8 @@ export class EntityManager implements MobWorld {
   private canDespawn(e: Entity): boolean {
     // items/xp orbs despawn by age, not by distance; mobs by category rules
     if (e instanceof ItemEntity || e instanceof ExperienceOrb) return false;
+    // Minecarts have no despawn rule (they persist until broken).
+    if (e.getTypeName().endsWith('minecart')) return false;
     const cat = e.getCategory();
     return !cat.isPersistent() || cat === MobCategory.MONSTER;
   }

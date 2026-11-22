@@ -42,7 +42,8 @@ export class Wolf extends Mob {
     this.goalSelector.addGoal(5, new LookAtPlayerGoal(this, 8));
     this.goalSelector.addGoal(6, new RandomLookAroundGoal(this));
     this.targetSelector.addGoal(1, new HurtByTargetGoal(this));
-    this.targetSelector.addGoal(2, this.playerTargetGoal);
+    // Restored tamed wolves never add the player hunt goal in the first place.
+    if (!this.tamed) this.targetSelector.addGoal(2, this.playerTargetGoal);
   }
 
   /** Tamed wolves no longer hunt the player. */

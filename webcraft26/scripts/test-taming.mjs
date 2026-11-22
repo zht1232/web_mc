@@ -153,6 +153,27 @@ try {
   check('cod tames the cat and it sits', catTamed && catState?.sitting === true
     && catState?.owner === 'player', catState);
 
+  // 5. Flush the world, reload it and verify both pets came back tamed.
+  const save = await ev(async () => {
+    const m = window.__mc;
+    if (!m.autosave || !m.currentWorldId) return { ok: false };
+    await m.autosave.flushNow('manual');
+    return { ok: true, id: m.currentWorldId };
+  });
+  if (save.ok) {
+    await page.goto(`${base}/?play&perf=0&world=${save.id}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
+    await page.waitForFunction(() => window.__mc?.running === true, null, { timeout: 120000 });
+    await sleep(1400);
+    const pets = await ev(() => window.__mc.entityManager.getEntities()
+      .filter((e) => e.tamed)
+      .map((e) => ({ type: e.type.name, sitting: e.sitting, owner: e.owner, x: e.x, z: e.z })));
+    check('tamed wolf and cat restore from the world save',
+      pets.some((p) => p.type === 'wolf' && p.owner === 'player' && !p.sitting)
+      && pets.some((p) => p.type === 'cat' && p.owner === 'player' && p.sitting), pets);
+  } else {
+    check('world save is available for pet persistence', false, save);
+  }
+
   await page.screenshot({ path: 'shots/diag/taming.png' });
 } catch (err) {
   console.log('ERROR', err);

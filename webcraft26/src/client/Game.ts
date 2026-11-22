@@ -81,6 +81,7 @@ import { MobSounds } from './audio/MobSounds.js';
 import { PerfLog } from './PerfLog.js';
 import { runChatCommand, type CommandHost } from './ChatCommands.js';
 import { WorldSaveManager, type LoadedWorld } from './world/save/WorldSaveManager.js';
+import type { SavedPet } from '../vanilla/world/level/storage/LevelSummary.js';
 import { Autosave } from './world/save/Autosave.js';
 import {
   ChunkSerializer, MinecraftDataBlockStateCodec, ReversibleBiomeCodec, type ChunkCodecOptions,
@@ -1307,6 +1308,7 @@ export class Game {
         getLevel: () => this.level,
         getPlayer: () => this.player,
         getExtra: () => this.playerExtra(),
+        getPets: () => this.petData(),
         onSave: (e) => { if (e.done) console.log(`[save] ${e.reason}: ${e.chunks} chunks`); },
         onError: (err) => console.warn('[save] failed', err),
       });
@@ -1406,6 +1408,18 @@ export class Game {
       for (let dx = -1; dx <= 1; dx++) this.level.ensureChunk(px + dx, pz + dz);
     }
     if (!this.level.hasChunk(px, pz)) this.spawnPlayer();
+
+    let restoredPets = 0;
+    for (const pet of loaded.pets) {
+      const e = this.entityManager.spawn(pet.type, pet.x, pet.y, pet.z);
+      if (!(e instanceof Mob)) continue;
+      e.tamed = true;
+      e.sitting = !!pet.sitting;
+      e.owner = pet.owner || 'player';
+      if (Number.isFinite(pet.health)) e.health = Math.max(1, Math.min(e.maxHealth, pet.health));
+      restoredPets++;
+    }
+    if (restoredPets > 0) console.log(`[save] restored ${restoredPets} pets`);
   }
 
   /** Extra player state persisted next to the vanilla NBT fields. */
@@ -1440,6 +1454,22 @@ export class Game {
         id, duration: e.duration, amplifier: e.amplifier,
       })),
     };
+  }
+
+  /** Tamed pets saved with the world (vanilla does not despawn tamed animals). */
+  private petData(): SavedPet[] {
+    const pets: SavedPet[] = [];
+    for (const e of this.entityManager.getEntities()) {
+      if (!(e instanceof Mob) || !e.tamed || e.isRemoved()) continue;
+      pets.push({
+        type: e.type.name,
+        x: e.x, y: e.y, z: e.z,
+        health: e.health,
+        sitting: e.sitting,
+        owner: e.owner,
+      });
+    }
+    return pets;
   }
 
   // ------------------------------------------------------------------ input

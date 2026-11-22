@@ -6,6 +6,17 @@ import type { WorldSummary } from '../../../../client/gui/Types.js';
 import type { CompoundTag } from '../../../nbt/CompoundTag.js';
 import { LevelStorage, gameModeFromId, difficultyFromId, type GameModeName, type DifficultyName } from './LevelStorage.js';
 
+/** Tamed pets persisted at the world level (vanilla keeps tamed animals across saves). */
+export interface SavedPet {
+  type: string;
+  x: number;
+  y: number;
+  z: number;
+  health: number;
+  sitting: boolean;
+  owner: string;
+}
+
 /** Full metadata row persisted in the IndexedDB `worlds` store. */
 export interface WorldRecord {
   id: string;
@@ -18,6 +29,7 @@ export interface WorldRecord {
   version: string;
   levelDat: Uint8Array; // gzipped level.dat NBT
   icon?: Uint8Array;    // PNG bytes of icon.png
+  pets?: SavedPet[];
 }
 
 /** Structured summary used by WorldSaveManager.getSummary(). */

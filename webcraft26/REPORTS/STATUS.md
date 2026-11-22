@@ -89,7 +89,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 鸡下蛋 / 投蛋 | ✅ | 成年鸡 6000–12000 tick 下蛋（幼鸡不下蛋）；投掷蛋落地/命中生物后 1/8 概率孵化幼鸡 |
 | Q 丢弃物品 | ✅ | Q 丢 1 个 / Ctrl+Q 丢整组，40 tick 拾取延迟，`dropped`/`drop` 统计 |
 | 繁殖 / 喂养 / 幼年 | ✅ | 牛/猪/羊/鸡/兔/猫/豹猫/蘑菇牛：食物标签、600 tick 恋爱、6000 tick 冷却、幼年 0.5 缩放与成长、繁殖 XP、幼年无掉落；幼年专用几何体未接 |
-| 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；项圈渲染与实体存档未接 |
+| 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
 | 更多 AI（村民、铁傀儡、马、船、矿车） | ❌ | 实体工厂里没有这些类型 |
 
 ### GUI / 物品栏 / 容器
@@ -147,7 +147,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 3. 水面远处/加载瞬间偶发灰色平面：本轮未复现，保留观察；复现后查水体层/光照贴图时序。
 
 **P1（原版核心玩法缺口）**
-4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随；剩余：幼年专用模型、项圈渲染、实体存档。
+4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；剩余：幼年专用模型、项圈渲染、野生动物实体存档。
 5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；剩余：药箭、TNT 归属（owner）与爆炸掉落衰减、比较器/活塞等红石长尾。
 6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；剩余：进度（Advancements）界面与触发器。
 7. 夜间怪物装备/掉落表与自然生成权重对齐（Looting/熟肉/装备掉落已完成）。
@@ -289,9 +289,14 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   `audit-p0` 13/13、`audit-behavior-p0` 4/4、`smoke` 19/19 全绿。
 - **狼/猫驯服**：`Mob` 增加 `tamed/sitting/owner` 与坐下停 AI；`Wolf`/`Cat` 实现 `mobInteract`
   （1/3 驯服、消耗食物、站起/坐下），`FollowOwnerGoal` 跟随并在 12 格外交互传送；
-  `Game.useItem` 实体交互分支接入。永久回归 `node scripts/test-taming.mjs` 6/6
-  （驯服、owner/目标、坐下/站起、跟随、猫用鱼驯服），截图 `shots/diag/taming.png`；
+  `Game.useItem` 实体交互分支接入。永久回归 `node scripts/test-taming.mjs` 7/7
+  （驯服、owner/目标、坐下/站起、跟随、猫用鱼驯服、存档重载恢复），截图 `shots/diag/taming.png`；
   `test-entities` 与 `test-mobs-render` 全绿。
+- **宠物存档**：`WorldRecord.pets` + `SavedPet`（type/位置/生命/坐下/owner），
+  `WorldSaveManager.savePets` 随 `flushAll` 与 autosave idle cycle 写入；
+  `restoreWorld` 在恢复区块后重生宠物并恢复 `tamed/sitting/owner/health`；
+  回归 `test-taming` 扩展到 **7/7**（存档→重载后狼/猫仍在且状态正确），`test-save` 49/49 全绿。
+  野生动物仍不存档（需要 chunk entity 记录），属于后续实体持久化批次。
 - 修复：火把的强信号方向写反（`getDirectSignal` 应指向火把上方的接收者，`dir==='down'`），
   否则火把会给自己脚下的方块强充能、被自己的底座点亮又熄灭，形成 2 tick 自振荡；由 burnout 回归测试发现。
 - 仍未做：活塞 moving_piston 动画与 2 tick 移动过程、`piston_movement.rs` 的每 tick 0.51 位移上限、

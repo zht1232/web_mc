@@ -271,6 +271,10 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
     `moveStuckEntities` 语义）：被推方块扫过的实体沿推动方向移动（先移实体再落方块，避免碰撞
     扫描从已放置方块内部开始）；蜂蜜方块拖拽站在上面的实体；粘液方块给实体施加沿移动轴的弹跳
     速度；玩家与生物都走各自的碰撞移动。
+  - **比较器模拟输入扩展**（`BlockState.getAnalogOutputSignal`）：容器/潜影盒、蛋糕剩余、
+    堆肥桶 `level`、炼药锅 `level`（水/熔岩/细雪）、重生锚 `charges`、末地传送门框架 `eye`、
+    蜂巢/蜂箱 `honey_level`、幽匿感测体 `power`、雕纹书架最后一个占用槽位。唱片机/讲台/物品展示框
+    仍缺（分别需要歌曲 comparatorOutput、页码和展示框旋转数据）。
   - **铁轨**：`RailState.place` 简化版（直线/拐弯/坡道），动力轨/激活铁轨按邻居信号更新 `powered`，
     探测铁轨留给矿车批次。
 - **调度队列修复**：`RedstoneSystem.tick()` 末尾统一 `flush()`。之前 scheduled tick 只入队不结算，
@@ -278,7 +282,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 接线：`Game` 新增 `containerSignal` 钩子（从 `blockContainers` 的 `SimpleContainer` 按要求公式算 0–15）；
   `Placement.ts` 新增 `ObserverBlock`（视线方向）、`PistonBaseBlock`（反视线方向）、`TripWireHookBlock`
   （水平点击面 + 背面支撑）三个 `getStateForPlacement`。
-- 验证证据：`tsc` 0；永久回归 `node scripts/test-redstone.mjs` 22/22（含比较器/侦测器/日光探测器/
+- 验证证据：`tsc` 0；永久回归 `node scripts/test-redstone.mjs` 28/28（含比较器/模拟输入扩展/侦测器/日光探测器/
   拌线/火把 burnout/活塞/活塞推实体/蜂蜜拖拽/铁轨，临时探针已改为常驻脚本）；`test-placement` 144/144（新增 observer /
   piston / sticky piston / tripwire hook 放置朝向与无支撑拒绝共 13 项）；截图 `shots/diag/redstone2.png`。
   回归：`test-containers`、`test-mobs-render` 20/20、`test-menu`、`test-hud-dirty`、`test-mesher` 64/64、
@@ -286,5 +290,5 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 修复：火把的强信号方向写反（`getDirectSignal` 应指向火把上方的接收者，`dir==='down'`），
   否则火把会给自己脚下的方块强充能、被自己的底座点亮又熄灭，形成 2 tick 自振荡；由 burnout 回归测试发现。
 - 仍未做：活塞 moving_piston 动画与 2 tick 移动过程、`piston_movement.rs` 的每 tick 0.51 位移上限、
-  矿车与探测铁轨实体检测、物品展示框/讲台/唱片机的比较器模拟输出、
+  矿车与探测铁轨实体检测、物品展示框/讲台/唱片机的比较器模拟输出（需要对应方块实体数据）、
   string 按 StringItem 语义放在点击格（当前放在相邻格）。

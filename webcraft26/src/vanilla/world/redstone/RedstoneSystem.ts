@@ -605,6 +605,22 @@ export class RedstoneSystem {
     if (name === 'composter') return Number(this.prop(state, 'level') ?? 0);
     if (name === 'water_cauldron' || name === 'lava_cauldron'
       || name === 'powder_snow_cauldron') return Number(this.prop(state, 'level') ?? 0);
+    // Remaining vanilla BlockState.getAnalogOutputSignal implementations whose data
+    // lives in the block state (block entities such as lecterns/item frames need
+    // their own containers, handled elsewhere).
+    if (name === 'respawn_anchor') return Number(this.prop(state, 'charges') ?? 0);
+    if (name === 'end_portal_frame') return this.bool(state, 'eye') ? 15 : 0;
+    if (name === 'beehive' || name === 'bee_nest') {
+      return Number(this.prop(state, 'honey_level') ?? 0);
+    }
+    if (name === 'sculk_sensor') return Number(this.prop(state, 'power') ?? 0);
+    if (name === 'chiseled_bookshelf') {
+      let last = 0;
+      for (let slot = 0; slot < 6; slot++) {
+        if (this.bool(state, `slot_${slot}_occupied`)) last = slot + 1;
+      }
+      return last;
+    }
     return -1;
   }
 

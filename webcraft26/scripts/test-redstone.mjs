@@ -134,6 +134,34 @@ try {
   check('comparator subtract 15-15 -> 0', r.mode === 'subtract' && r.output === 0
     && r.powered === 'false' && r.wire === '0', r);
 
+  // Block-state analog sources: respawn anchor charges, end portal eye, bee honey level,
+  // sculk sensor power and the last occupied chiseled-bookshelf slot.
+  const analogCases = [
+    ['respawn_anchor', { charges: '2' }, 2],
+    ['end_portal_frame', { eye: 'true', facing: 'north' }, 15],
+    ['beehive', { facing: 'north', honey_level: '3' }, 3],
+    ['bee_nest', { facing: 'north', honey_level: '5' }, 5],
+    ['sculk_sensor', { power: '7' }, 7],
+    ['chiseled_bookshelf', {
+      facing: 'north', slot_0_occupied: 'true', slot_1_occupied: 'true', slot_2_occupied: 'true',
+    }, 3],
+  ];
+  for (let i = 0; i < analogCases.length; i++) {
+    const [source, props, expected] = analogCases[i];
+    await ev(([x, y, z, i, source, props]) => {
+      const h = window.__h;
+      const sx = x + 6 + i * 2;
+      h.set(sx + 1, y, z - 3, 'comparator', { facing: 'west', mode: 'compare', powered: 'false' });
+      h.set(sx, y, z - 3, source, props);
+    }, [bx, by, bz, i, source, props]);
+    await sleep(280);
+    const out = await ev(([x, y, z, i]) => {
+      const sx = x + 6 + i * 2;
+      return window.__mc.redstone.comparatorOutputAt(sx + 1, y, z - 3);
+    }, [bx, by, bz, i]);
+    check(`comparator analog ${source} -> ${expected}`, out === expected, { out });
+  }
+
   // ---------------------------------------------------------------- observer
   await ev(([x, y, z]) => {
     const h = window.__h;

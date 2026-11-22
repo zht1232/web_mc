@@ -44,6 +44,8 @@ import { Sheep } from '../vanilla/world/entity/animal/Sheep.js';
 import { Animal } from '../vanilla/world/entity/animal/Animal.js';
 import { Wolf } from '../vanilla/world/entity/animal/Wolf.js';
 import { Cat } from '../vanilla/world/entity/animal/Cat.js';
+import { Villager } from '../vanilla/world/entity/npc/Villager.js';
+import { VillagerTrades } from '../vanilla/world/entity/npc/VillagerTrades.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
 import { cameraBasis } from './renderer/gl/Gl.js';
 import { argbFromRgb, computeFogColor } from './renderer/environment/FogState.js';
@@ -66,6 +68,7 @@ import { AbstractCraftingMenu } from '../vanilla/world/inventory/AbstractCraftin
 import { AbstractFurnaceMenu } from '../vanilla/world/inventory/AbstractFurnaceMenu.js';
 import { EnchantingMenu } from '../vanilla/world/inventory/EnchantingMenu.js';
 import { BrewingMenu } from '../vanilla/world/inventory/BrewingMenu.js';
+import { MerchantMenu } from '../vanilla/world/inventory/MerchantMenu.js';
 import { potionEffects } from '../vanilla/world/item/potion/Potions.js';
 import { Statistics } from '../vanilla/world/stats/Statistics.js';
 import { SkyRenderer } from './renderer/environment/SkyRenderer.js';
@@ -81,7 +84,7 @@ import { MobSounds } from './audio/MobSounds.js';
 import { PerfLog } from './PerfLog.js';
 import { runChatCommand, type CommandHost } from './ChatCommands.js';
 import { WorldSaveManager, type LoadedWorld } from './world/save/WorldSaveManager.js';
-import type { SavedPet } from '../vanilla/world/level/storage/LevelSummary.js';
+import type { SavedPet, SavedVillager } from '../vanilla/world/level/storage/LevelSummary.js';
 import { AdvancementManager } from '../vanilla/world/advancements/AdvancementManager.js';
 import { AdvancementToast } from './gui/components/Toast.js';
 import { Autosave } from './world/save/Autosave.js';
@@ -402,6 +405,7 @@ export class Game {
       loadWorldgenData('/mc'),
       loadWorldData('/mc'),
       AdvancementManager.load('/data'),
+      VillagerTrades.load('/data'),
       this.textures.load('/mc'),
       this.font.load('/mc'),
       this.guiTextures.preload([...HUD_SPRITES, ...MOB_EFFECT_TEXTURES]),
@@ -529,6 +533,7 @@ export class Game {
     this.onStatus?.('Starting entity system', 0.94);
     this.entityManager = new EntityManager(this.level, this.player, this.seedBig, {
       despawnDistance: 128,
+      registry: this.survival.registry,
     });
     // Client-side redstone: signal queries, wire power, diodes, buttons/plates and the
     // mechanisms they drive (lamp/door/trapdoor/gate/TNT). Hooks use the entity manager.
@@ -1251,6 +1256,31 @@ export class Game {
           ? active.brewInfo()
           : { progress: 0, fuel: 0 };
       },
+      merchantInfo: () => {
+        const active = menu();
+        if (!(active instanceof MerchantMenu)) return undefined;
+        return {
+          offers: active.getOffers().map((offer) => ({
+            costA: plain(offer.getCostA()),
+            baseCostA: plain(offer.getBaseCostA()),
+            costB: plain(offer.getCostB()),
+            result: plain(offer.getResult()),
+            outOfStock: offer.isOutOfStock(),
+            uses: offer.getUses(),
+            maxUses: offer.getMaxUses(),
+            xp: offer.getXp(),
+          })),
+          level: active.getTraderLevel(),
+          xp: active.getTraderXp(),
+          futureXp: active.getFutureTraderXp(),
+          canRestock: active.canRestock(),
+          showProgress: active.showProgressBar(),
+          select: (index: number) => {
+            active.setSelectionHint(index);
+            active.tryMoveItems(index);
+          },
+        };
+      },
       getCarried: () => {
         const stack = menu().getCarried();
         return stack.isEmpty() ? null : plain(stack);
@@ -1320,6 +1350,7 @@ export class Game {
         getPlayer: () => this.player,
         getExtra: () => this.playerExtra(),
         getPets: () => this.petData(),
+        getVillagers: () => this.villagerData(),
         onSave: (e) => { if (e.done) console.log(`[save] ${e.reason}: ${e.chunks} chunks`); },
         onError: (err) => console.warn('[save] failed', err),
       });
@@ -1432,6 +1463,15 @@ export class Game {
       restoredPets++;
     }
     if (restoredPets > 0) console.log(`[save] restored ${restoredPets} pets`);
+
+    let restoredVillagers = 0;
+    for (const saved of loaded.villagers ?? []) {
+      const e = this.entityManager.spawn('villager', saved.x, saved.y, saved.z);
+      if (!(e instanceof Villager)) continue;
+      e.restore(saved, this.survival.registry);
+      restoredVillagers++;
+    }
+    if (restoredVillagers > 0) console.log(`[save] restored ${restoredVillagers} villagers`);
   }
 
   /** Extra player state persisted next to the vanilla NBT fields. */
@@ -1495,6 +1535,16 @@ export class Game {
       });
     }
     return pets;
+  }
+
+  /** Villagers saved with the world (profession, level, offers and job site). */
+  private villagerData(): SavedVillager[] {
+    const villagers: SavedVillager[] = [];
+    for (const e of this.entityManager.getEntities()) {
+      if (!(e instanceof Villager) || e.isRemoved()) continue;
+      villagers.push(e.toJSON());
+    }
+    return villagers;
   }
 
   // ------------------------------------------------------------------ input
@@ -2371,6 +2421,23 @@ export class Game {
     this.openScreen(isFurnace ? 'furnace' : 'chest');
   }
 
+  /** Villager.startTrading: open the merchant menu and bind the trade callback. */
+  private openMerchant(villager: Villager): void {
+    const menu = this.survival.openMerchant(villager);
+    menu.setMerchantLevel(villager.professionLevel);
+    menu.setShowProgressBar(true);
+    menu.onTrade = (offer) => {
+      this.stats.award('custom', 'traded_with_villager');
+      this.advancements.trigger('villager_trade', {
+        item: offer.getResult().item?.name,
+        y: this.player.pos.y,
+      });
+      this.sounds.play('entity.villager.yes', villager.x, villager.y, villager.z, 1, 1);
+    };
+    villager.setTradingPlayer(this.player);
+    this.openScreen('merchant');
+  }
+
   /**
    * Furnace/brewing menus advance one 20 Hz step per game tick. Vanilla block entities
    * tick even while their GUI is closed, so every cached container advances too (the
@@ -2487,6 +2554,19 @@ export class Game {
     const entityTarget = this.findEntityTarget(Math.min(3.0, blockDistance + 0.25));
     if (held.item?.name?.endsWith('shears') && entityTarget instanceof Sheep) {
       this.shearSheep(entityTarget);
+      return;
+    }
+    // Villager.mobInteract: babies refuse, an offerless adult shakes its head,
+    // otherwise the merchant screen opens. Talking is counted for statistics.
+    if (entityTarget instanceof Villager) {
+      this.stats.award('custom', 'talked_to_villager');
+      if (entityTarget.isBaby() || entityTarget.getOffers().length === 0) {
+        this.sounds.play('entity.villager.no', entityTarget.x, entityTarget.y, entityTarget.z, 1, 1);
+        this.useCooldown = 8;
+        return;
+      }
+      this.openMerchant(entityTarget);
+      this.useCooldown = 8;
       return;
     }
     // TameableAnimal.mobInteract: bones tame wolves, fish tame cats, and a later

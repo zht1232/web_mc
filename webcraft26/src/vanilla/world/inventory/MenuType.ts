@@ -19,6 +19,7 @@ export const MenuType = {
   CREATIVE: 'minecraft:creative',
   ENCHANTING: 'minecraft:enchanting_table',
   BREWING: 'minecraft:brewing_stand',
+  MERCHANT: 'minecraft:merchant',
   STONECUTTER: 'minecraft:stonecutter',
   SMITHING: 'minecraft:smithing',
 } as const;

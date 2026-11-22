@@ -3,8 +3,8 @@
 // Definitions and tag membership are imported from the player's own client data by
 // scripts/build-advancements.mjs into data/advancements.json and data/tags.json.
 // This manager evaluates the trigger subset wired by Game (inventory_changed, mine_block,
-// consume_item, player_killed_entity, location, tick); criteria whose trigger is not
-// wired stay incomplete rather than being granted incorrectly.
+// consume_item, player_killed_entity, location, villager_trade, tick); criteria whose trigger
+// is not wired stay incomplete rather than being granted incorrectly.
 
 export interface AdvancementCriterion {
   trigger: string;
@@ -12,6 +12,9 @@ export interface AdvancementCriterion {
   blocks?: string[];
   entities?: string[];
   dimension?: string;
+  /** entity_properties location.position.y predicate (e.g. trade at y>=319). */
+  minY?: number;
+  maxY?: number;
 }
 
 export interface AdvancementDefinition {
@@ -34,6 +37,8 @@ export interface AdvancementEvent {
   entity?: string;
   item?: string;
   dimension?: string;
+  /** Player Y, used by criteria with an entity_properties position predicate. */
+  y?: number;
 }
 
 export interface AdvancementRow {
@@ -173,6 +178,11 @@ export class AdvancementManager {
   }
 
   private matches(criterion: AdvancementCriterion, type: string, event: AdvancementEvent): boolean {
+    if (criterion.minY !== undefined || criterion.maxY !== undefined) {
+      if (event.y === undefined) return false;
+      if (criterion.minY !== undefined && event.y < criterion.minY) return false;
+      if (criterion.maxY !== undefined && event.y > criterion.maxY) return false;
+    }
     switch (type) {
       case 'inventory_changed':
         return this.matchList(criterion.items, event.items, 'item');
@@ -187,6 +197,8 @@ export class AdvancementManager {
       case 'location':
         // Conditions we cannot evaluate yet (biomes/structures) must not match "anywhere".
         return !!criterion.dimension && strip(event.dimension ?? 'overworld') === strip(criterion.dimension);
+      case 'villager_trade':
+        return true;
       case 'tick':
         return true;
       default:

@@ -8,7 +8,7 @@
 
 import type { ClientLevel } from '../../../vanilla/world/level/ClientLevel.js';
 import type { Player } from '../../../vanilla/world/entity/player/Player.js';
-import type { SavedPet } from '../../../vanilla/world/level/storage/LevelSummary.js';
+import type { SavedPet, SavedVillager } from '../../../vanilla/world/level/storage/LevelSummary.js';
 import type { WorldSaveManager } from './WorldSaveManager.js';
 
 export const AUTOSAVE_INTERVAL = 6000;
@@ -25,6 +25,8 @@ export interface AutosaveOptions {
   getExtra(): Record<string, unknown>;
   /** Tamed pets to persist with the world (optional for headless tests). */
   getPets?(): SavedPet[];
+  /** Villagers (profession/level/offers) to persist with the world. */
+  getVillagers?(): SavedVillager[];
   onSave?(event: AutosaveEvent): void;
   onError?(err: unknown): void;
 }
@@ -76,7 +78,8 @@ export class Autosave {
   flushNow(reason: SaveReason): Promise<void> {
     const level = this.opts.getLevel();
     const player = this.opts.getPlayer();
-    return this.manager.flushAll(level, player, this.opts.getExtra(), 1000, this.opts.getPets?.() ?? [])
+    return this.manager.flushAll(level, player, this.opts.getExtra(), 1000,
+      this.opts.getPets?.() ?? [], this.opts.getVillagers?.() ?? [])
       .then((chunks) => { this.opts.onSave?.({ reason, chunks, done: true }); })
       .catch((err) => { this.opts.onError?.(err); });
   }
@@ -95,6 +98,7 @@ export class Autosave {
     void this.manager.savePlayer(player, this.opts.getExtra())
       .then(() => this.manager.saveLevelData(level))
       .then(() => this.manager.savePets(this.opts.getPets?.() ?? []))
+      .then(() => this.manager.saveVillagers(this.opts.getVillagers?.() ?? []))
       .catch((err) => this.opts.onError?.(err))
       .finally(() => this.runIdleSlice(reason));
   }

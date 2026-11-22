@@ -25,6 +25,8 @@ import { FurnaceMenu } from '../world/inventory/FurnaceMenu.js';
 import { ChestMenu } from '../world/inventory/ChestMenu.js';
 import { EnchantingMenu } from '../world/inventory/EnchantingMenu.js';
 import { BrewingMenu } from '../world/inventory/BrewingMenu.js';
+import { MerchantMenu } from '../world/inventory/MerchantMenu.js';
+import type { Merchant } from '../world/item/trading/Merchant.js';
 import { CreativeInventory } from '../world/inventory/CreativeInventory.js';
 
 export interface WorldData {
@@ -474,6 +476,13 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   /** BrewingStandMenu: five slots, brew timer/fuel advanced by Game.tickActiveMenu. */
   openBrewingStand(): BrewingMenu {
     const menu = new BrewingMenu(0, this.inventory, this.registry);
+    this.activeMenu = menu;
+    return menu;
+  }
+
+  /** MerchantMenu: three trade slots + player inventory (villager trading). */
+  openMerchant(merchant: Merchant): MerchantMenu {
+    const menu = new MerchantMenu(0, this.inventory, this, merchant, this.registry);
     this.activeMenu = menu;
     return menu;
   }

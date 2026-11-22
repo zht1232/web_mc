@@ -93,6 +93,29 @@ export interface ItemStack {
   count: number;
 }
 
+/** One villager offer as the merchant screen renders it. */
+export interface MerchantOfferView {
+  costA: ItemStack;
+  baseCostA: ItemStack;
+  costB: ItemStack;
+  result: ItemStack;
+  outOfStock: boolean;
+  uses: number;
+  maxUses: number;
+  xp: number;
+}
+
+export interface MerchantInfo {
+  offers: MerchantOfferView[];
+  level: number;
+  xp: number;
+  futureXp: number;
+  canRestock: boolean;
+  showProgress: boolean;
+  /** MerchantMenu.setSelectionHint + tryMoveItems. */
+  select(index: number): void;
+}
+
 /** Container menu contract injected by the main agent (never imported from Game). */
 export interface ContainerMenuLike {
   getSlotCount(): number;
@@ -111,6 +134,8 @@ export interface ContainerMenuLike {
   enchant?(slot: number): boolean;
   /** Brewing stand: brew timer (0..400) and fuel (0..20) for the progress sprites. */
   brewInfo?(): { progress: number; fuel: number };
+  /** Villager merchant: offers, level/xp and the selected-offer action. */
+  merchantInfo?(): MerchantInfo | undefined;
 }
 
 /** Constructor dependency bundle. All main-loop data is injected here, never imported from Game. */

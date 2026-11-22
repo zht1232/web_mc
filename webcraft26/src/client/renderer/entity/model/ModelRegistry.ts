@@ -7,7 +7,7 @@
 import type { BakedModel } from './ModelBox.js';
 import {
   ZombieModel, PlayerModel, ZombieVillagerModel, SkeletonModel, CreeperModel, SpiderModel, EndermanModel,
-  SilverfishModel, SlimeModel, WitchModel,
+  SilverfishModel, SlimeModel, WitchModel, VillagerModel,
   PigModel, CowModel, SheepModel, SheepFurModel, ChickenModel, WolfModel, FoxModel, FelineModel, ParrotModel,
   RabbitModel, BatModel, SquidModel, CodModel, SalmonModel,
   QuadrupedModel,
@@ -39,6 +39,7 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   // here is what removes Game.init's "no renderer => no natural spawn" filter.
   slime: { model: SlimeModel, texture: 'slime/slime' },
   witch: { model: WitchModel, texture: 'witch/witch' },
+  villager: { model: VillagerModel, texture: 'villager/villager' },
   cave_spider: { model: SpiderModel, texture: 'spider/cave_spider' },
   zombie_villager: { model: ZombieVillagerModel, texture: 'zombie_villager/zombie_villager' },
   fox: { model: FoxModel, texture: 'fox/fox' },
@@ -88,8 +89,22 @@ export const TNT_SIDE_TEXTURE = 'block/tnt_side';
 export const TNT_TOP_TEXTURE = 'block/tnt_top';
 export const TNT_BOTTOM_TEXTURE = 'block/tnt_bottom';
 
+/** Villager base/baby, type, profession and profession-level overlay textures. */
+export const VILLAGER_TEXTURES: readonly string[] = [
+  'villager/villager',
+  'villager/villager_baby',
+  ...['plains', 'desert', 'jungle', 'savanna', 'snow', 'swamp', 'taiga']
+    .flatMap((type) => [`villager/type/${type}`, `villager/baby/${type}`]),
+  ...['armorer', 'butcher', 'cartographer', 'cleric', 'farmer', 'fisherman', 'fletcher',
+    'leatherworker', 'librarian', 'mason', 'nitwit', 'shepherd', 'toolsmith', 'weaponsmith']
+    .map((profession) => `villager/profession/${profession}`),
+  ...['stone', 'iron', 'gold', 'emerald', 'diamond']
+    .map((level) => `villager/profession_level/${level}`),
+];
+
 export const EXTRA_TEXTURE_KEYS: readonly string[] = [
   'sheep/sheep_wool',
+  ...VILLAGER_TEXTURES,
   ...ARMOR_MATERIALS.map(ARMOR_LAYER1_TEXTURE),
   ...ARMOR_LEGGING_MATERIALS.map(ARMOR_LAYER2_TEXTURE),
   TNT_SIDE_TEXTURE,

@@ -43,14 +43,14 @@ function perfLogSink(): Plugin {
 }
 
 /**
- * Copies the committed advancement/tag definitions into the production bundle.
+ * Copies the committed advancement/tag/villager-trade definitions into the production bundle.
  * Vite serves them from the project root in dev, but the build only emits public/.
  */
 function advancementData(): Plugin {
   return {
     name: 'advancement-data',
     generateBundle() {
-      for (const name of ['advancements.json', 'tags.json']) {
+      for (const name of ['advancements.json', 'tags.json', 'villager_trades.json']) {
         const file = path.resolve(process.cwd(), 'data', name);
         if (!fs.existsSync(file)) continue;
         this.emitFile({ type: 'asset', fileName: `data/${name}`, source: fs.readFileSync(file) });

@@ -17,6 +17,20 @@ export interface SavedPet {
   owner: string;
 }
 
+/** Villagers persist their profession, level and generated offers (vanilla saves them per entity). */
+export interface SavedVillager {
+  x: number;
+  y: number;
+  z: number;
+  health: number;
+  villagerType: string;
+  profession: string;
+  professionLevel: number;
+  xp: number;
+  jobSite: { x: number; y: number; z: number } | null;
+  offers: import('../../item/trading/MerchantOffer.js').MerchantOfferJSON[];
+}
+
 /** Full metadata row persisted in the IndexedDB `worlds` store. */
 export interface WorldRecord {
   id: string;
@@ -30,6 +44,7 @@ export interface WorldRecord {
   levelDat: Uint8Array; // gzipped level.dat NBT
   icon?: Uint8Array;    // PNG bytes of icon.png
   pets?: SavedPet[];
+  villagers?: SavedVillager[];
 }
 
 /** Structured summary used by WorldSaveManager.getSummary(). */

@@ -99,6 +99,17 @@ function normalizeCriterion(raw) {
     default:
       break;
   }
+  // entity_properties -> location.position.y predicates (trade at world height, fall from height).
+  const players = c.player;
+  if (Array.isArray(players)) {
+    for (const entry of players) {
+      const predicate = entry?.predicate ?? entry;
+      const location = predicate?.['minecraft:location'] ?? predicate?.location;
+      const y = location?.position?.y;
+      if (typeof y?.min === 'number') criterion.minY = y.min;
+      if (typeof y?.max === 'number') criterion.maxY = y.max;
+    }
+  }
   return criterion;
 }
 

@@ -128,7 +128,7 @@ export class SkeletonRenderer extends MobRenderer {
     if (!main) return base;
     let weapon: EntityLayer;
     if (main.id.endsWith('bow')) {
-      this.bowLayers[0] = { model: SkeletonBowModel, texture: this.getTextureKey(), tint: WHITE };
+      this.bowLayers[0] = { model: SkeletonBowModel, texture: this.getTextureKey(e), tint: WHITE };
       weapon = this.bowLayers[0];
     } else if (main.id.endsWith('_sword')) {
       // A solid-colour blade must not sample the (nearly black) wither skeleton skin.

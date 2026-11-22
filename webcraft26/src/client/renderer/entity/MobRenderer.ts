@@ -19,6 +19,7 @@ import type { Mob } from '../../../vanilla/world/entity/Mob.js';
 import type { LivingEntity } from '../../../vanilla/world/entity/LivingEntity.js';
 import { EquipmentSlot } from '../../../vanilla/world/entity/EquipmentSlot.js';
 import { SHEEP_WOOL_RGB, type Sheep } from '../../../vanilla/world/entity/animal/Sheep.js';
+import type { Villager } from '../../../vanilla/world/entity/npc/Villager.js';
 
 /**
  * Per-type render scale on top of entity.scale.
@@ -79,6 +80,8 @@ const HUMAN_ARMOR_TYPES: ReadonlySet<string> = new Set([
   'zombified_piglin',
 ]);
 const WHITE: readonly [number, number, number] = [1, 1, 1];
+/** VillagerProfessionLayer.LEVEL_LOCATIONS. */
+const VILLAGER_LEVEL_TEXTURES = ['stone', 'iron', 'gold', 'emerald', 'diamond'] as const;
 
 /** `minecraft:iron_helmet` -> `iron`; turtle helmet -> turtle_scute. */
 function armorMaterial(id: string): string | null {
@@ -100,6 +103,7 @@ export class MobRenderer extends EntityRenderer<Entity> {
   private readonly woolLayers: readonly EntityLayer[] | null;
   private readonly layerScratch: EntityLayer[] = [];
   private readonly armorLayers: EntityLayer[] = [];
+  private readonly villagerLayers: EntityLayer[] = [];
 
   constructor(private readonly typeName: string) {
     super();
@@ -112,11 +116,44 @@ export class MobRenderer extends EntityRenderer<Entity> {
   }
 
   getModel(): BakedModel { return this.entry.model; }
-  getTextureKey(): string { return this.entry.texture; }
+  getTextureKey(e: Entity): string {
+    if (this.typeName === 'villager' && (e as Villager).isBaby()) return 'villager/villager_baby';
+    return this.entry.texture;
+  }
   getTint(): readonly [number, number, number] { return this.tint; }
+
+  /** Source: VillagerRenderer + VillagerProfessionLayer (type/profession/badge overlays). */
+  private villagerProfessionLayers(e: Entity): readonly EntityLayer[] {
+    const villager = e as Villager;
+    const baby = villager.isBaby();
+    let n = 0;
+    this.villagerLayers[n++] = {
+      model: this.entry.model,
+      texture: `villager/${baby ? 'baby' : 'type'}/${villager.villagerType}`,
+      tint: WHITE,
+    };
+    if (!baby && villager.profession !== 'none') {
+      this.villagerLayers[n++] = {
+        model: this.entry.model,
+        texture: `villager/profession/${villager.profession}`,
+        tint: WHITE,
+      };
+      if (villager.profession !== 'nitwit') {
+        const level = Math.max(1, Math.min(5, villager.professionLevel));
+        this.villagerLayers[n++] = {
+          model: this.entry.model,
+          texture: `villager/profession_level/${VILLAGER_LEVEL_TEXTURES[level - 1]}`,
+          tint: WHITE,
+        };
+      }
+    }
+    this.villagerLayers.length = n;
+    return this.villagerLayers;
+  }
 
   /** Source: SheepRenderer.render — the wool layer is skipped while sheared. */
   getLayers(e: Entity): readonly EntityLayer[] {
+    if (this.typeName === 'villager') return this.villagerProfessionLayers(e);
     if (this.woolLayers) {
       const sheep = e as Sheep;
       if (sheep.sheared) return super.getLayers(e);

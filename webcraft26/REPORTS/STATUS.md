@@ -1,4 +1,4 @@
-# 项目状态索引（2026-11-21）
+# 项目状态索引（2026-11-22）
 
 这份文件是**唯一的当前状态入口**：先看这里，再按需翻 `REPORTS/HANDOFF*.md` 的历史交接记录。
 历史交接里已经过时的数字（世界大小、已修 bug、测试数量）不要当现状。
@@ -50,6 +50,7 @@ node scripts/test-containers.mjs              # 容器交互 19 项
 node scripts/test-menu.mjs                    # 主菜单/世界选择 9 项
 node scripts/test-hud-dirty.mjs               # HUD 脏标记 / 菜单隐藏 5 项
 node scripts/test-advancements.mjs            # 进度：roots/可见数/触发器/界面/存档 7 项
+node scripts/test-villager-trade.mjs          # 村民：职业/报价/交易/等级/补货/存档 14 项
 node scripts/test-icons.mjs                   # 物品图标
 node scripts/test-taa.mjs                     # TAA
 npx tsx scripts/test-mesher.mts               # 区块网格 64 项
@@ -91,7 +92,8 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | Q 丢弃物品 | ✅ | Q 丢 1 个 / Ctrl+Q 丢整组，40 tick 拾取延迟，`dropped`/`drop` 统计 |
 | 繁殖 / 喂养 / 幼年 | ✅ | 牛/猪/羊/鸡/兔/猫/豹猫/蘑菇牛：食物标签、600 tick 恋爱、6000 tick 冷却、幼年 0.5 缩放与成长、繁殖 XP、幼年无掉落；幼年专用几何体未接 |
 | 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
-| 更多 AI（村民、铁傀儡、马、船、矿车） | ❌ | 实体工厂里没有这些类型 |
+| 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化；`test-villager-trade` 14 项 |
+| 更多 AI（铁傀儡、马、船、矿车） | ❌ | 实体工厂里没有这些类型 |
 
 ### GUI / 物品栏 / 容器
 | 项 | 状态 | 说明 |
@@ -100,9 +102,10 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 生存背包 / 创造物品栏 | ✅ | 官方 tab 精灵、滚动、搜索、tooltip、3D 预览 |
 | 容器点击规则（左右键/Shift/拖拽/数字键/F/Q/双击） | ✅ | `test-containers` 19 项；`AbstractContainerScreen` |
 | 合成台/箱子/熔炉/配方书 | ✅ | 真实配方、箱子会话内持久、熔炉 GUI 打开时推进 |
+| 村民交易界面 | ✅ | `MerchantScreen` 276x166：7 行报价列表/滚轮与拖动滚动/悬停高亮、3 个交易槽、经验条、等级标题、缺货印章、折扣划线、玩家背包；`test-villager-trade` |
 | 中文文案完整性 | ✅ | 2026-11-21 补齐 `menu.advancements`/`menu.stats`/`createWorld.create`/`selectWorld.difficulty` |
 | 统计（Statistics）界面 | ✅ | General/Items/Mobs 三页、6 列排序、真实计数器（挖掘/放置/拾取/合成/击杀/死亡/伤害/距离/游玩时间） |
-| 进度（Advancements）界面 | ⚠️ | 数据驱动：126 个定义（117 可见，5 个 root）；暂停菜单打开按 root 分页的列表界面（图标/完成色/Goal/Challenge/done-total）；基础触发器 `inventory_changed`/`mine_block`/`consume_item`/`player_killed_entity`/`killed_by_entity`/`location`（需 dimension）/`tick`；完成弹 toast 并随存档保存。缺树状布局/连接线、完整条件（生物群系/结构/物品谓词/count/components）、配方解锁联动 |
+| 进度（Advancements）界面 | ⚠️ | 数据驱动：126 个定义（117 可见，5 个 root）；暂停菜单打开按 root 分页的列表界面（图标/完成色/Goal/Challenge/done-total）；触发器 `inventory_changed`/`mine_block`/`consume_item`/`player_killed_entity`/`killed_by_entity`/`location`（需 dimension）/`villager_trade`/`tick`，支持 entity_properties 的 `position.y` 上下限（trade_at_world_height）；完成弹 toast 并随存档保存。缺树状布局/连接线、完整条件（生物群系/结构/物品谓词/count/components）、配方解锁联动 |
 | 统计计数器 | ✅ | `Statistics` 随玩家 `Extra.stats` 保存；挖掘/放置/拾取/合成/熔炉/击杀/死亡/伤害/移动距离/动物繁殖均有埋点 |
 | 多人/LAN/资源包/皮肤设置/遥测 | ❌ | 按钮占位或没有入口 |
 
@@ -121,8 +124,8 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 状态效果 HUD | ✅ | 右上角一列 24x24 背景 + 18x18 图标、剩余时间、等级罗马数字；剩余 <10s 闪烁；中毒/凋零时心形变绿/黑 |
 | 红石 | ✅ | 红石线功率/连接形状、拉杆/按钮/压力板、红石火把（反相 + 2 tick 调度 + 8 次/60 tick burnout）、中继器（1–4 档延迟/单向）、比较器（容器/蛋糕/堆肥桶模拟输入、侧输入、compare/subtract、2 tick）、侦测器（2 tick 脉冲）、日光探测器（天空光 + 太阳角 + 反相）、拌线/拌线钩、红石灯、木/铁门、活板门、栅栏门、TNT 信号点燃、活塞（普通/粘性，推/拉/12 格/不可推方块）、铁轨形状与动力轨供电；缺粘液/蜂蜜牵引链、活塞 moving_piston 动画、矿车物理、物品展示框/讲台/唱片机的比较器模拟输出 |
 | 床睡觉 | ✅ | 夜晚/雷暴、8 格内无怪物、床上方无遮挡才能入睡；60 tick 后跳到次日清晨、清雨、设置重生点并持久化；黑屏淡入淡出；睡眠中禁止移动/挖掘/攻击 |
-| 村民交易 | ❌ | 没有村民实体与交易界面 |
-| 成就（Advancements） | ⚠️ | 见「GUI」进度行：列表界面 + 7 类基础触发器可用；树状布局与完整条件待补 |
+| 村民交易 | ✅ | 成年村民右键打开交易界面；报价成本/结果/使用次数、补货（每天 2 次）、等级提升追加报价；地图交易与流浪商人未接 |
+| 成就（Advancements） | ⚠️ | 见「GUI」进度行：列表界面 + 8 类基础触发器（含 `villager_trade`）可用；树状布局与完整条件待补 |
 | 经验球/掉落物 | ✅ | |
 
 ### 世界生成 / 存档
@@ -152,13 +155,14 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 **P1（原版核心玩法缺口）**
 4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；剩余：幼年专用模型、项圈渲染、野生动物实体存档。
 5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；剩余：药箭、TNT 归属（owner）与爆炸掉落衰减、比较器/活塞等红石长尾。
-6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成列表界面 + 7 类触发器；剩余：树状布局/连接线、完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
-7. 夜间怪物装备/掉落表与自然生成权重对齐（Looting/熟肉/装备掉落已完成）。
+6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成列表界面 + 8 类触发器（含 `villager_trade` 与 Y 坐标谓词）；剩余：树状布局/连接线、完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
+7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；剩余：地图交易（需已填充地图/结构定位）、流浪商人、村民繁殖与铁傀儡、村民工作/睡眠日程。
+8. 夜间怪物装备/掉落表与自然生成权重对齐（Looting/熟肉/装备掉落已完成）。
 
 **P2（长尾一致性）**
-8. 村庄结构换成原版模板/更接近的拼片；矿洞/要塞。
-9. 粒子表全量对齐；音乐曲目表。
-10. 生物群系/地形边界与 26.2 逐种子对比。
+9. 村庄结构换成原版模板/更接近的拼片；矿洞/要塞。
+10. 粒子表全量对齐；音乐曲目表。
+11. 生物群系/地形边界与 26.2 逐种子对比。
 
 ## 6. 本轮改动（2026-11-21）
 
@@ -325,3 +329,33 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   `shots/diag/advancements-current.png`。
 - 剩余：树状布局与连接线、完整 criteria（生物群系/结构/物品谓词/count/components/effects）、
   配方解锁联动、统计页与进度页互跳。
+
+### 村民 / 交易（2026-11-22）
+
+- 数据：`scripts/build-villager-trades.mjs` 解析 26.2 的 `trade_set → tags/villager_trade →
+  villager_trade` 三层数据，生成 `data/villager_trades.json`（270 条报价；跳过 27 条需要
+  结构定位/地图生成/任意 loot function 的交易）。`vite.config.ts` 在生产构建时一并 emit。
+- `Villager`（`src/vanilla/world/entity/npc/Villager.ts`）：原型是 `horizon` 的
+  `mobs/villager.rs` 与 26.2 反编译。13 种工作站点认领（composter→farmer、lectern→librarian、
+  blast_furnace→armorer……），单站点单村民；工作站点被破坏后失业并清空报价；交易中停止 AI。
+  职业等级阈值 0/10/70/150/250，40 tick 升级延迟；`shouldRestock`/`restock` 按每天 2 次补货，
+  刷新 `uses` 与 demand；生物群系决定 7 种皮肤。
+- `MerchantOffer` / `MerchantMenu`：成本 A/B、结果、`uses/maxUses/xp/priceMultiplier/demand/
+  specialPrice`；需求加价与折扣公式按 `MerchantOffer.getModifiedCostCount`；
+  `MerchantContainer.updateSellItem` 自动匹配报价；结果槽取出时消耗成本、增加经验与使用次数。
+  附魔书报价从 `given_item_modifiers: enchant_randomly` 生成随机附魔并随 `resultComponents` 存档。
+- 界面：`MerchantScreen` 276x166，含 7 行报价列表、滚轮/拖动滚动、缺货印章、折扣划线、
+  102x5 经验条、等级标题、3 个交易槽 + 玩家背包；价格/结果物品 tooltip。
+- 渲染：`VillagerModel`（26.2 `createBodyModel`）+ 基础/幼年/皮肤/职业/职业等级五类叠加贴图；
+  `MobRenderer` 按实体状态选择层，`ALL_TEXTURE_KEYS` 收录全部 30 张村民贴图。
+- 持久化：`WorldRecord.villagers` + `SavedVillager`（位置/生命/皮肤/职业/等级/经验/工作站点/报价
+  的 uses/demand/specialPrice），随 autosave 与手动保存写入；读档时重建并重新认领工作站点。
+- 进度：交易触发 `villager_trade`，顺带支持 criteria 的 `position.y` 上下限
+  （`adventure/trade` 在任意高度，`adventure/trade_at_world_height` 需要 y≥319）。
+- 验证：`tsc` 0；`node scripts/test-villager-trade.mjs` **14/14**（职业认领、等级 1 报价、
+  右键开界面、报价选择/付款槽、成交与统计、10 XP 升级、跨日补货、存档重载、附魔书报价
+  与序列化）；回归 `test-advancements` 7/7、`test-taming` 7/7、`test-save` 49/49、
+  `test-mobs-render` 20/20、`test-entities` 10/10、`test-spawn` 16/16、`test-containers` 全过、
+  `smoke` 19/19。截图 `shots/diag/villager-trade.png`、`villager-scroll.png`。
+- 剩余：地图交易（需要结构定位与已填充地图）、流浪商人、村民繁殖/铁傀儡/袭击、
+  工作与睡眠日程、附魔书 tooltip 显示附魔名与光效、交易音效目前只用 `entity.villager.yes`。

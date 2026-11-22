@@ -11,6 +11,7 @@
 import { AABB, Vec3 } from '../../core/Geometry.js';
 import type { ClientLevel } from '../level/ClientLevel.js';
 import type { EntityType } from './EntityType.js';
+import type { ItemRegistry } from '../item/Item.js';
 import { XoroshiroRandomSource, type RandomSource } from '../../core/Random.js';
 import { DEG_TO_RAD } from '../../core/Mth.js';
 
@@ -53,6 +54,10 @@ export interface MobWorld {
   isDay(): boolean;
   getBrightness(x: number, y: number, z: number): number;
   getSkyDarken(): number;
+  /** Biome name at a position (villager type selection). */
+  getBiomeName?(x: number, y: number, z: number): string;
+  /** Item registry used to build villager trade offers. */
+  getRegistry?(): ItemRegistry | null;
   spawnEntity(e: Entity): void;
   removeEntity(e: Entity): void;
   /**

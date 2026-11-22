@@ -644,6 +644,40 @@ export const SlimeModel: BakedModel = bakeModel(makeModel(64, 32, [
 ]));
 
 /**
+ * Source: net.minecraft.client.model.npc.VillagerModel.createBodyModel (64x64).
+ * Head + hat + nose, body with the long jacket overlay, crossed arms and the
+ * half-speed leg swing of VillagerModel.setupAnim. The two type/profession
+ * overlays and the profession badge are separate textures on the same model
+ * (VillagerProfessionLayer), drawn by MobRenderer.
+ */
+export const VillagerModel: BakedModel = withAnimator(bakeModel(makeModel(64, 64, [
+  P('head', 0, 0, 0, [B(-4, -10, -4, 8, 10, 8, 0, 0)], {}, [
+    P('hat', 0, 0, 0, [B(-4, -10, -4, 8, 10, 8, 32, 0, false, 0.51)], {}, [
+      P('hat_rim', 0, 0, 0, [B(-8, -8, -6, 16, 16, 1, 30, 47)], { rx: -HALF_PI }),
+    ]),
+    P('nose', 0, -2, 0, [B(-1, -1, -6, 2, 4, 2, 24, 0)]),
+  ]),
+  P('body', 0, 0, 0, [B(-4, 0, -3, 8, 12, 6, 16, 20)], {}, [
+    P('jacket', 0, 0, 0, [B(-4, 0, -3, 8, 20, 6, 0, 38, false, 0.5)]),
+  ]),
+  P('arms', 0, 3, -1, [
+    B(-8, -2, -2, 4, 8, 4, 44, 22),
+    B(4, -2, -2, 4, 8, 4, 44, 22, true),
+    B(-4, 2, -2, 8, 4, 4, 40, 38),
+  ], { rx: -0.75 }),
+  P('right_leg', -2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 22)]),
+  P('left_leg', 2, 12, 0, [B(-2, 0, -2, 4, 12, 4, 0, 22, true)]),
+])), (model, ctx) => {
+  // Source: VillagerModel.setupAnim (head look, half-speed leg swing).
+  const head = pose(model, 'head');
+  head.rx = ctx.headPitch;
+  head.ry = ctx.headYaw;
+  const ap = ctx.limbSwing, as = ctx.limbSwingAmount;
+  pose(model, 'right_leg').rx = Math.cos(ap * 0.6662) * 1.4 * as * 0.5;
+  pose(model, 'left_leg').rx = Math.cos(ap * 0.6662 + Math.PI) * 1.4 * as * 0.5;
+});
+
+/**
  * Source: net.minecraft.client.model.monster.witch.WitchModel.createBodyLayer
  * (64x128) — VillagerModel.createBodyModel geometry, a replacement head, the
  * four-part hat (the wide hat_rim is inherited from the villager body model) and

@@ -264,6 +264,12 @@ export const CORE_SPRITES = [
   // Brewing stand: fuel bar, rising progress column, bubbles + fuel slot outline.
   'container/brewing_stand/brew_progress', 'container/brewing_stand/bubbles',
   'container/brewing_stand/fuel_length', 'container/slot/brewing_fuel',
+  // Merchant screen: trade arrows, out-of-stock stamp, discount strike, xp bar and scroller.
+  'container/villager/trade_arrow', 'container/villager/trade_arrow_out_of_stock',
+  'container/villager/out_of_stock', 'container/villager/discount_strikethrough',
+  'container/villager/experience_bar_background', 'container/villager/experience_bar_current',
+  'container/villager/experience_bar_result', 'container/villager/scroller',
+  'container/villager/scroller_disabled',
   'container/slot_highlight_back', 'container/slot_highlight_front',
   // Every creative tab sprite (columns 1..7, selected/unselected, top/bottom). Only preloading
   // variant 1 left tabs 2..7 with no cached sprite, so they fell back to flat grey rectangles.

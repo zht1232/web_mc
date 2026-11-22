@@ -12,6 +12,7 @@ import {
 } from '../../../vanilla/world/level/storage/LevelStorage.js';
 import {
   recordToWorldSummary, summaryFromLevelDat, type WorldRecord, type LevelSummary, type SavedPet,
+  type SavedVillager,
 } from '../../../vanilla/world/level/storage/LevelSummary.js';
 import { PlayerData, type PlayerLike, type PlayerExtra } from '../../../vanilla/world/level/storage/PlayerData.js';
 import {
@@ -47,6 +48,7 @@ export interface LoadedWorld {
   chunks: Map<string, Uint8Array>;
   player: NbtCompound | null;
   pets: SavedPet[];
+  villagers: SavedVillager[];
 }
 
 interface CreateParams {
@@ -196,7 +198,7 @@ export class WorldSaveManager implements WorldListProvider {
 
     if (rec) { rec.lastPlayed = Date.now(); await this.db.worlds.put(id, rec); }
     this.bind(id, new Set(chunks.keys()));
-    return { level, chunks, player, pets: rec?.pets ?? [] };
+    return { level, chunks, player, pets: rec?.pets ?? [], villagers: rec?.villagers ?? [] };
   }
 
   // ---- per-frame dirty chunk persistence ----------------------------------
@@ -287,9 +289,20 @@ export class WorldSaveManager implements WorldListProvider {
     await this.db.worlds.put(id, rec);
   }
 
+  /** Persists villagers (profession/level/offers) at the world level. */
+  async saveVillagers(villagers: SavedVillager[]): Promise<void> {
+    const id = this.currentWorldId;
+    if (!id) return;
+    const rec = await this.db.worlds.get(id) as WorldRecord | undefined;
+    if (!rec) return;
+    rec.villagers = villagers;
+    rec.lastPlayed = Date.now();
+    await this.db.worlds.put(id, rec);
+  }
+
   /** Saves everything (used by autosave / pause / quit). Loops flushDirty until drained. */
   async flushAll(level: ClientLevel, player: Player, extra: Record<string, unknown>,
-    budgetMs = 1000, pets?: SavedPet[]): Promise<number> {
+    budgetMs = 1000, pets?: SavedPet[], villagers?: SavedVillager[]): Promise<number> {
     await this.savePlayer(player, extra);
     let total = 0;
     for (;;) {
@@ -299,6 +312,7 @@ export class WorldSaveManager implements WorldListProvider {
     }
     await this.saveLevelData(level);
     if (pets) await this.savePets(pets);
+    if (villagers) await this.saveVillagers(villagers);
     return total;
   }
 

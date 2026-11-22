@@ -29,6 +29,7 @@ import { createEntity } from './EntityFactory.js';
 import { PlayerTarget } from './PlayerTarget.js';
 import { MobCategory } from './MobCategory.js';
 import { checkSpawnRules, isSpawnPositionOk } from './SpawnPlacements.js';
+import type { ItemRegistry } from '../item/Item.js';
 import { ItemEntity } from './item/ItemEntity.js';
 import { ExperienceOrb } from './ExperienceOrb.js';
 
@@ -54,6 +55,8 @@ export interface EntityManagerOptions {
   spawnInterval?: number;
   /** chunk spawn-attempt budget per pass (vanilla attempts every spawning chunk) */
   chunksPerTick?: number;
+  /** Item registry handed to villagers for trade offers. */
+  registry?: ItemRegistry;
 }
 
 /** Vanilla NaturalSpawner.SPAWN_DISTANCE_CHUNK. */
@@ -91,8 +94,10 @@ export class EntityManager implements MobWorld {
   private readonly activeChunks = new Set<number>();
   private readonly knownChunks = new Set<number>();
   private readonly biomeById = new Map<number, BiomeSpawners>();
+  private readonly biomeNameById = new Map<number, string>();
   private spawnConfigLoaded = false;
   private readonly seedBig: bigint;
+  readonly registry: ItemRegistry | null;
   private nextId = 1;
   private tickCounter = 0;
   private readonly despawnDistance: number;
@@ -132,6 +137,7 @@ export class EntityManager implements MobWorld {
     this.despawnDistance = options.despawnDistance ?? 128;
     this.spawnInterval = options.spawnInterval ?? 1;
     this.chunksPerTick = options.chunksPerTick ?? 8;
+    this.registry = options.registry ?? null;
   }
 
   // ---- MobWorld -----------------------------------------------------------
@@ -153,6 +159,10 @@ export class EntityManager implements MobWorld {
     return Math.min(1, this.level.getBrightness(x, y, z) / 15);
   }
   getSkyDarken(): number { return this.level.getSkyDarken(); }
+  getBiomeName(x: number, y: number, z: number): string {
+    return this.biomeNameById.get(this.level.getBiome(x, y, z)) ?? '';
+  }
+  getRegistry(): ItemRegistry | null { return this.registry; }
 
   spawnEntity(e: Entity): void { this.spawnQueue.push(e); }
   removeEntity(e: Entity): void { e.remove(); }
@@ -236,10 +246,14 @@ export class EntityManager implements MobWorld {
 
   setSpawnConfig(config: SpawnConfig): void {
     this.biomeById.clear();
+    this.biomeNameById.clear();
     const biomes = config.biomes ?? {};
     for (const name of Object.keys(biomes)) {
       const b = biomes[name];
-      if (b && typeof b.id === 'number') this.biomeById.set(b.id, b);
+      if (b && typeof b.id === 'number') {
+        this.biomeById.set(b.id, b);
+        this.biomeNameById.set(b.id, name);
+      }
     }
     this.spawnConfigLoaded = this.biomeById.size > 0;
   }

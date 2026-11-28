@@ -3194,10 +3194,22 @@ export class Game {
     const key = `${blockName}@${x},${y},${z}`;
     let menu = this.blockContainers.get(key);
     if (!menu) {
-      menu = isFurnace ? this.survival.openFurnace() : this.survival.openChest(3);
+      // ChestBlock.getConnectedDirection: two chests of the same type and facing on the
+      // perpendicular axis open as one 54-slot inventory (vanilla double chest).
+      const partner = !isFurnace ? this.chestPartner(blockName, x, y, z) : null;
+      menu = isFurnace ? this.survival.openFurnace() : this.survival.openChest(partner ? 6 : 3);
       this.blockContainers.set(key, menu);
       const container = (menu as unknown as { container?: Container }).container;
-      if (container) this.restoreBlockContainer(blockName, x, y, z, container);
+      if (container) {
+        if (partner) {
+          const pair = this.canonicalChestPair({ x, y, z }, partner);
+          this.doubleChests.set(menu, pair);
+          this.blockContainers.set(`${blockName}@${partner.x},${partner.y},${partner.z}`, menu);
+          this.restoreDoubleChest(blockName, pair, container);
+        } else {
+          this.restoreBlockContainer(blockName, x, y, z, container);
+        }
+      }
     } else {
       this.survival.activeMenu = menu;
     }
@@ -3205,6 +3217,59 @@ export class Game {
   }
 
   // ------------------------------------------------------------ container records
+
+  /** Menu -> the two chest block positions of a double chest (first half = slots 0..26). */
+  private readonly doubleChests = new Map<AbstractContainerMenu, [{ x: number; y: number; z: number }, { x: number; y: number; z: number }]>();
+
+  private isChestBlock(name: string): boolean {
+    return name === 'chest' || name === 'trapped_chest';
+  }
+
+  /** ChestBlock.getConnectedDirection: the same-type/same-facing chest on the perpendicular axis. */
+  private chestPartner(name: string, x: number, y: number, z: number): { x: number; y: number; z: number } | null {
+    if (!this.isChestBlock(name)) return null;
+    const state = this.level.getBlockState(x, y, z);
+    const facing = this.mc.getProp(state, 'facing') ?? 'north';
+    const alongX = facing === 'north' || facing === 'south';
+    for (const s of [-1, 1]) {
+      const nx = x + (alongX ? s : 0);
+      const nz = z + (alongX ? 0 : s);
+      const other = this.level.getBlockState(nx, y, nz);
+      if (this.mc.blockOf(other).name !== name) continue;
+      if ((this.mc.getProp(other, 'facing') ?? 'north') !== facing) continue;
+      return { x: nx, y, z: nz };
+    }
+    return null;
+  }
+
+  private canonicalChestPair(
+    a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number },
+  ): [{ x: number; y: number; z: number }, { x: number; y: number; z: number }] {
+    return a.x < b.x || (a.x === b.x && a.z < b.z) ? [a, b] : [b, a];
+  }
+
+  /** Seeds a 54-slot menu: first half from the canonical first chest, second half from the other. */
+  private restoreDoubleChest(
+    name: string,
+    pair: [{ x: number; y: number; z: number }, { x: number; y: number; z: number }],
+    container: Container,
+  ): void {
+    const halves = [pair[0], pair[1]];
+    for (let h = 0; h < 2; h++) {
+      const p = halves[h];
+      const chunk = this.level.getChunk(p.x >> 4, p.z >> 4);
+      const rec = chunk?.getBlockEntity(p.x & 15, p.y, p.z & 15);
+      if (!rec || rec.type.replace(/^minecraft:/, '') !== name) continue;
+      const items = (rec.data as { items?: unknown }).items;
+      if (!Array.isArray(items)) continue;
+      for (const raw of items) {
+        const slot = Number((raw as { slot?: unknown } | null)?.slot) + h * 27;
+        if (!Number.isInteger(slot) || slot < 0 || slot >= container.getContainerSize()) continue;
+        const stack = this.stackFromData(raw);
+        if (!stack.isEmpty()) container.setItem(slot, stack);
+      }
+    }
+  }
 
   /** Blocks whose contents live in a block entity record (chest/furnace/brewing/...). */
   private isContainerBlock(name: string): boolean {
@@ -3245,13 +3310,37 @@ export class Game {
 
   /** Called once per save cycle: freeze every open container into its block entity. */
   private persistBlockContainers(): void {
+    const seen = new Set<AbstractContainerMenu>();
     for (const [key, menu] of this.blockContainers) {
+      if (seen.has(menu)) continue;
+      seen.add(menu);
       const m = /^([a-z_]+)@(-?\d+),(-?\d+),(-?\d+)$/.exec(key);
       if (!m || !this.isContainerBlock(m[1])) continue;
       const container = (menu as unknown as { container?: Container }).container;
       if (!container) continue;
+      const pair = this.doubleChests.get(menu);
+      if (pair) {
+        this.writeChestHalf(m[1], pair[0], container, 0);
+        this.writeChestHalf(m[1], pair[1], container, 27);
+        continue;
+      }
       this.writeBlockContainer(m[1], Number(m[2]), Number(m[3]), Number(m[4]), container);
     }
+  }
+
+  /** Writes one 27-slot half of a double chest (offset 0 = slots 0..26, 27 = 27..53). */
+  private writeChestHalf(
+    name: string, p: { x: number; y: number; z: number }, container: Container, offset: number,
+  ): void {
+    const chunk = this.level.getChunk(p.x >> 4, p.z >> 4);
+    if (!chunk) return;
+    const items: ItemStackData[] = [];
+    for (let i = 0; i < 27; i++) {
+      const stack = container.getItem(i + offset);
+      if (!stack.isEmpty()) items.push(this.stackData(stack, i));
+    }
+    chunk.addBlockEntity(p.x & 15, p.y, p.z & 15, { type: `minecraft:${name}`, data: { items } });
+    chunk.dirtySections.add(p.y >> 4);
   }
 
   /**
@@ -3261,6 +3350,35 @@ export class Game {
   private containerViewFromRecord(
     name: string, x: number, y: number, z: number,
   ): Container | null {
+    const partner = this.chestPartner(name, x, y, z);
+    if (partner) {
+      // A double chest reports the fill of both 27-slot halves as one 54-slot container.
+      const pair = this.canonicalChestPair({ x, y, z }, partner);
+      const items: unknown[] = [];
+      for (let h = 0; h < 2; h++) {
+        const p = pair[h];
+        const chunk = this.level.getChunk(p.x >> 4, p.z >> 4);
+        const rec = chunk?.getBlockEntity(p.x & 15, p.y, p.z & 15);
+        if (!rec || rec.type.replace(/^minecraft:/, '') !== name) continue;
+        const recItems = Array.isArray((rec.data as { items?: unknown }).items)
+          ? (rec.data as { items: unknown[] }).items : [];
+        for (const raw of recItems) {
+          const slot = Number((raw as { slot?: unknown } | null)?.slot);
+          if (!Number.isInteger(slot) || slot < 0 || slot >= 27) continue;
+          items.push({ ...(raw as Record<string, unknown>), slot: slot + h * 27 });
+        }
+      }
+      return {
+        getContainerSize: () => 54,
+        getMaxStackSize: () => 64,
+        getItem: (i: number) => this.stackFromData(
+          items.find((s) => Number((s as { slot?: unknown } | null)?.slot) === i),
+        ),
+        setItem: () => undefined,
+        isEmpty: () => items.length === 0,
+        clearContent: () => undefined,
+      } as unknown as Container;
+    }
     const chunk = this.level.getChunk(x >> 4, z >> 4);
     const rec = chunk?.getBlockEntity(x & 15, y, z & 15);
     if (!rec || rec.type.replace(/^minecraft:/, '') !== name) return null;
@@ -3285,6 +3403,7 @@ export class Game {
     const key = `${name}@${x},${y},${z}`;
     const menu = this.blockContainers.get(key);
     const dropped: ItemStack[] = [];
+    const targets: { x: number; y: number; z: number }[] = [{ x, y, z }];
     if (menu) {
       const container = (menu as unknown as { container?: Container }).container;
       if (container) {
@@ -3295,21 +3414,35 @@ export class Game {
           container.setItem(i, ItemStack.EMPTY);
         }
       }
+      const pair = this.doubleChests.get(menu);
+      if (pair) {
+        // Breaking either half of a double chest drops the whole 54-slot inventory.
+        this.doubleChests.delete(menu);
+        for (const p of pair) {
+          if (p.x !== x || p.y !== y || p.z !== z) targets.push(p);
+          this.blockContainers.delete(`${name}@${p.x},${p.y},${p.z}`);
+        }
+      }
       this.blockContainers.delete(key);
     } else {
-      const chunk = this.level.getChunk(x >> 4, z >> 4);
-      const rec = chunk?.getBlockEntity(x & 15, y, z & 15);
-      const items = rec && Array.isArray((rec.data as { items?: unknown }).items)
-        ? (rec.data as { items: unknown[] }).items : [];
-      for (const raw of items) {
-        const stack = this.stackFromData(raw);
-        if (!stack.isEmpty()) dropped.push(stack);
+      const partner = this.chestPartner(name, x, y, z);
+      if (partner) targets.push(partner);
+      for (const p of targets) {
+        const chunk = this.level.getChunk(p.x >> 4, p.z >> 4);
+        const rec = chunk?.getBlockEntity(p.x & 15, p.y, p.z & 15);
+        const items = rec && Array.isArray((rec.data as { items?: unknown }).items)
+          ? (rec.data as { items: unknown[] }).items : [];
+        for (const raw of items) {
+          const stack = this.stackFromData(raw);
+          if (!stack.isEmpty()) dropped.push(stack);
+        }
       }
     }
-    const chunk = this.level.getChunk(x >> 4, z >> 4);
-    if (chunk) {
-      chunk.removeBlockEntity(x & 15, y, z & 15);
-      chunk.dirtySections.add(y >> 4);
+    for (const p of targets) {
+      const chunk = this.level.getChunk(p.x >> 4, p.z >> 4);
+      if (!chunk) continue;
+      chunk.removeBlockEntity(p.x & 15, p.y, p.z & 15);
+      chunk.dirtySections.add(p.y >> 4);
     }
     for (const stack of dropped) this.dropItem(stack, x, y, z);
   }

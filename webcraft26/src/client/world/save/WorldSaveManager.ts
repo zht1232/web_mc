@@ -265,13 +265,18 @@ export class WorldSaveManager implements WorldListProvider {
    * chunk that leaves the retention band before the next autosave slice.
    */
   async saveChunk(chunk: LevelChunk): Promise<void> {
-    const id = this.currentWorldId;
-    if (!id) return;
-    const key = this.chunkKey(id, chunk.x, chunk.z);
     const bytes = ChunkSerializer.toBytes(chunk, this.codecOpts);
     chunk.dirtySections?.clear();
     chunk.entitiesDirty = false;
     chunk.hadEntities = chunk.entities.length > 0;
+    await this.saveChunkData(chunk.x, chunk.z, bytes);
+  }
+
+  /** Writes already-serialized chunk bytes (the unload path caches the same bytes). */
+  async saveChunkData(cx: number, cz: number, bytes: Uint8Array): Promise<void> {
+    const id = this.currentWorldId;
+    if (!id) return;
+    const key = this.chunkKey(id, cx, cz);
     this.savedKeys.add(key);
     await this.db.chunks.put(key, bytes);
   }

@@ -340,6 +340,8 @@ export class Game {
   private spawnAreaPromise: Promise<void> | null = null;
   /** Chunk-set signature last handed to the entity manager (see syncEntityChunks). */
   private entityChunkKey = '';
+  /** Serialized saved chunks (chunkKey -> NBT bytes) used to restore unloaded chunks. */
+  private readonly savedChunkBytes = new Map<number, Uint8Array>();
 
   onReady?: () => void;
   onStatus?: (text: string, progress: number) => void;
@@ -1378,9 +1380,15 @@ export class Game {
   private restoreWorld(loaded: LoadedWorld): void {
     const started = performance.now();
     const decoded: LevelChunk[] = [];
+    // Keep the serialized saved chunks: a chunk that leaves the retention band is
+    // restored from these bytes when the player returns, instead of being
+    // regenerated from the seed (which would lose its blocks and entity records).
+    this.savedChunkBytes.clear();
     for (const bytes of loaded.chunks.values()) {
       try {
-        decoded.push(ChunkSerializer.fromBytes(bytes, this.mc, this.chunkCodec));
+        const chunk = ChunkSerializer.fromBytes(bytes, this.mc, this.chunkCodec);
+        decoded.push(chunk);
+        this.savedChunkBytes.set(chunkKey(chunk.x, chunk.z), bytes);
       } catch (err) {
         console.warn('[save] unreadable chunk:', err);
       }
@@ -1389,12 +1397,7 @@ export class Game {
     const count = this.level.addChunksBulk(decoded);
     // These chunks were generated (and their passive animals spawned) before the save;
     // mark them known so the chunk-generation spawn pass does not add a second wave.
-    // They are also pinned: the client has no save-first chunk load path, so dropping
-    // a restored chunk would regenerate it from the seed and lose its stored entities.
-    for (const chunk of decoded) {
-      this.entityManager.markChunkKnown(chunk.x, chunk.z);
-      this.level.modifiedChunks.add(chunkKey(chunk.x, chunk.z));
-    }
+    for (const chunk of decoded) this.entityManager.markChunkKnown(chunk.x, chunk.z);
     console.log(`[save] restored ${count} chunks in ${Math.round(performance.now() - started)} ms`);
 
     if (loaded.player) {
@@ -4272,6 +4275,10 @@ export class Game {
     const pcx = Math.floor(this.player.pos.x) >> 4;
     const pcz = Math.floor(this.player.pos.z) >> 4;
     const r = this.options.renderDistance;
+    // Saved chunks are decoded from their retained NBT instead of being generated
+    // from the seed. At most two per tick, so a teleport back into explored terrain
+    // cannot stall a frame.
+    let savedLoads = 0;
     // Ring order is kept (nearest ring first) and the squared distance becomes the queue
     // priority; request() is idempotent, so re-asking every tick is cheap and self-healing
     // when the player walks.
@@ -4282,6 +4289,19 @@ export class Game {
           const cx = pcx + dx;
           const cz = pcz + dz;
           if (this.level.hasChunk(cx, cz)) continue;
+          const saved = savedLoads < 2 ? this.savedChunkBytes.get(chunkKey(cx, cz)) : undefined;
+          if (saved) {
+            try {
+              const chunk = ChunkSerializer.fromBytes(saved, this.mc, this.chunkCodec);
+              this.level.addChunksBulk([chunk]);
+              this.level.markDirtyAround(cx << 4, this.level.minY, cz << 4);
+              this.entityManager.markChunkKnown(cx, cz);
+              savedLoads++;
+              continue;
+            } catch (err) {
+              console.warn('[save] unreadable saved chunk:', err);
+            }
+          }
           this.chunkProvider.request(cx, cz, dx * dx + dz * dz);
         }
       }
@@ -4318,19 +4338,21 @@ export class Game {
     }
     // Entities die with their chunk in this client, so snapshot every live entity
     // before the removal and write the chunks that carry one straight back to the
-    // save store. Vanilla does the same in ChunkMap.save.
-    const live = this.saveManager ? this.liveEntitiesByChunk() : null;
+    // save store and the in-memory saved-byte cache. Vanilla does the same in
+    // ChunkMap.save; the cache is what lets a returning player reload the chunk.
+    const live = this.liveEntitiesByChunk();
     const removed = this.level.unloadFarChunks(pcx, pcz, retain);
     if (removed.length === 0) return;
     for (const c of removed) {
-      if (live) {
-        const records = live.get(`${c.x},${c.z}`) ?? [];
-        if (records.length > 0 || c.hadEntities) {
-          c.entities = records;
-          c.hadEntities = records.length > 0;
-          c.entitiesDirty = false;
-          void this.saveManager?.saveChunk(c).catch(() => {});
-        }
+      const records = live.get(`${c.x},${c.z}`) ?? [];
+      if (records.length > 0 || c.hadEntities) {
+        c.entities = records;
+        c.hadEntities = records.length > 0;
+        c.entitiesDirty = false;
+        c.dirtySections.clear();
+        const bytes = ChunkSerializer.toBytes(c, this.chunkCodec);
+        this.savedChunkBytes.set(chunkKey(c.x, c.z), bytes);
+        void this.saveManager?.saveChunkData(c.x, c.z, bytes).catch(() => {});
       }
       this.entityManager.unloadChunk(c.x, c.z);
     }

@@ -178,8 +178,9 @@ try {
     && restored.names.filter((n) => n === 'oak_chest_boat').length === 1,
   restored.names);
 
-  // A long round trip unloads every generated chunk except the pinned saved ones;
-  // the restored cow must still be the same single entity afterwards.
+  // A long round trip must unload the stage chunks (the stage build marks them
+  // "modified", which pins them, so clear that first) and reload them from the
+  // retained saved bytes with their entity records.
   const jump = async (x, y, z) => {
     await page.evaluate(([px, py, pz]) => {
       const m = window.__mc;
@@ -189,19 +190,43 @@ try {
       m.player.vel = new m.player.pos.constructor(0, 0, 0);
     }, [x, y, z]);
   };
+  const cleared = await page.evaluate(([x, z]) => {
+    const m = window.__mc;
+    let n = 0;
+    for (const chunk of m.level.chunks.values()) {
+      if (Math.abs(chunk.x - (x >> 4)) > 1 || Math.abs(chunk.z - (z >> 4)) > 1) continue;
+      const key = (chunk.x + 32768) * 65536 + (chunk.z + 32768);
+      if (m.level.modifiedChunks.delete(key)) n++;
+    }
+    return n;
+  }, [bx, bz]);
   await jump(bx + 1024, floorY + 2, bz + 1024);
   await waitTicks(page, 20);
+  const unloaded = await page.evaluate(([x, z]) => ({
+    hasStage: window.__mc.level.hasChunk(x >> 4, z >> 4),
+  }), [bx, bz]);
+  // Restored chunks are no longer pinned, so even with cleared===0 this is a real
+  // unload and the return below exercises the saved-byte reload path.
+  check('the stage chunk unloads on a far trip', unloaded.hasStage === false,
+    { cleared, ...unloaded });
+
   await jump(bx + 0.5, floorY + 1.8, bz + 4.5);
-  await waitTicks(page, 20);
+  await waitTicks(page, 30);
   await sleep(500);
   const roundTrip = await page.evaluate(([x, y, z]) => {
     const m = window.__mc;
     const area = m.entityManager.getEntities().filter((e) =>
       Math.abs(e.x - x) < 14 && Math.abs(e.z - z) < 14 && e.y > y - 2 && !e.isRemoved());
-    return { cows: area.filter((e) => e.getTypeName() === 'cow').length, total: area.length };
+    return {
+      hasStage: m.level.hasChunk(x >> 4, z >> 4),
+      block: m.mc.blockOf(m.level.getBlockState(x, y - 1, z)).name,
+      cows: area.filter((e) => e.getTypeName() === 'cow').length,
+      total: area.length,
+    };
   }, [bx, floorY, bz]);
-  check('pinned saved chunks keep their entities across a long round trip',
-    roundTrip.cows === 1, roundTrip);
+  check('the saved chunk reloads with its block and its single cow',
+    roundTrip.hasStage === true && roundTrip.block === 'stone' && roundTrip.cows === 1,
+  roundTrip);
 
   await page.screenshot({ path: 'shots/diag/entity-save.png' });
 } catch (err) {

@@ -61,6 +61,7 @@ node scripts/test-village-schedule.mjs        # 村民日程：工作站点聚�
 node scripts/test-wandering-trader.mjs        # 流浪商人：生成周期/9 条报价/交易界面/羊驼跟随与消失 15 项
 node scripts/test-tipped-arrow.mjs            # 药箭：imbue 合成/弓发射/1/8 时长药效/制箭师随机药箭交易 10 项
 node scripts/test-fps-limit.mjs               # 帧率上限：30/120/240 档实测渲染帧率 + tick 不降频 7 项
+node scripts/test-advancements-tree.mjs       # 进度树：五根标签顺序/tree 布局/拖动与滚轮平移 8 项
 node scripts/test-mob-equipment.mjs           # 怪物装备与稀有掉落：护甲分布/武器/骷髅头/铜锭 13 项
 node scripts/test-explosion.mjs               # 爆炸：射线弹坑/抗性/掉落衰减/TNT 归属/遮挡暴露 10 项
 node scripts/test-icons.mjs                   # 物品图标
@@ -124,7 +125,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 村民交易界面 | ✅ | `MerchantScreen` 276x166：7 行报价列表/滚轮与拖动滚动/悬停高亮、3 个交易槽、经验条、等级标题、缺货印章、折扣划线、玩家背包；`test-villager-trade` |
 | 中文文案完整性 | ✅ | 2026-11-21 补齐 `menu.advancements`/`menu.stats`/`createWorld.create`/`selectWorld.difficulty` |
 | 统计（Statistics）界面 | ✅ | General/Items/Mobs 三页、6 列排序、真实计数器（挖掘/放置/拾取/合成/击杀/死亡/伤害/距离/游玩时间） |
-| 进度（Advancements）界面 | ⚠️ | 数据驱动：126 个定义（117 可见，5 个 root）；暂停菜单打开按 root 分页的列表界面（图标/完成色/Goal/Challenge/done-total）；触发器 `inventory_changed`/`mine_block`/`consume_item`/`player_killed_entity`/`killed_by_entity`/`location`（需 dimension）/`villager_trade`/`tick`，支持 entity_properties 的 `position.y` 上下限（trade_at_world_height）；完成弹 toast 并随存档保存。缺树状布局/连接线、完整条件（生物群系/结构/物品谓词/count/components）、配方解锁联动 |
+| 进度（Advancements）界面 | ⚠️ | 数据驱动：126 个定义（117 可见，5 个 root）；2026-11-28 起为原版树状布局——五根标签按 story/nether/end/adventure/husbandry 顺序，28px 网格、叶子占行/父节点居中、L 形连接线、26x26 任务/目标/挑战边框、悬停标题+描述 tooltip、拖动/滚轮平移与溢出滚动条；触发器 `inventory_changed`/`mine_block`/`consume_item`/`player_killed_entity`/`killed_by_entity`/`location`（需 dimension）/`villager_trade`/`tick`，支持 entity_properties 的 `position.y` 上下限；完成弹 toast 并随存档保存。缺完整条件（生物群系/结构/物品谓词/count/components）与配方解锁联动；frame 边框用绘制矩形代替 widgets.png 精灵（cosmetic） |
 | 统计计数器 | ✅ | `Statistics` 随玩家 `Extra.stats` 保存；挖掘/放置/拾取/合成/熔炉/击杀/死亡/伤害/移动距离/动物繁殖均有埋点 |
 | 多人/LAN/资源包/皮肤设置/遥测 | ❌ | 按钮占位或没有入口 |
 
@@ -174,7 +175,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 **P1（原版核心玩法缺口）**
 4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；~~野生动物实体存档~~ ✅ 已完成区块级实体存档（见「区块实体持久化」）；剩余：幼年专用模型、项圈渲染、大型世界的数据库按需区块加载。
 5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；~~TNT 归属与爆炸掉落衰减~~ ✅ 已按 `ServerExplosion` 射线算法 + `ApplyExplosionDecay` + `PrimedTnt.owner` 重写；~~药箭~~ ✅；~~爆炸可见度（`getSeenPercent` 遮挡）~~ ✅ 16³ AABB 采样 + 碰撞体射线；剩余：比较器/活塞等红石长尾。
-6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成列表界面 + 8 类触发器（含 `villager_trade` 与 Y 坐标谓词）；剩余：树状布局/连接线、完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
+6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成 + 8 类触发器（含 `villager_trade` 与 Y 坐标谓词）；~~树状布局/连接线~~ ✅ 原版 28px 网格、父节点居中、拖动/滚轮/滚动条与悬停 tooltip；剩余：完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
 7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；~~村民繁殖与铁傀儡~~ ✅ 已加入食物点繁殖/宝宝模型与南瓜图案生成的铁傀儡；~~村民农业~~ ✅ 农民收割/补种/烤面包 + 食物分享；~~村民睡眠/工作日程（昼夜作息与床）~~ ✅ 已加入日落入睡/日出醒来、床认领与躺姿、受击/床毁唤醒，~~村庄八卦生成铁傀儡~~ ✅ 简化为 5 名最近 24000 tick 内睡过的村民生成（无 gossip 系统），~~工作/聚集时段~~ ✅ 已按原版日程加入工作站点工作、钟声会议与农民工作时段门控，生成村庄已带床/工作站点/钟，~~流浪商人~~ ✅ 已加入生成周期、9 条 26.2 报价、交易界面与商人羊驼；剩余：地图交易（需已填充地图/结构定位）、袭击。
 8. ~~夜间怪物装备/掉落表与自然生成权重对齐~~ ✅ 已完成原版护甲分布/武器/副手与玩家击杀稀有掉落（僵尸铁锭·胡萝卜·马铃薯、溺尸铜锭、凋灵骷髅头）；自然生成权重本就来自 vanilla `worldgen.json` 的 biome spawners。
 
@@ -655,3 +656,16 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 验证：`tsc` 0；`node scripts/test-explosion.mjs` **10/10**（新增：墙后 exposure=0、
   开阔=1；墙后僵尸/玩家仅 1 伤害，开阔僵尸/玩家 10.38；原有弹坑/抗性/掉落衰减/归属
   全过）。
+
+### 进度树（2026-11-28）
+
+- `AdvancementManager.layout(root)`：按 `AdvancementTree` 的网格布局生成节点——深度即
+  列，叶子领取下一行，父节点取首/末子节点行的中点；隐藏的中间父节点被跳过，子节点挂到
+  最近的可见祖先；根标签固定为原版顺序 story/nether/end/adventure/husbandry。
+- `AdvancementsScreen` 从分页列表改为 252x140 树窗口：26x26 任务/目标/挑战边框、
+  L 形连接线（`extractConnectivity` 的 parent centre → splitX → child centre）、
+  图标、悬停标题/描述 tooltip、拖动与滚轮平移、内容溢出时绘制横向/纵向滚动条。
+  仅图标入树，标题不再常驻绘制（与原版一致，避免长中文标题互相压字）。
+- 验证：`tsc` 0；`node scripts/test-advancements-tree.mjs` **8/8**（五标签顺序、story
+  16 节点/深度 8、7 个多子父节点全部居中、拖动与滚轮平移及越界钳制、切标签重建）；
+  回归 `test-advancements` 7/7。

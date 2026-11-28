@@ -52,6 +52,18 @@ export interface AdvancementRow {
   depth: number;
 }
 
+/** One node of the advancement tree; `row` is in 28px grid units (may be fractional). */
+export interface AdvancementNode extends AdvancementRow {
+  parent: string | null;
+  row: number;
+}
+
+export interface AdvancementLayout {
+  nodes: AdvancementNode[];
+  maxDepth: number;
+  maxRow: number;
+}
+
 interface AdvancementFile {
   roots: string[];
   advancements: Record<string, AdvancementDefinition>;
@@ -98,7 +110,18 @@ export class AdvancementManager {
     return manager;
   }
 
-  rootsList(): readonly string[] { return this.roots; }
+  /** Vanilla tab order (Options > Advancements): story, nether, end, adventure, husbandry. */
+  private static readonly ROOT_ORDER = [
+    'story/root', 'nether/root', 'end/root', 'adventure/root', 'husbandry/root',
+  ];
+
+  rootsList(): readonly string[] {
+    return [...this.roots].sort((a, b) => {
+      const ia = AdvancementManager.ROOT_ORDER.indexOf(a);
+      const ib = AdvancementManager.ROOT_ORDER.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+  }
 
   /** Root advancement title key, used as the tab label. */
   rootTitle(root: string): string {
@@ -127,6 +150,84 @@ export class AdvancementManager {
     }
     rows.sort((a, b) => a.depth - b.depth || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
     return rows;
+  }
+
+  /**
+   * AdvancementTree layout: depth is the grid column, row is the grid line.
+   * Leaves take the next free row; a parent is centred on its first/last child
+   * (AdvancementTree#layout). Hidden intermediate parents are skipped so their
+   * children stay connected to the nearest visible ancestor.
+   */
+  layout(root: string): AdvancementLayout {
+    const visible = new Map<string, AdvancementDefinition>();
+    for (const [id, adv] of this.defs) {
+      if (!adv.hidden && this.belongsTo(id, root)) visible.set(id, adv);
+    }
+    const children = new Map<string, string[]>();
+    for (const id of visible.keys()) {
+      if (id === root) continue;
+      let attach = this.defs.get(id)?.parent ?? null;
+      const seen = new Set<string>();
+      while (attach && !visible.has(attach) && !seen.has(attach)) {
+        seen.add(attach);
+        attach = this.defs.get(attach)?.parent ?? null;
+      }
+      const key = attach && visible.has(attach) ? attach : root;
+      let list = children.get(key);
+      if (!list) { list = []; children.set(key, list); }
+      list.push(id);
+    }
+    for (const list of children.values()) {
+      list.sort((a, b) => {
+        const ta = visible.get(a)?.title ?? a;
+        const tb = visible.get(b)?.title ?? b;
+        return ta.localeCompare(tb) || a.localeCompare(b);
+      });
+    }
+
+    let nextRow = 0;
+    const rows = new Map<string, number>();
+    const depths = new Map<string, number>();
+    const placing = new Set<string>();
+    const place = (id: string, depth: number): number => {
+      if (placing.has(id)) return 0;
+      placing.add(id);
+      depths.set(id, depth);
+      const kids = children.get(id) ?? [];
+      let row: number;
+      if (kids.length === 0) {
+        row = nextRow++;
+      } else {
+        const first = place(kids[0], depth + 1);
+        let last = first;
+        for (let i = 1; i < kids.length; i++) last = place(kids[i], depth + 1);
+        row = (first + last) / 2;
+      }
+      rows.set(id, row);
+      return row;
+    };
+    if (visible.has(root)) place(root, 0);
+    for (const id of visible.keys()) {
+      if (!rows.has(id)) { rows.set(id, nextRow++); depths.set(id, 0); }
+    }
+
+    const nodes: AdvancementNode[] = [];
+    let maxDepth = 0;
+    let maxRow = 0;
+    for (const [id, row] of rows) {
+      const adv = visible.get(id)!;
+      const done = this.completed.has(id);
+      const depth = depths.get(id) ?? 0;
+      nodes.push({
+        id, title: adv.title, description: adv.description, icon: adv.icon,
+        frame: adv.frame, done,
+        started: done || (this.criteriaDone.get(id)?.size ?? 0) > 0,
+        depth, row, parent: adv.parent,
+      });
+      if (depth > maxDepth) maxDepth = depth;
+      if (row > maxRow) maxRow = row;
+    }
+    return { nodes, maxDepth, maxRow };
   }
 
   private belongsTo(id: string, root: string): boolean {

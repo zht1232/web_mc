@@ -1,9 +1,8 @@
 // Port of net.minecraft.client.sounds.MusicManager: random-interval background
 // music with situation-dependent track selection and a starting delay of 100
-// ticks. 26.2's resource pack ships NO music/*.ogg, so tracks default to the
-// vanilla music event ids; SoundEngine resolves them through SOUND_ALIASES to
-// the closest available ambient/block sound (documented approximation). The
-// main agent can call setTracks() once real music oggs are added.
+// ticks. The launcher asset set now ships the music/*.ogg files and
+// public/mc/sounds/index.json exposes music.game / music.creative / music.menu ...,
+// so tracks resolve directly; setTracks() can still override a situation.
 
 import { XoroshiroRandomSource } from '../../vanilla/core/Random.js';
 import type { SoundEngine, SoundLevel } from './SoundEngine.js';

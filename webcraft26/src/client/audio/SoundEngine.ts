@@ -60,6 +60,11 @@ const ATTENUATION_BLOCKS = 16;   // vanilla Sound.getAttenuationDistance default
 
 function clamp01(v: number): number { return Math.min(1, Math.max(0, v)); }
 
+export interface SoundHandle {
+  /** Stops this playback (JukeboxBlock pops/ejects the record). */
+  stop(): void;
+}
+
 export class SoundEngine {
   readonly options: SoundOptions;
   readonly music: MusicManager;
@@ -186,31 +191,36 @@ export class SoundEngine {
    * @param x,y,z  world position; omit all three for a non-positional (UI/music) sound
    * @param volume 0..1, also scales the attenuation distance like vanilla
    * @param pitch  0.5..2 (vanilla PITCH_MAX = 2)
+   * @returns a handle whose stop() cancels this playback (used by the jukebox)
    */
   play(
     name: string,
     x?: number, y?: number, z?: number,
     volume = 1, pitch = 1,
-  ): void {
+  ): SoundHandle {
+    const noop: SoundHandle = { stop() { /* nothing started */ } };
     const ctx = this.ctx;
-    if (!ctx || !this.index || !this.rootGain) return;
+    if (!ctx || !this.index || !this.rootGain) return noop;
     const event = this.resolveEvent(name);
     // Some events (brewing stand brew) have real ogg files that the directory-based
     // index could not give its own event name; SOUND_FILE_ALIASES supplies them.
     const files = SOUND_FILE_ALIASES[name] ?? (event ? this.index.events[event] : undefined);
-    if (!files || !files.length) return;
+    if (!files || !files.length) return noop;
     // A crowd of mobs must not turn into hundreds of live audio nodes (SoundEngine.java caps channels at 247).
-    if (this.activeSources.size >= 64) return;
+    if (this.activeSources.size >= 64) return noop;
     const statKey = event ?? name;
     this.stats[statKey] = (this.stats[statKey] ?? 0) + 1;
     const path = files[this.random.nextInt(files.length)];
     const vol = clamp01(volume);
     const cat = categoryOf(statKey);
     const is3d = x !== undefined && y !== undefined && z !== undefined;
+    let stopped = false;
+    let source: AudioBufferSourceNode | null = null;
 
     void this.buffer(path).then((buf) => {
-      if (!this.ctx || !this.rootGain) return;
+      if (!this.ctx || !this.rootGain || stopped) return;
       const src = ctx.createBufferSource();
+      source = src;
       src.buffer = buf;
       src.playbackRate.value = Math.min(2, Math.max(0.5, pitch));
       const gain = ctx.createGain();
@@ -236,6 +246,15 @@ export class SoundEngine {
       };
       src.start();
     }).catch(() => { /* missing / undecodable file: skip silently */ });
+
+    return {
+      stop() {
+        stopped = true;
+        if (source) {
+          try { source.stop(); } catch { /* already ended */ }
+        }
+      },
+    };
   }
 
   /** Per-frame listener update + music tick. No fetches happen here. */

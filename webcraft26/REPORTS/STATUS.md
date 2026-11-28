@@ -170,7 +170,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 原版音效事件 | ✅ | 959 个事件、4341 个 ogg；脚步按 SoundType |
-| 音乐/唱片 | ✅ | 26.2 music/music_disc 事件与 ogg 资源已接入，按情境/唱片事件解析 |
+| 音乐/唱片 | ✅ | 26.2 music/music_disc 事件与 ogg 资源已接入（`sounds/index.json` 里 `music.game`/`music_disc.cat` 等直连文件），背景音乐按情境选曲；2026-11-28 补唱片机：`useJukebox` 插入唱片→`has_record=true`、播放 `music_disc.<song>`（音量 4）、非创造消耗唱片、`play_record` 统计；空手弹出→`has_record=false`、停止播放并掉回唱片；破坏播放中的唱片机停播并掉出唱片。`SoundEngine.play` 现返回 stop 句柄；`test-jukebox` 4 项 |
 | 多人 | ❌ | `bridge/` 未接线 |
 
 ## 5. 优先级队列
@@ -764,8 +764,21 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 验证：`tsc` 0；`node scripts/test-item-entity.mjs` **6/6**
   （64 堆叠每帧 5 份模型、单物品 1 份、spin/bob 与 Java 公式逐值一致、
   两帧截图 7813 像素变化）；回归 `test-entity-save` 11/11。
-- 未完成：块状物品掉落实体仍用图标 sprite，未用 3D 方块模型；
-  `music/record` 音频资源不在仓库（无法凭空生成）。
+- 未完成：块状物品掉落实体仍用图标 sprite，未用 3D 方块模型。
+
+### 唱片机 / 音乐资源（2026-11-28）
+
+- 音频资源已确认在库：`public/mc/sounds/index.json` 有 53 个 `music*` 事件，
+  `music.game`、`music.menu`、全部 `music_disc.*` 都指向真实 ogg（此前注释
+  “pack ships NO music” 已过期，改为直连）。
+- `JukeboxBlock.useItemOn`：右键插入唱片 → `has_record=true`、播放
+  `music_disc.<song>`（音量 4，RECORDS 分类）、非创造消耗唱片、`play_record`
+  统计；空手右键播放中的唱片机 → `has_record=false`、停播并掉回唱片；
+  破坏播放中的唱片机停播并掉出唱片。`SoundEngine.play` 返回可 `stop()` 的句柄。
+- 验证：`tsc` 0；`node scripts/test-jukebox.mjs` **4/4**（真实事件存在、插入
+  消耗/播放、弹出掉落、无页面错误）。
+- 未完成：唱片机比较器模拟输出（需要方块实体数据）、世界重载后恢复正在播放的唱片。
+
 
 
 

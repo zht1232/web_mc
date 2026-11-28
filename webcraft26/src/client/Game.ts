@@ -2477,6 +2477,20 @@ export class Game {
   }
 
   private breakEffects(state: number, x: number, y: number, z: number): void {
+    // JukeboxBlock.onRemove: breaking the playing jukebox stops the record and pops the disc.
+    if (this.mc.blockOf(state).name === 'jukebox') {
+      const key = `${x},${y},${z}`;
+      const song = this.jukeboxSongs.get(key);
+      this.jukeboxSongs.delete(key);
+      if (this.playingJukeboxKey === key) {
+        this.recordHandle?.stop();
+        this.recordHandle = null;
+        this.playingJukeboxKey = null;
+      }
+      if (song) {
+        this.dropItem(ItemStack.fromName(this.survival.registry, `music_disc_${song}`, 1), x, y, z);
+      }
+    }
     spawnBlockBreakParticles(state, x, y, z, 20);
     // SoundType.getBreakSound at volume (v + 1) / 2 and pitch * 0.8 (BlockBehaviour / LevelEvent 2001)
     this.sounds.play(`${this.blockSoundBase(state)}.break`, x + 0.5, y + 0.5, z + 0.5, 1, 0.8);
@@ -2940,6 +2954,10 @@ export class Game {
 
   /** Per-block container instances: chest/furnace contents survive closing the GUI this session. */
   private readonly blockContainers = new Map<string, AbstractContainerMenu>();
+  /** JukeboxBlockEntity song per position (session only; the block state keeps has_record). */
+  private readonly jukeboxSongs = new Map<string, string>();
+  private recordHandle: { stop(): void } | null = null;
+  private playingJukeboxKey: string | null = null;
   /** Client-side redstone simulation (wire power, diodes, buttons, plates, mechanisms). */
   private redstone!: RedstoneSystem;
 
@@ -3011,6 +3029,50 @@ export class Game {
       this.survival.activeMenu = menu;
     }
     this.openScreen(isFurnace ? 'furnace' : 'chest');
+  }
+
+  /**
+   * JukeboxBlock.useItemOn: insert a music disc (sets has_record and plays the record event at
+   * volume 4), or pop the disc back out when the jukebox is playing and the hand is empty.
+   * Returns false when the click should fall through to normal item placement.
+   */
+  private useJukebox(hit: { x: number; y: number; z: number }): boolean {
+    const state = this.level.getBlockState(hit.x, hit.y, hit.z);
+    const playing = this.mc.getProp(state, 'has_record') === 'true';
+    const held = this.survival.getSelectedStack();
+    const name = held.item?.name ?? '';
+    const key = `${hit.x},${hit.y},${hit.z}`;
+    if (!playing && name.startsWith('music_disc_')) {
+      const song = name.slice('music_disc_'.length);
+      const event = `music_disc.${song}`;
+      if (!this.sounds.hasEvent(event)) return false;
+      this.level.setBlockState(hit.x, hit.y, hit.z, this.mc.withProp(state, 'has_record', 'true'));
+      this.jukeboxSongs.set(key, song);
+      this.updateNeighbors(hit.x, hit.y, hit.z);
+      this.recordHandle?.stop();
+      this.recordHandle = this.sounds.play(event, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, 4, 1);
+      this.playingJukeboxKey = key;
+      this.stats.award('custom', 'play_record');
+      if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+      this.useCooldown = 8;
+      return true;
+    }
+    if (playing && held.isEmpty()) {
+      this.level.setBlockState(hit.x, hit.y, hit.z, this.mc.withProp(state, 'has_record', 'false'));
+      this.updateNeighbors(hit.x, hit.y, hit.z);
+      this.recordHandle?.stop();
+      this.recordHandle = null;
+      this.playingJukeboxKey = null;
+      const song = this.jukeboxSongs.get(key);
+      this.jukeboxSongs.delete(key);
+      if (song) {
+        this.dropItem(ItemStack.fromName(this.survival.registry, `music_disc_${song}`, 1),
+          hit.x, hit.y + 1, hit.z);
+      }
+      this.useCooldown = 8;
+      return true;
+    }
+    return false;
   }
 
   /** Player.attack damage for the held item + Strength/Weakness (LivingEntity hurt). */
@@ -3478,6 +3540,7 @@ export class Game {
     // Lever / button / repeater / door / trapdoor / fence gate interaction
     // (PlayerGameMode.useItemOn -> Block.use) consumes the click before placement.
     if (!this.player.sneaking && this.redstone.use(hit.x, hit.y, hit.z)) return;
+    if (!this.player.sneaking && targetBlock === 'jukebox' && this.useJukebox(hit)) return;
     if (!this.player.sneaking && isContainerBlock(targetBlock)) {
       this.openBlockContainer(targetBlock, hit.x, hit.y, hit.z);
       return;

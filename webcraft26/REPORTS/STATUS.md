@@ -495,7 +495,8 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   `test-villager-trade` 14/14、`test-taming` 7/7、`smoke` 19/19。
 - 剩余：箭/投掷物/TNT 等瞬时实体的存档、实体装备/药水效果等 NBT 长尾待补。
 - 2026-11-28 启动提速（大世界）：`WorldSaveManager.loadWorld` 不再把 IndexedDB 里
-  全部区块字节读进内存（`LoadedWorld.chunks` → `chunkKeys`），新增
+  全部区块字节读进内存（`LoadedWorld.chunks` → `chunkKeys`），块键用
+  `getAllKeys` 只取键（不再反序列化每块字节），新增
   `readChunkBytes(cx,cz)` 按需读取；`restoreWorld` 只同步读取/解码玩家周围 5×5
   区块（从存档玩家坐标出发，先于 `ensureChunk`，避免把存档覆盖成重新生成），
   其余区块由 `ensureChunksAround` 每 tick 最多取 2 个（读取→下 tick 解码），

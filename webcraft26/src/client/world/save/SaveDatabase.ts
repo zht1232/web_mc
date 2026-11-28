@@ -13,7 +13,8 @@ export interface IKeyValueStore {
   delete(key: string): Promise<void>;
   /** All entries whose key starts with `prefix` (or all when omitted). */
   entries(prefix?: string): Promise<[string, unknown][]>;
-  keys(): Promise<string[]>;
+  /** Keys only (`prefix` filters by string prefix) — never deserializes stored values. */
+  keys(prefix?: string): Promise<string[]>;
   clear(): Promise<void>;
   /** ONE transaction for all items. Callers cap chunk batches at <= 16. */
   putBatch(items: [string, unknown][]): Promise<void>;
@@ -26,7 +27,9 @@ export class MemoryKeyValueStore implements IKeyValueStore {
   async get(key: string): Promise<unknown | undefined> { return this.map.get(key); }
   async put(key: string, value: unknown): Promise<void> { this.map.set(key, value); }
   async delete(key: string): Promise<void> { this.map.delete(key); }
-  async keys(): Promise<string[]> { return [...this.map.keys()]; }
+  async keys(prefix?: string): Promise<string[]> {
+    return [...this.map.keys()].filter((k) => !prefix || k.startsWith(prefix));
+  }
   async clear(): Promise<void> { this.map.clear(); }
   async putBatch(items: [string, unknown][]): Promise<void> {
     for (const [k, v] of items) this.map.set(k, v);
@@ -64,8 +67,16 @@ export class IndexedDbKeyValueStore implements IKeyValueStore {
   clear(): Promise<void> {
     return this.request('readwrite', (s) => s.clear() as unknown as IDBRequest<void>);
   }
-  keys(): Promise<string[]> {
-    return this.request('readonly', (s) => s.getAllKeys() as IDBRequest<IDBValidKey[]>).then((ks) => ks.map(String));
+  keys(prefix?: string): Promise<string[]> {
+    return new Promise<string[]>((resolve, reject) => {
+      const tx = this.db.transaction(this.name, 'readonly');
+      const store = tx.objectStore(this.name);
+      const range = prefix ? IDBKeyRange.bound(prefix, prefix + '\uffff') : undefined;
+      const req = store.getAllKeys(range);
+      tx.oncomplete = () => resolve((req.result as IDBValidKey[]).map(String));
+      tx.onerror = () => reject(tx.error ?? new Error(`IDB keys failed on ${this.name}`));
+      tx.onabort = () => reject(tx.error ?? new Error(`IDB keys aborted on ${this.name}`));
+    });
   }
   entries(prefix?: string): Promise<[string, unknown][]> {
     return new Promise<[string, unknown][]>((resolve, reject) => {

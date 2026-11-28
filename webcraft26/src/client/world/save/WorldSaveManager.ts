@@ -548,8 +548,9 @@ export class WorldSaveManager implements WorldListProvider {
   }
 
   private async chunkKeysFor(id: string): Promise<Set<string>> {
-    const entries = await this.db.chunks.entries(`${id}:`);
-    return new Set(entries.map(([k]) => k));
+    // getAllKeys only: reading the values here deserialized every chunk byte array on the
+    // loading screen even though loadWorld no longer needs them (lazy per-chunk reads).
+    return new Set(await this.db.chunks.keys(`${id}:`));
   }
 
   private async createRecord(id: string, p: CreateParams, levelDat?: Uint8Array, icon?: Uint8Array): Promise<WorldRecord> {

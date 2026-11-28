@@ -111,6 +111,7 @@ node scripts/test-taming.mjs          # wolf/cat taming, sitting, follow and sav
 node scripts/test-advancements.mjs    # advancement data, triggers, screen and save restore (browser)
 node scripts/test-villager-trade.mjs  # villagers, professions, offers, trading and save restore (browser)
 node scripts/test-minecart.mjs        # rails, curves, slopes, powered/detector rails, riding (browser)
+node scripts/test-boat.mjs            # boats/rafts: buoyancy, paddling, placement, chest boat, pixel diff (browser)
 node scripts/test-containers.mjs      # container click rules
 node scripts/test-menu.mjs            # title/world select screens
 node scripts/test-hud-dirty.mjs       # HUD redraw policy
@@ -125,6 +126,11 @@ node scripts/smoke.mjs                # 19-scenario browser smoke test
 The browser-based scripts need Playwright's Chromium (`npx playwright install chromium`)
 and a running dev server on `http://127.0.0.1:5174` (the test scripts accept `--url`).
 `node scripts/smoke.mjs` writes screenshots to `shots/` (gitignored).
+
+Entity-render probes build a deterministic arena with `scripts/lib/stage.mjs`: a stone
+platform above the terrain, frozen noon, no mobs, and an optional studio backdrop. The
+harness diffs two screenshots of the same fixed camera, so a check measures only the
+entity under test instead of whatever blocks happen to surround the player.
 
 ## Asset and licence notes
 

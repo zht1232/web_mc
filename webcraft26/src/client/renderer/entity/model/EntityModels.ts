@@ -691,6 +691,67 @@ export const MinecartModel: BakedModel = bakeModel(makeModel(64, 32, [
 ]));
 
 /**
+ * Source: net.minecraft.client.model.object.boat.BoatModel.addCommonParts
+ * (BoatModel.createBoatModel / createChestBoatModel). 128 texels wide; the
+ * chest boat texture is 128x128 instead of 128x64.
+ */
+function boatParts(chest: boolean): PartDef[] {
+  const parts = [
+    P('bottom', 0, 3, 1, [B(-14, -9, -3, 28, 16, 3, 0, 0)], { rx: HALF_PI }),
+    P('back', -15, 4, 4, [B(-13, -7, -1, 18, 6, 2, 0, 19)], { ry: Math.PI * 3 / 2 }),
+    P('front', 15, 4, 0, [B(-8, -7, -1, 16, 6, 2, 0, 27)], { ry: HALF_PI }),
+    P('right', 0, 4, -9, [B(-14, -7, -1, 28, 6, 2, 0, 35)], { ry: Math.PI }),
+    P('left', 0, 4, 9, [B(-14, -7, -1, 28, 6, 2, 0, 43)]),
+    P('left_paddle', 3, -5, 9, [
+      B(-1, 0, -5, 2, 2, 18, 62, 0),
+      B(-1.001, -3, 8, 1, 6, 7, 62, 0),
+    ], { rz: Math.PI / 16 }),
+    P('right_paddle', 3, -5, -9, [
+      B(-1, 0, -5, 2, 2, 18, 62, 20),
+      B(0.001, -3, 8, 1, 6, 7, 62, 20),
+    ], { ry: Math.PI, rz: Math.PI / 16 }),
+  ];
+  if (chest) {
+    parts.push(
+      P('chest_bottom', -2, -5, -6, [B(0, 0, 0, 12, 8, 12, 0, 76)], { ry: -HALF_PI }),
+      P('chest_lid', -2, -9, -6, [B(0, 0, 0, 12, 4, 12, 0, 59)], { ry: -HALF_PI }),
+      P('chest_lock', -1, -6, -1, [B(0, 0, 0, 2, 4, 1, 0, 59)], { ry: -HALF_PI }),
+    );
+  }
+  return parts;
+}
+
+/**
+ * Source: AbstractBoatModel.setupAnim / animatePaddle. The animation overrides
+ * are additive over the rest pose, so the right paddle's rest ry=PI is undone
+ * before assigning the mirrored target (vanilla writes the absolute value).
+ */
+function animateBoat(model: BakedModel, ctx: AnimContext): void {
+  const animatePaddle = (time: number, side: number, name: string): void => {
+    const paddle = pose(model, name);
+    paddle.rx = clampedLerp((Math.sin(-time) + 1) / 2, -Math.PI / 3, -Math.PI / 12);
+    const ry = clampedLerp((Math.sin(-time + 1) + 1) / 2, -Math.PI / 4, Math.PI / 4);
+    paddle.ry = side === 1 ? -ry : ry;
+  };
+  animatePaddle(ctx.rowingTimeLeft, 0, 'left_paddle');
+  animatePaddle(ctx.rowingTimeRight, 1, 'right_paddle');
+}
+
+function clampedLerp(t: number, a: number, b: number): number {
+  if (t < 0) return a;
+  if (t > 1) return b;
+  return a + (b - a) * t;
+}
+
+export const BoatModel: BakedModel = withAnimator(
+  bakeModel(makeModel(128, 64, boatParts(false))), animateBoat,
+);
+
+export const ChestBoatModel: BakedModel = withAnimator(
+  bakeModel(makeModel(128, 128, boatParts(true))), animateBoat,
+);
+
+/**
  * Source: net.minecraft.client.model.monster.witch.WitchModel.createBodyLayer
  * (64x128) — VillagerModel.createBodyModel geometry, a replacement head, the
  * four-part hat (the wide hat_rim is inherited from the villager body model) and

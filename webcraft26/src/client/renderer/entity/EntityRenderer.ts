@@ -198,6 +198,22 @@ export function vehicleRootMatrix(
   mul(out, mB, mS);
 }
 
+/**
+ * Boat root (AbstractBoatRenderer.submit):
+ *   T(pos) * T(0, 0.375, 0) * RY(180 - yaw) * S(-1,-1,1) * RY(90)
+ */
+export function boatRootMatrix(
+  out: M34, x: number, y: number, z: number, yawDegrees: number,
+): void {
+  translation(mT, x, y + 0.375, z);
+  rotY(mRy, (180 - yawDegrees) * DEG);
+  scaleMat(mS, -1, -1, 1);
+  rotY(mRz, Math.PI / 2);
+  mul(mA, mT, mRy);
+  mul(mB, mA, mS);
+  mul(out, mB, mRz);
+}
+
 function wrapDegrees(a: number): number {
   let d = a % 360;
   if (d >= 180) d -= 360;
@@ -218,6 +234,7 @@ const ANIM_CTX: AnimContext = {
   ageInTicks: 0, limbSwing: 0, limbSwingAmount: 0,
   headYaw: 0, headPitch: 0, attackTime: 0,
   isAggressive: false, isHoldingBow: false, swell: 0, flapAngle: 0, isResting: false,
+  rowingTimeLeft: 0, rowingTimeRight: 0,
 };
 
 /** Vanilla hurt overlay colour: OverlayTexture row v=3 is 0xB2FF0000. */
@@ -350,6 +367,10 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
       : 0;
     // Source: Bat.isResting()/BatRenderState.isResting (hanging upside down)
     ctx.isResting = e.getTypeName() === 'bat' && e.onGround;
+    // AbstractBoatRenderer.extractRenderState: rowingTimeLeft/Right for the paddles.
+    const rowing = e as unknown as { getRowingTime?: (side: number, partial: number) => number };
+    ctx.rowingTimeLeft = typeof rowing.getRowingTime === 'function' ? rowing.getRowingTime(0, partialTick) : 0;
+    ctx.rowingTimeRight = typeof rowing.getRowingTime === 'function' ? rowing.getRowingTime(1, partialTick) : 0;
 
     const animator: ModelAnimator | null = model.animate;
     const poses = model.poses;

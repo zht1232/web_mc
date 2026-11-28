@@ -83,6 +83,9 @@ export interface AnimContext {
   flapAngle: number;
   /** Bat.isResting() — hanging upside down (BatRenderState.isResting) */
   isResting: boolean;
+  /** AbstractBoat.getRowingTime(0) / (1): paddle swing positions, radians. */
+  rowingTimeLeft: number;
+  rowingTimeRight: number;
 }
 
 export interface BakedPart {

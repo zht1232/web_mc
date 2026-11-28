@@ -8,6 +8,7 @@ import type { BakedModel } from './ModelBox.js';
 import {
   ZombieModel, PlayerModel, ZombieVillagerModel, SkeletonModel, CreeperModel, SpiderModel, EndermanModel,
   SilverfishModel, SlimeModel, WitchModel, VillagerModel, MinecartModel,
+  BoatModel, ChestBoatModel,
   PigModel, CowModel, SheepModel, SheepFurModel, ChickenModel, WolfModel, FoxModel, FelineModel, ParrotModel,
   RabbitModel, BatModel, SquidModel, CodModel, SalmonModel,
   QuadrupedModel,
@@ -65,6 +66,20 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   // QuadrupedModel is exported for standalone use / as a fallback.
   quadruped: { model: QuadrupedModel, texture: 'pig/pig_temperate' },
 };
+
+/**
+ * Boat / raft variants (BoatRenderer + BoatModel / ChestBoatModel). Bamboo is
+ * registered as `*_raft`; every other wood as `*_boat`.
+ */
+const BOAT_WOODS = [
+  'acacia', 'bamboo', 'birch', 'cherry', 'dark_oak', 'jungle',
+  'mangrove', 'oak', 'pale_oak', 'spruce',
+] as const;
+for (const wood of BOAT_WOODS) {
+  const craft = wood === 'bamboo' ? 'raft' : 'boat';
+  MODEL_REGISTRY[`${wood}_${craft}`] = { model: BoatModel, texture: `boat/${wood}` };
+  MODEL_REGISTRY[`${wood}_chest_${craft}`] = { model: ChestBoatModel, texture: `chest_boat/${wood}` };
+}
 
 /** Special key for the generated 1x1 white texture used by arrows / fallbacks. */
 export const WHITE_TEXTURE = '__white__';

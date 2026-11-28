@@ -43,6 +43,7 @@ import { Parrot } from './animal/Parrot.js';
 import { Bat } from './ambient/Bat.js';
 import { Villager } from './npc/Villager.js';
 import { Minecart } from './vehicle/Minecart.js';
+import { Boat } from './vehicle/Boat.js';
 import { Squid, GlowSquid, Cod, Salmon } from './animal/WaterAnimal.js';
 import { ItemEntity } from './item/ItemEntity.js';
 import { PrimedTnt } from './item/PrimedTnt.js';
@@ -106,6 +107,23 @@ const CTORS: Record<string, Ctor> = {
   splash_potion: l => new ThrownPotion(l, 0, 0, 0, false),
   lingering_potion: l => new ThrownPotion(l, 0, 0, 0, true),
 };
+
+/** Boat / raft entity types (BoatItem creates the type matching the item name). */
+const BOAT_KINDS = [
+  'acacia_boat', 'acacia_chest_boat',
+  'bamboo_raft', 'bamboo_chest_raft',
+  'birch_boat', 'birch_chest_boat',
+  'cherry_boat', 'cherry_chest_boat',
+  'dark_oak_boat', 'dark_oak_chest_boat',
+  'jungle_boat', 'jungle_chest_boat',
+  'mangrove_boat', 'mangrove_chest_boat',
+  'oak_boat', 'oak_chest_boat',
+  'pale_oak_boat', 'pale_oak_chest_boat',
+  'spruce_boat', 'spruce_chest_boat',
+];
+for (const kind of BOAT_KINDS) {
+  CTORS[kind] = (l: ClientLevel) => new Boat(l, kind);
+}
 
 /** Register factories on the 158-entry EntityType registry. Idempotent. */
 export function registerEntityFactories(): void {

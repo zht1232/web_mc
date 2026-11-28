@@ -26,6 +26,7 @@ import { ENTITY_VERT, ENTITY_FRAG, SHADOW_VERT, SHADOW_FRAG } from './EntityShad
 import { EntityBatch, EntityRenderer, FLOATS_PER_VERTEX } from './EntityRenderer.js';
 import { MobRenderer } from './MobRenderer.js';
 import { MinecartRenderer } from './MinecartRenderer.js';
+import { BoatRenderer } from './BoatRenderer.js';
 import { SkeletonRenderer } from './SkeletonRenderer.js';
 import { ItemEntityRenderer, type ItemIconSource } from './ItemEntityRenderer.js';
 import { ArrowRenderer } from './ArrowRenderer.js';
@@ -151,6 +152,8 @@ export class EntityRenderDispatcher {
         this.renderers.set(name, new SkeletonRenderer(name));
       } else if (name === 'minecart' || name === 'chest_minecart') {
         this.renderers.set(name, new MinecartRenderer());
+      } else if (name.endsWith('_boat') || name.endsWith('_raft')) {
+        this.renderers.set(name, new BoatRenderer());
       } else {
         this.renderers.set(name, new MobRenderer(name));
       }

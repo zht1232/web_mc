@@ -47,6 +47,7 @@ import { Cat } from '../vanilla/world/entity/animal/Cat.js';
 import { Villager } from '../vanilla/world/entity/npc/Villager.js';
 import { VillagerTrades } from '../vanilla/world/entity/npc/VillagerTrades.js';
 import { Minecart } from '../vanilla/world/entity/vehicle/Minecart.js';
+import { Boat } from '../vanilla/world/entity/vehicle/Boat.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
 import { cameraBasis } from './renderer/gl/Gl.js';
 import { argbFromRgb, computeFogColor } from './renderer/environment/FogState.js';
@@ -1813,25 +1814,20 @@ export class Game {
     const blockDistance = blockHit
       ? Math.hypot(blockHit.point.x - eye.x, blockHit.point.y - eye.y, blockHit.point.z - eye.z)
       : Infinity;
-    // Minecart.hurt: a cart is destroyed by a hit (survival drops it, creative does not).
-    const cart = this.findMinecartTarget(Math.min(3.5, blockDistance + 0.25));
-    if (cart) {
-      this.breakMinecart(cart);
+    // VehicleEntity.hurt: a cart is destroyed by a hit (survival drops it, creative
+    // does not); a boat accumulates damage and breaks after 40 (five bare-hand hits).
+    const vehicle = this.findVehicleTarget(Math.min(3.5, blockDistance + 0.25));
+    if (vehicle instanceof Minecart) {
+      this.breakMinecart(vehicle);
+      return;
+    }
+    if (vehicle instanceof Boat) {
+      this.hitBoat(vehicle);
       return;
     }
     const target = this.findEntityTarget(Math.min(3.5, blockDistance + 0.25));
     if (target) {
-      const held = this.survival.getSelectedStack();
-      const name = held.item?.name ?? '';
-      let damage = name.endsWith('_sword') ? 4 : name.endsWith('_axe') ? 6
-        : name.endsWith('_pickaxe') ? 3 : name.endsWith('_shovel') ? 2.5 : 1;
-      // MobEffects.DAMAGE_BOOST (+3/level) / MobEffects.WEAKNESS (-4/level).
-      if (this.survival.hasEffect('strength')) {
-        damage += 3 * (this.survival.getEffectLevel('strength') + 1);
-      }
-      if (this.survival.hasEffect('weakness')) {
-        damage = Math.max(0, damage - 4 * (this.survival.getEffectLevel('weakness') + 1));
-      }
+      const damage = this.meleeDamage(this.survival.getSelectedStack().item?.name ?? '');
       target.hurt(damage, this.entityManager.getPlayerTarget());
       this.stats.award('custom', 'damage_dealt', Math.round(damage * 10));
       return;
@@ -1883,14 +1879,15 @@ export class Game {
     return best;
   }
 
-  /** Same slab ray as findEntityTarget, but for minecarts (non-living vehicles). */
-  private findMinecartTarget(maxDistance: number): Minecart | null {
+  /** Same slab ray as findEntityTarget, but for vehicles (minecarts and boats). */
+  private findVehicleTarget(maxDistance: number): Minecart | Boat | null {
     const eye = this.cameraEye();
     const dir = this.lookVector();
-    let best: Minecart | null = null;
+    let best: Minecart | Boat | null = null;
     let bestT = maxDistance;
     for (const entity of this.entityManager.getEntities()) {
-      if (!(entity instanceof Minecart) || entity.isRemoved()) continue;
+      if (!(entity instanceof Minecart) && !(entity instanceof Boat)) continue;
+      if (entity.isRemoved()) continue;
       const box = entity.getBoundingBox().inflateAll(0.1);
       let tmin = 1e-5;
       let tmax = bestT;
@@ -2126,6 +2123,8 @@ export class Game {
   private sleeping = false;
   /** Local player's active minecart ride (null when on foot). */
   private ridingMinecart: Minecart | null = null;
+  /** Local player's active boat ride (null when on foot). */
+  private ridingBoat: Boat | null = null;
   private sleepTicks = 0;
   /** 0..1 black overlay while falling asleep / waking up. */
   private sleepFade = 0;
@@ -2466,6 +2465,42 @@ export class Game {
     this.openScreen(isFurnace ? 'furnace' : 'chest');
   }
 
+  /** Player.attack damage for the held item + Strength/Weakness (LivingEntity hurt). */
+  private meleeDamage(name: string): number {
+    let damage = name.endsWith('_sword') ? 4 : name.endsWith('_axe') ? 6
+      : name.endsWith('_pickaxe') ? 3 : name.endsWith('_shovel') ? 2.5 : 1;
+    // MobEffects.DAMAGE_BOOST (+3/level) / MobEffects.WEAKNESS (-4/level).
+    if (this.survival.hasEffect('strength')) {
+      damage += 3 * (this.survival.getEffectLevel('strength') + 1);
+    }
+    if (this.survival.hasEffect('weakness')) {
+      damage = Math.max(0, damage - 4 * (this.survival.getEffectLevel('weakness') + 1));
+    }
+    return damage;
+  }
+
+  /** VehicleEntity.hurtServer for boats: damage accumulates, 40 destroys. */
+  private hitBoat(boat: Boat): void {
+    const damage = this.meleeDamage(this.survival.getSelectedStack().item?.name ?? '');
+    if (boat.hitBy(damage, this.options.gamemode === 'creative')) this.breakBoat(boat);
+  }
+
+  /** Destroy a boat: drop the boat item and (for chest boats) the 27 slots. */
+  private breakBoat(boat: Boat): void {
+    if (this.ridingBoat === boat) this.dismountBoat();
+    if (this.options.gamemode !== 'creative') {
+      const item = this.survival.registry.byName(boat.getDropItemName());
+      if (item) this.dropItem(new ItemStack(item, 1), boat.x - 0.5, boat.y, boat.z - 0.5);
+      const slots = boat.inventory.getContainerSize();
+      for (let i = 0; i < slots; i++) {
+        const stack = boat.inventory.removeItemNoUpdate(i);
+        if (!stack.isEmpty()) this.dropItem(stack, boat.x - 0.5, boat.y + 0.2, boat.z - 0.5);
+      }
+    }
+    boat.remove();
+    this.player.swingHand();
+  }
+
   /** Destroy a cart: drop the cart item (survival) and any chest contents. */
   private breakMinecart(cart: Minecart): void {
     if (this.ridingMinecart === cart) this.dismountMinecart();
@@ -2534,6 +2569,138 @@ export class Game {
     this.survival.openStorageContainer(cart);
     this.openScreen('chest');
     this.sounds.play('block.chest.open', cart.x, cart.y, cart.z, 1, 1);
+  }
+
+  // ---- boats ---------------------------------------------------------------
+
+  /** A boat item is any `<wood>_boat` / `<wood>_raft` (plus their chest variants). */
+  private isBoatItem(name: string): boolean {
+    return name.endsWith('_boat') || name.endsWith('_raft');
+  }
+
+  /** FlowingFluid.getHeight for the water/lava cell at (x,y,z); 0 for anything else. */
+  private fluidHeightAt(x: number, y: number, z: number): number {
+    const state = this.level.getBlockState(x, y, z);
+    if (state === 0 || !this.mc.hasFluid(state)) return 0;
+    const name = this.mc.blockOf(state).name;
+    if (name !== 'water' && name !== 'lava') return 0;
+    const above = this.level.getBlockState(x, y + 1, z);
+    if (this.mc.hasFluid(above) && this.mc.blockOf(above).name === name) return 1;
+    const amount = Number(this.mc.getProp(state, 'level') ?? 0);
+    return (amount >= 8 ? 8 : 8 - amount) / 9;
+  }
+
+  /**
+   * BoatItem.use's `getPlayerPOVHitResult(ClipContext.Fluid.ANY)`: the first fluid
+   * surface along the look ray, with the exact Y where the ray crosses it.
+   */
+  private fluidSurfaceRay(maxDistance: number): { point: Vec3; dist: number } | null {
+    const eye = this.cameraEye();
+    const dir = this.lookVector();
+    for (let dist = 0; dist <= maxDistance; dist += 0.05) {
+      const px = eye.x + dir.x * dist;
+      const py = eye.y + dir.y * dist;
+      const pz = eye.z + dir.z * dist;
+      const x = Math.floor(px), y = Math.floor(py), z = Math.floor(pz);
+      const height = this.fluidHeightAt(x, y, z);
+      if (height <= 0) continue;
+      const planeY = y + height;
+      let t = dir.y !== 0 ? (planeY - eye.y) / dir.y : dist;
+      if (!(t >= 0 && t <= maxDistance)) t = dist;
+      const qx = eye.x + dir.x * t;
+      const qz = eye.z + dir.z * t;
+      if (Math.floor(qx) === x && Math.floor(qz) === z) {
+        return { point: new Vec3(qx, planeY, qz), dist: t };
+      }
+      return { point: new Vec3(px, py, pz), dist };
+    }
+    return null;
+  }
+
+  /** BoatItem.use: place the boat at the first block-or-fluid hit, facing the player. */
+  private placeBoat(kind: string, hit: { point: Vec3 } | null): void {
+    const eye = this.cameraEye();
+    const fluid = this.fluidSurfaceRay(5);
+    let point: Vec3 | null = null;
+    if (hit) {
+      const solidDist = Math.hypot(hit.point.x - eye.x, hit.point.y - eye.y, hit.point.z - eye.z);
+      point = fluid && fluid.dist < solidDist ? fluid.point : hit.point;
+    } else if (fluid) {
+      point = fluid.point;
+    }
+    if (!point) return;
+    const spawned = this.entityManager.spawn(kind, point.x, point.y, point.z);
+    if (!(spawned instanceof Boat)) return;
+    const boat = spawned;
+    boat.yaw = this.player.yaw;
+    boat.yRotO = boat.yaw;
+    // BoatItem.use: fail (keep the item) when the hull would intersect a block.
+    if (!this.boatFits(boat)) {
+      boat.remove();
+      return;
+    }
+    if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+    this.useCooldown = 8;
+  }
+
+  /** Level.noCollision(boat, boat.getBoundingBox()). */
+  private boatFits(boat: Boat): boolean {
+    const bb = boat.getBoundingBox();
+    const x0 = Math.floor(bb.minX), x1 = Math.ceil(bb.maxX);
+    const y0 = Math.floor(bb.minY), y1 = Math.ceil(bb.maxY);
+    const z0 = Math.floor(bb.minZ), z1 = Math.ceil(bb.maxZ);
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        for (let z = z0; z < z1; z++) {
+          const state = this.level.getBlockState(x, y, z);
+          if (state === 0) continue;
+          const shape = this.mc.collision(state);
+          for (let i = 0; i < shape.length; i++) {
+            const b = shape[i];
+            if (b.maxX + x > bb.minX && b.minX + x < bb.maxX
+              && b.maxY + y > bb.minY && b.minY + y < bb.maxY
+              && b.maxZ + z > bb.minZ && b.minZ + z < bb.maxZ) return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  /** AbstractBoat.interact: seat the player (chest boat keeps one seat). */
+  private mountBoat(boat: Boat): void {
+    this.ridingBoat = boat;
+    boat.rider = this.player;
+    boat.setInput(false, false, false, false);
+    this.player.flying = false;
+    this.player.sneaking = false;
+    this.player.vel = new Vec3(0, 0, 0);
+    this.player.pos.x = boat.x;
+    this.player.pos.y = boat.y + boat.getRideHeight();
+    this.player.pos.z = boat.z;
+  }
+
+  /** Sneak while riding: step off beside the boat. */
+  private dismountBoat(): void {
+    const boat = this.ridingBoat;
+    if (!boat) return;
+    boat.rider = null;
+    boat.setInput(false, false, false, false);
+    this.ridingBoat = null;
+    this.player.pos.x = boat.x + 1.1;
+    this.player.pos.y = boat.y + 0.2;
+    this.player.pos.z = boat.z;
+    this.player.vel = new Vec3(0, 0, 0);
+    this.player.onGround = false;
+    this.useCooldown = 8;
+  }
+
+  /** AbstractChestBoat.interactWithContainerVehicle: the chest-boat's 27 slots. */
+  private openBoatChest(boat: Boat): void {
+    this.stats.award('custom', 'open_chest');
+    this.survival.openStorageContainer(boat);
+    this.openScreen('chest');
+    this.sounds.play('block.chest.open', boat.x, boat.y, boat.z, 1, 1);
   }
 
   /** Villager.startTrading: open the merchant menu and bind the trade callback. */
@@ -2672,12 +2839,23 @@ export class Game {
       return;
     }
     // Minecart.interact / MinecartChest.interact: mount an empty cart, open a chest cart.
-    const cartTarget = this.findMinecartTarget(Math.min(3.0, blockDistance + 0.25));
-    if (cartTarget) {
-      if (cartTarget.kind === 'chest_minecart' && !this.player.sneaking) {
-        this.openMinecartChest(cartTarget);
-      } else if (!this.player.sneaking && !this.ridingMinecart) {
-        this.mountMinecart(cartTarget);
+    // AbstractBoat.interact / AbstractChestBoat.interact: boats seat the player; a
+    // chest boat opens its 27 slots only while sneaking (the seat is still free).
+    const vehicleTarget = this.findVehicleTarget(Math.min(3.0, blockDistance + 0.25));
+    if (vehicleTarget instanceof Minecart) {
+      if (vehicleTarget.kind === 'chest_minecart' && !this.player.sneaking) {
+        this.openMinecartChest(vehicleTarget);
+      } else if (!this.player.sneaking && !this.ridingMinecart && !this.ridingBoat) {
+        this.mountMinecart(vehicleTarget);
+      }
+      this.useCooldown = 8;
+      return;
+    }
+    if (vehicleTarget instanceof Boat) {
+      if (this.player.sneaking) {
+        if (vehicleTarget.isChest()) this.openBoatChest(vehicleTarget);
+      } else if (!this.ridingMinecart && !this.ridingBoat && !vehicleTarget.rider) {
+        this.mountBoat(vehicleTarget);
       }
       this.useCooldown = 8;
       return;
@@ -2723,7 +2901,12 @@ export class Game {
       this.feedAnimal(entityTarget);
       return;
     }
-    if (!hit) return;
+    if (!hit) {
+      // BoatItem.use has no block target when the player looks at open water.
+      const heldName = this.survival.getSelectedStack().item?.name ?? '';
+      if (this.isBoatItem(heldName)) this.placeBoat(heldName, null);
+      return;
+    }
     // Vanilla PlayerGameMode.useItemOn: an interactive block consumes the right click before item
     // placement (unless the player is sneaking, which keeps the old "place against it" behaviour).
     const targetBlock = this.mc.blockOf(this.level.getBlockState(hit.x, hit.y, hit.z)).name;
@@ -2743,6 +2926,10 @@ export class Game {
     const heldUseName = heldUse.item?.name ?? '';
     if (heldUseName === 'minecart' || heldUseName === 'chest_minecart') {
       this.placeMinecart(hit, heldUseName);
+      return;
+    }
+    if (this.isBoatItem(heldUseName)) {
+      this.placeBoat(heldUseName, hit);
       return;
     }
     if (heldUseName === 'water_bucket' || heldUseName === 'lava_bucket') {
@@ -3722,7 +3909,27 @@ export class Game {
         this.player.flying = false;
       }
     }
-    if (!this.ridingMinecart) this.player.tick(this.level, input);
+    // Riding a boat: A/D turn the boat, W/S accelerate/reverse, the head may turn
+    // up to 105 degrees off the hull (AbstractBoat.controlBoat + clampRotation).
+    else if (this.ridingBoat) {
+      const boat = this.ridingBoat;
+      if (boat.isRemoved() || boat.shouldEjectRider() || input.sneak) {
+        this.dismountBoat();
+      } else {
+        boat.setInput(input.strafe < 0, input.strafe > 0, input.forward > 0, input.forward < 0);
+        this.player.pos.x = boat.x;
+        this.player.pos.y = boat.y + boat.getRideHeight();
+        this.player.pos.z = boat.z;
+        this.player.vel = new Vec3(0, 0, 0);
+        this.player.onGround = true;
+        this.player.fallDistance = 0;
+        this.player.flying = false;
+        let delta = ((this.player.yaw - boat.yaw + 540) % 360) - 180;
+        delta = Math.max(-105, Math.min(105, delta));
+        this.player.yaw = boat.yaw + delta;
+      }
+    }
+    if (!this.ridingMinecart && !this.ridingBoat) this.player.tick(this.level, input);
     this.hSpeedTrace[this.hSpeedIndex % this.hSpeedTrace.length] =
       Math.hypot(this.player.vel.x, this.player.vel.z);
     this.hSpeedIndex++;

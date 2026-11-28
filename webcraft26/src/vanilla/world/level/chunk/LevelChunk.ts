@@ -332,6 +332,16 @@ export class LevelChunk {
     if (!s) {
       s = new LevelChunkSection(sy);
       this.sections[i] = s;
+      // Chunks are lit when they load, and only the sections up to each column's
+      // surface exist then. A section created later (player builds high in the air,
+      // a test stage, /setblock) starts as an empty all-zero sky layer; without
+      // this seed its open air is sky light 0 and every new face renders black.
+      // A section whose bottom is above every existing block is entirely open sky.
+      let highest = this.minY - 1;
+      for (let c = 0; c < 256; c++) {
+        if (this.surfaceHeight[c] > highest) highest = this.surfaceHeight[c];
+      }
+      if ((sy << 4) > highest) s.getSkyLight().fill(15);
     }
     return s;
   }

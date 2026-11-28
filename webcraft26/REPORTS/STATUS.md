@@ -52,6 +52,7 @@ node scripts/test-hud-dirty.mjs               # HUD 脏标记 / 菜单隐藏 5 �
 node scripts/test-advancements.mjs            # 进度：roots/可见数/触发器/界面/存档 7 项
 node scripts/test-villager-trade.mjs          # 村民：职业/报价/交易/等级/补货/存档 14 项
 node scripts/test-minecart.mjs                # 矿车：轨道/弯道/坡道/动力轨/检测轨/乘坐/箱子 11 项
+node scripts/test-boat.mjs                    # 船/筏：浮力/划桨/转向/摩擦/放置/乘坐/箱船/掉落/像素差分 16 项
 node scripts/test-icons.mjs                   # 物品图标
 node scripts/test-taa.mjs                     # TAA
 npx tsx scripts/test-mesher.mts               # 区块网格 64 项
@@ -95,7 +96,8 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
 | 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化；`test-villager-trade` 14 项 |
 | 矿车 | ✅ | 2026-11-22：普通/箱子矿车实体与模型；`NewMinecartBehavior` 轨道跟随（直线/拐弯/坡道/摩擦/动力轨加速/未供能动力轨刹停）、检测铁轨占用供电、物品放置、右键乘坐与潜行下车、箱子矿车 27 格 GUI、生存破坏掉落；`test-minecart` 11 项 |
-| 更多 AI（铁傀儡、马、船） | ❌ | 实体工厂里没有这些类型 |
+| 船 / 筏 | ✅ | 2026-11-23：10 种木材 × 普通/箱船（含竹筏）实体与模型；`AbstractBoat` 状态扫描/浮力/划桨/转向/陆地摩擦、水面吸附、物品放置（方块面或流体表面）、右键乘坐与潜行下船、箱子船 27 格 GUI（潜行右键）、`VehicleEntity` 伤害累计 40 与掉落；`test-boat` 16 项（含受控场景像素差分） |
+| 更多 AI（铁傀儡、马） | ❌ | 实体工厂里没有这些类型 |
 
 ### GUI / 物品栏 / 容器
 | 项 | 状态 | 说明 |
@@ -382,3 +384,36 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   截图 `shots/diag/minecart.png`、`minecart-probe.png`、`minecart-chest.png`。
 - 剩余：矿车之间/矿车与生物的推挤拾取、hurt 动画与多段耐久、漏斗/TNT/熔炉矿车、
   铁轨坡道的完整 `RailState.place`、矿车实体随区块存档、乘坐时第一人称视角偏移微调。
+
+### 船 / 筏（2026-11-23）
+
+- 实体 `src/vanilla/world/entity/vehicle/Boat.ts`：`AbstractBoat` + `Boat` / `Raft` /
+  `AbstractChestBoat` 的客户端移植。每 tick 先按船体 AABB 扫描流体得到
+  `IN_WATER / UNDER_WATER / UNDER_FLOWING_WATER / ON_LAND / IN_AIR`；`floatBoat` 复刻
+  重力 0.04、浮力 `(waterLevel-y)/height * (0.04/0.65) * 0.75`、水 0.9 / 水下流 0.45 /
+  陆地摩擦 0.6（有乘客减半）、入水瞬间 `targetY = waterLevelAbove - height + 0.101`
+  的吸附；`controlBoat` 复刻 `deltaRotation`（左/右 ±1，0.9 衰减）、加速 0.04/0.005、
+  划桨 π/8 步进；`Game` 按 `AbstractBoat.clampRotation` 把玩家头部限制在船体 ±105°。
+  箱船单乘客、27 格容器；`VehicleEntity` 伤害累计（每次 `damage*10`，>40 破坏），
+  生存掉落本体与箱内物品，创造一击移除。
+- 放置：`BoatItem.use`（`Game.placeBoat`）沿视线取方块/流体首个命中点（流体取表面精确
+  Y），船朝向玩家 yaw，`Level.noCollision` 不通过时保留物品；甲板/水面都可放置；
+  创造不消耗、生存消耗 1。
+- 渲染：`BoatModel`（128x64）+ `ChestBoatModel`（128x128，含箱体/箱盖/锁）按 26.2
+  `addCommonParts` 逐盒转录；`BoatRenderer` 根矩阵为 `T(pos) * T(0,0.375,0) *
+  RY(180-yaw) * S(-1,-1,1) * RY(90)`，影子半径 0.8；`AbstractBoatModel.animatePaddle`
+  用 `getRowingTime` 驱动左右桨；20 种实体类型全部注册贴图与渲染器。
+- 受控测试场景：新增 `scripts/lib/stage.mjs`（对比 Horizon 的 `World::test_scene` +
+  probe 差分思路）——在天空 y=240 生成隔离石台/泳池/白墙摄影棚，清除实体、关闭自然
+  刷怪、冻结昼夜与天气、固定相机，再用 `diffPng` 对“无实体/有实体”两张截图做像素
+  差分，避免真实地形、其它方块和光照变化混入渲染验证。
+- 顺带修光照：`LevelChunk.getOrCreateSection` 为“加载后才创建、且整段位于现有最高
+  方块之上”的 section 预填天光 15。此前在高空搭方块会创建全 0 天光的新 section，
+  导致新表面全黑（测试场景最初整片发黑）。
+- 验证：`tsc` 0；`node scripts/test-boat.mjs` **16/16**（20 类型渲染器、水面漂浮高度、
+  上船/前进/转向/下船、陆地摩擦、水面与方块放置/消耗、箱船 27 格与内容、5 次徒手
+  破坏掉落、创造无掉落、oak/箱船像素差分轮廓、划桨动画差分）；回归 `test-minecart`
+  11/11、`test-villager-trade` 14/14、`test-advancements` 7/7、`test-containers` 全过、
+  `test-redstone` 28/28、`test-taming` 7/7、`smoke` 19/19。
+- 剩余：气泡柱、划桨音效、船推挤其它实体、船/箱船实体随区块存档、箱船战利品表、
+  船桨在水面/陆地的粒子与音效、骑马/铁傀儡等后续 AI。

@@ -112,6 +112,7 @@ export interface RecipeResult {
 export const RECIPE_TYPES = {
   CRAFTING_SHAPED: 'minecraft:crafting_shaped',
   CRAFTING_SHAPELESS: 'minecraft:crafting_shapeless',
+  CRAFTING_IMBUE: 'minecraft:crafting_imbue',
   SMELTING: 'minecraft:smelting',
   BLASTING: 'minecraft:blasting',
   SMOKING: 'minecraft:smoking',
@@ -129,7 +130,7 @@ export function isCookingType(type: string): boolean {
 export interface RecipeLike {
   readonly id: string;
   readonly type: string;
-  assemble(registry: ItemRegistry): ItemStack;
+  assemble(registry: ItemRegistry, input?: CraftingInput): ItemStack;
 }
 
 export function makeResult(registry: ItemRegistry, result: RecipeResult): ItemStack {
@@ -256,6 +257,50 @@ export class ShapelessRecipe implements RecipeLike {
   assemble(registry: ItemRegistry): ItemStack { return makeResult(registry, this.result); }
 }
 
+/**
+ * Port of net.minecraft.world.item.crafting.ImbueRecipe: a full 3x3 grid with a
+ * potion in the centre cell and eight arrows around it yields eight tipped
+ * arrows carrying the potion contents of that central stack.
+ */
+export class ImbueRecipe implements RecipeLike {
+  readonly id: string;
+  readonly type = RECIPE_TYPES.CRAFTING_IMBUE;
+  readonly source: Ingredient;
+  readonly material: Ingredient;
+  readonly result: RecipeResult;
+
+  constructor(id: string, def: any) {
+    this.id = id;
+    this.source = new Ingredient(def.source);
+    this.material = new Ingredient(def.material);
+    this.result = { item: short(def.result?.item ?? 'air'), count: def.result?.count ?? 1 };
+  }
+
+  /** ImbueRecipe.matches: 3x3, all nine cells occupied, source in the centre. */
+  matches(input: CraftingInput): boolean {
+    if (input.width !== 3 || input.height !== 3 || input.ingredientCount !== 9) return false;
+    for (let y = 0; y < 3; y++) {
+      for (let x = 0; x < 3; x++) {
+        const stack = input.getItemXY(x, y);
+        if (stack.isEmpty()) return false;
+        const ingredient = x === 1 && y === 1 ? this.source : this.material;
+        if (!ingredient.test(stack)) return false;
+      }
+    }
+    return true;
+  }
+
+  /** ImbueRecipe.assemble: copy POTION_CONTENTS from the central source stack. */
+  assemble(registry: ItemRegistry, input?: CraftingInput): ItemStack {
+    const result = makeResult(registry, this.result);
+    const source = input?.getItemXY(1, 1);
+    if (source && !source.isEmpty() && source.components.potion) {
+      result.components.potion = source.components.potion;
+    }
+    return result;
+  }
+}
+
 /** Port of net.minecraft.world.item.crafting.AbstractCookingRecipe subclasses. */
 export class CookingRecipe implements RecipeLike {
   readonly id: string;
@@ -320,7 +365,7 @@ export class SmithingRecipe implements RecipeLike {
   assemble(registry: ItemRegistry): ItemStack { return makeResult(registry, this.result); }
 }
 
-export type AnyRecipe = ShapedRecipe | ShapelessRecipe | CookingRecipe | StonecuttingRecipe | SmithingRecipe;
+export type AnyRecipe = ShapedRecipe | ShapelessRecipe | ImbueRecipe | CookingRecipe | StonecuttingRecipe | SmithingRecipe;
 
 /** CraftingRecipe.defaultCraftingReminder: one container remainder per occupied cell. */
 export function defaultCraftingReminder(input: CraftingInput, registry: ItemRegistry): ItemStack[] {

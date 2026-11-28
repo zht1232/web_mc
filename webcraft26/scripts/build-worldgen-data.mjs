@@ -361,6 +361,15 @@ function normalizeRecipe(json, normIngredient) {
     };
   }
 
+  if (type === 'minecraft:crafting_imbue') {
+    return {
+      ...base,
+      source: normIngredient(json.source),
+      material: normIngredient(json.material),
+      result: normalizeResult(json.result),
+    };
+  }
+
   if (COOKING_TYPES.has(type)) {
     return {
       ...base,

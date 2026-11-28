@@ -74,8 +74,10 @@ for (const profession of PROFESSIONS) {
       // per-variant map offers. Both are outside this batch.
       if (raw.merchant_predicate || !raw.wants || !raw.gives) { skipped++; continue; }
       let enchantRandomly = false;
+      let randomPotion = false;
       for (const mod of raw.given_item_modifiers ?? []) {
         if (mod.function === 'minecraft:enchant_randomly') enchantRandomly = true;
+        else if (mod.function === 'minecraft:set_random_potion') randomPotion = true;
         else if (mod.function === 'minecraft:set_name') { /* cosmetic name only */ }
         else { enchantRandomly = false; break; }
       }
@@ -93,6 +95,7 @@ for (const profession of PROFESSIONS) {
       if (additional) trade.additional = additional;
       if (raw.double_trade_price_enchantments) trade.doubleTradePrice = true;
       if (enchantRandomly) trade.enchantRandomly = true;
+      if (randomPotion) trade.randomPotion = true;
       trades.push(trade);
       total++;
     }

@@ -239,3 +239,13 @@ export const ENTITY_TYPES = new EntityTypeRegistry(ENTITY_ROWS);
 
 /** Convenience accessor: throws on an unknown name. */
 export function entityType(name: string): EntityType { return ENTITY_TYPES.require(name); }
+
+/** EntityTypes in #minecraft:undead (instant health hurts them, instant damage heals them). */
+const UNDEAD_ENTITY_NAMES: ReadonlySet<string> = new Set([
+  'zombie', 'zombie_villager', 'husk', 'drowned', 'zombified_piglin',
+  'skeleton', 'stray', 'bogged', 'parched', 'wither_skeleton',
+  'phantom', 'zoglin', 'zombie_horse', 'skeleton_horse', 'wither',
+]);
+
+/** EntityType.isInvertedHealAndHarm equivalent for the ported effect system. */
+export function isUndeadType(name: string): boolean { return UNDEAD_ENTITY_NAMES.has(name); }

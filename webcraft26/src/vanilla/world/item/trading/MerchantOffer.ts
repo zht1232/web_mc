@@ -13,6 +13,7 @@ import { ItemStack, type ItemComponents } from '../ItemStack.js';
 import type { ItemRegistry } from '../Item.js';
 import type { RandomSource } from '../../../core/Random.js';
 import { rollOffer } from '../../inventory/EnchantingMenu.js';
+import { TRADEABLE_POTIONS } from '../potion/Potions.js';
 
 export interface CostSpec {
   id: string;
@@ -36,6 +37,8 @@ export interface TradeSpec {
   xp: number;
   priceMultiplier: number;
   enchantRandomly?: boolean;
+  /** set_random_potion(#minecraft:tradeable), e.g. the fletcher master tipped-arrow offer. */
+  randomPotion?: boolean;
   doubleTradePrice?: boolean;
 }
 
@@ -71,6 +74,7 @@ export class MerchantOffer {
   readonly priceMultiplier: number;
   readonly rewardExp = true;
   readonly enchantRandomly: boolean;
+  readonly randomPotion: boolean;
   readonly doubleTradePrice: boolean;
   uses = 0;
   demand = 0;
@@ -91,12 +95,16 @@ export class MerchantOffer {
     this.xp = spec.xp;
     this.priceMultiplier = spec.priceMultiplier;
     this.enchantRandomly = spec.enchantRandomly === true;
+    this.randomPotion = spec.randomPotion === true;
     this.doubleTradePrice = spec.doubleTradePrice === true;
 
     let components: ItemComponents | undefined;
     if (this.enchantRandomly) {
       const roll = rollOffer('book', 8 + priceLevel * 3, random);
       components = roll ? { enchantments: { [roll.id]: roll.level } } : undefined;
+    } else if (this.randomPotion) {
+      // set_random_potion(#minecraft:tradeable): roll one of the tag entries.
+      components = { potion: TRADEABLE_POTIONS[random.nextInt(TRADEABLE_POTIONS.length)] };
     } else if (spec.gives.potion) {
       components = { potion: strip(spec.gives.potion) };
     }

@@ -9,7 +9,7 @@ import type { ItemRegistry } from '../Item.js';
 import { ItemStack } from '../ItemStack.js';
 import {
   Ingredient, positionedOf, isCookingType, RECIPE_TYPES, defaultCraftingReminder,
-  ShapedRecipe, ShapelessRecipe, CookingRecipe, StonecuttingRecipe, SmithingRecipe,
+  ShapedRecipe, ShapelessRecipe, ImbueRecipe, CookingRecipe, StonecuttingRecipe, SmithingRecipe,
   type AnyRecipe, type CraftingInput, type PositionedCraftingInput,
 } from './Recipe.js';
 
@@ -20,7 +20,7 @@ export interface CraftingGrid {
   getItems(): readonly ItemStack[];
 }
 
-type CraftingRecipe = ShapedRecipe | ShapelessRecipe;
+type CraftingRecipe = ShapedRecipe | ShapelessRecipe | ImbueRecipe;
 
 export class RecipeManager {
   readonly registry: ItemRegistry;
@@ -44,6 +44,7 @@ export class RecipeManager {
       let recipe: AnyRecipe | null = null;
       if (type === RECIPE_TYPES.CRAFTING_SHAPED) recipe = new ShapedRecipe(id, def);
       else if (type === RECIPE_TYPES.CRAFTING_SHAPELESS) recipe = new ShapelessRecipe(id, def);
+      else if (type === RECIPE_TYPES.CRAFTING_IMBUE) recipe = new ImbueRecipe(id, def);
       else if (isCookingType(type)) recipe = new CookingRecipe(id, def);
       else if (type === RECIPE_TYPES.STONECUTTING) recipe = new StonecuttingRecipe(id, def);
       else if (type === RECIPE_TYPES.SMITHING_TRANSFORM || type === RECIPE_TYPES.SMITHING_TRIM) recipe = new SmithingRecipe(id, def);
@@ -70,6 +71,9 @@ export class RecipeManager {
       for (const ing of recipe.ingredients) {
         for (const id of ing.ids()) this.addToIndex(this.craftingByItem, id, recipe);
       }
+    } else if (recipe instanceof ImbueRecipe) {
+      for (const id of recipe.material.ids()) this.addToIndex(this.craftingByItem, id, recipe);
+      for (const id of recipe.source.ids()) this.addToIndex(this.craftingByItem, id, recipe);
     } else if (recipe instanceof CookingRecipe) {
       for (const id of recipe.ingredient.ids()) this.addToIndex(this.cookingByItem, id, recipe);
     } else if (recipe instanceof StonecuttingRecipe) {
@@ -124,9 +128,7 @@ export class RecipeManager {
     let result: CraftingRecipe | null = null;
     for (let i = 0; i < best.length; i++) {
       const r = best[i];
-      if (r instanceof ShapedRecipe) {
-        if (r.matches(input)) { result = r; break; }
-      } else if (r.matches(input)) { result = r; break; }
+      if (r.matches(input)) { result = r; break; }
     }
     if (this.craftingCache.size > 4096) this.craftingCache.clear();
     this.craftingCache.set(key, result);

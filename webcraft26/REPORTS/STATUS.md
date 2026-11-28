@@ -1,4 +1,4 @@
-# 项目状态索引（2026-11-22）
+# 项目状态索引（2026-11-28）
 
 这份文件是**唯一的当前状态入口**：先看这里，再按需翻 `REPORTS/HANDOFF*.md` 的历史交接记录。
 历史交接里已经过时的数字（世界大小、已修 bug、测试数量）不要当现状。
@@ -59,6 +59,7 @@ node scripts/test-village-life.mjs            # 村民农业：食物分享/收�
 node scripts/test-villager-sleep.mjs          # 村民睡眠/昼夜作息 + 村庄铁傀儡生成 13 项
 node scripts/test-village-schedule.mjs        # 村民日程：工作站点聚集/钟声会议/农民工作时段 9 项
 node scripts/test-wandering-trader.mjs        # 流浪商人：生成周期/9 条报价/交易界面/羊驼跟随与消失 15 项
+node scripts/test-tipped-arrow.mjs            # 药箭：imbue 合成/弓发射/1/8 时长药效/制箭师随机药箭交易 10 项
 node scripts/test-mob-equipment.mjs           # 怪物装备与稀有掉落：护甲分布/武器/骷髅头/铜锭 13 项
 node scripts/test-explosion.mjs               # 爆炸：射线弹坑/抗性/掉落衰减/TNT 归属 6 项
 node scripts/test-icons.mjs                   # 物品图标
@@ -96,13 +97,14 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 25 种可渲染生物 | ✅ | 34 个 mob 工厂 + 数据驱动模型；变体共用基础模型/贴图；`test-mobs-render` 20 项 |
 | 羊的羊毛层 | ✅ | 2026-11-21 修：`SheepFurModel` + DyeColor tint + 随机毛色；剪毛后隐藏（测试 [20]） |
 | 骷髅弓 | ✅ | 2026-11-21 修：弓弦从瞄准方向正面翻到射手一侧 |
+| 药箭 | ✅ | 2026-11-28：`crafting_imbue` 配方（3x3 全满、中心滞留药水、其余 8 格箭 → 8 支带 `potion` 组件的药箭，消耗全部 9 格且不返还玻璃瓶）；弓发射 `tipped_arrow` 时箭实体携带药水并按原版 `POTION_DURATION_SCALE=0.125` 缩短时长、命中后施加效果（含立即伤害/治疗的亡灵反转）；`#minecraft:tradeable` 41 种药水（含 turtle_master 双效果）；`test-tipped-arrow` 10 项。缺口：药箭图标/实体未按药水颜色着色（cosmetic） |
 | 生物装备/手持物 | ✅ | 主手物品层（骷髅弓/凋灵骷髅石剑）+ 人形四层护甲（equipment/humanoid 贴图）；2026-11-28 起按原版 `Mob.populateDefaultEquipmentSlots` 生成护甲（15% 触发、皮革/铜/金/锁链/铁/钻石六档、头→靴每格 25% 停止），僵尸 1% 铁剑/铁矛/铁锹，骷髅弓，凋灵骷髅石剑且无甲，溺尸 10% 三叉戟/钓竿 + 3% 鹦鹉螺壳副手，僵尸猪灵金剑/金矛；`test-mob-equipment` |
 | 剪羊毛 | ✅ | 2026-11-21：剪刀右键羊 → `sheared`、掉落 1–3 个对应颜色羊毛、播放 `entity.sheep.shear`；重复点击不再掉落 |
 | 鸡下蛋 / 投蛋 | ✅ | 成年鸡 6000–12000 tick 下蛋（幼鸡不下蛋）；投掷蛋落地/命中生物后 1/8 概率孵化幼鸡 |
 | Q 丢弃物品 | ✅ | Q 丢 1 个 / Ctrl+Q 丢整组，40 tick 拾取延迟，`dropped`/`drop` 统计 |
 | 繁殖 / 喂养 / 幼年 | ✅ | 牛/猪/羊/鸡/兔/猫/豹猫/蘑菇牛：食物标签、600 tick 恋爱、6000 tick 冷却、幼年 0.5 缩放与成长、繁殖 XP、幼年无掉落；幼年专用几何体未接 |
 | 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
-| 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化。2026-11-28：食物点（面包 4 / 胡萝卜·马铃薯·甜菜根 1）拾取、12 点繁殖门槛、BreedGoal 配对、50/25/25 生物群系皮肤遗传、`BabyVillagerModel` + 宝宝贴图与 0.49×0.98 碰撞箱、年龄/食物点存档；`test-villager-trade` 14 项 + `test-golem-villager`。2026-11-28：农民 `HarvestFarmland` 目标（8 格内成熟作物→走近→收割并补种，小麦种子 0–3、胡萝卜/马铃薯/甜菜根 1–4/1–3）、3 小麦→1 面包（4 食物点）、`TradeWithVillager` 食物分享（≥24 点分给 4 格内 <12 点的村民）、小麦/种子库存存档；`test-village-life`。2026-11-28：昼夜作息——time ≥ 12000 时 `VillagerSleepGoal` 认领 32 格内空闲床（头/脚统一为床头键、一床一人），走近后躺下（`startSleeping`，关重力、`EntityRenderer` 躺姿），日出/床被破坏/受击醒来；最近 24000 tick 内睡过的 5 名村民触发村庄铁傀儡（非玩家创建）并清空睡眠记忆；`test-villager-sleep`。2026-11-28：`VillagerSchedules.VILLAGER_DEFAULT` 日程——wake 0–10 / work 10–3000 / meet 3000–6000 / idle 6000–9000 / work 9000–12000 / sleep 12000–24000；`VillagerWorkGoal` 工作时段走回工作站点并面向它，`VillagerMeetGoal` 会议时段向 32 格内的钟聚集（按实体 id 错开站位），农民 `HarvestFarmland` 只在工作时段运行；生成村庄的房屋加入红床与随机工作站点、广场井边加入钟；`test-village-schedule` 9 项 + `test-worldgen` POI 检查 |
+| 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化。2026-11-28：食物点（面包 4 / 胡萝卜·马铃薯·甜菜根 1）拾取、12 点繁殖门槛、BreedGoal 配对、50/25/25 生物群系皮肤遗传、`BabyVillagerModel` + 宝宝贴图与 0.49×0.98 碰撞箱、年龄/食物点存档；`test-villager-trade` 14 项 + `test-golem-villager`。2026-11-28：农民 `HarvestFarmland` 目标（8 格内成熟作物→走近→收割并补种，小麦种子 0–3、胡萝卜/马铃薯/甜菜根 1–4/1–3）、3 小麦→1 面包（4 食物点）、`TradeWithVillager` 食物分享（≥24 点分给 4 格内 <12 点的村民）、小麦/种子库存存档；`test-village-life`。2026-11-28：昼夜作息——time ≥ 12000 时 `VillagerSleepGoal` 认领 32 格内空闲床（头/脚统一为床头键、一床一人），走近后躺下（`startSleeping`，关重力、`EntityRenderer` 躺姿），日出/床被破坏/受击醒来；最近 24000 tick 内睡过的 5 名村民触发村庄铁傀儡（非玩家创建）并清空睡眠记忆；`test-villager-sleep`。2026-11-28：`VillagerSchedules.VILLAGER_DEFAULT` 日程——wake 0–10 / work 10–3000 / meet 3000–6000 / idle 6000–9000 / work 9000–12000 / sleep 12000–24000；`VillagerWorkGoal` 工作时段走回工作站点并面向它，`VillagerMeetGoal` 会议时段向 32 格内的钟聚集（按实体 id 错开站位），农民 `HarvestFarmland` 只在工作时段运行；生成村庄的房屋加入红床与随机工作站点、广场井边加入钟；`test-village-schedule` 9 项 + `test-worldgen` POI 检查。2026-11-28：制箭师大师交易 `set_random_potion(#minecraft:tradeable)` → 2 绿宝石 + 5 箭换 5 支随机药箭，`test-tipped-arrow` |
 | 矿车 | ✅ | 2026-11-22：普通/箱子矿车实体与模型；`NewMinecartBehavior` 轨道跟随（直线/拐弯/坡道/摩擦/动力轨加速/未供能动力轨刹停）、检测铁轨占用供电、物品放置、右键乘坐与潜行下车、箱子矿车 27 格 GUI、生存破坏掉落；`test-minecart` 11 项 |
 | 流浪商人 / 商人羊驼 | ✅ | 2026-11-28：`WanderingTraderSpawner` 1200 tick 检查、24000 tick 刷新、25%→75% 概率、1/10 尝试、48 格内以钟（会议 POI）或玩家为参照找 2x3x2 空地，生成 1 商人 + 2 商人羊驼；3 组 26.2 TradeSet（2 买 / 2 稀有 / 5 常见）共 9 条报价，药水成本按组件匹配，交易界面无等级条并显示 `entity.minecraft.wandering_trader`，交易中冻结 AI，48000 tick 未交易后与羊驼一起消失；羊驼沿用 `LlamaModel` + 蓝色交易毯层，跟随商人（无拴绳渲染/物理）；`test-wandering-trader` 15 项 |
 | 船 / 筏 | ✅ | 2026-11-23：10 种木材 × 普通/箱船（含竹筏）实体与模型；`AbstractBoat` 状态扫描/浮力/划桨/转向/陆地摩擦、水面吸附、物品放置（方块面或流体表面）、右键乘坐与潜行下船、箱子船 27 格 GUI（潜行右键）、`VehicleEntity` 伤害累计 40 与掉落；`test-boat` 16 项（含受控场景像素差分） |

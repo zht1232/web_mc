@@ -19,8 +19,9 @@ const CRAFT_REMAINDERS: Readonly<Record<string, string>> = {
   powder_snow_bucket: 'bucket', axolotl_bucket: 'bucket', tadpole_bucket: 'bucket',
   cod_bucket: 'bucket', salmon_bucket: 'bucket', pufferfish_bucket: 'bucket',
   tropical_fish_bucket: 'bucket',
-  potion: 'glass_bottle', splash_potion: 'glass_bottle', lingering_potion: 'glass_bottle',
-  experience_bottle: 'glass_bottle', dragon_breath: 'glass_bottle', honey_bottle: 'glass_bottle',
+  // Potions themselves have no crafting remainder in 26.2 (usingConvertsTo is
+  // a drink-only property); only these two bottle items do.
+  dragon_breath: 'glass_bottle', honey_bottle: 'glass_bottle',
 };
 
 /** Port of net.minecraft.world.item.Item, component-based. */

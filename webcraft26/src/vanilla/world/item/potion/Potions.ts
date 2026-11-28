@@ -33,6 +33,10 @@ const BASE: Record<string, BasePotion> = {
   weakness: { effect: 'weakness', duration: 1800, longDuration: 4800 },
   invisibility: { effect: 'invisibility', duration: 3600, longDuration: 9600 },
   slow_falling: { effect: 'slow_falling', duration: 1800, longDuration: 4800 },
+  wind_charged: { effect: 'wind_charged', duration: 3600 },
+  weaving: { effect: 'weaving', duration: 3600 },
+  oozing: { effect: 'oozing', duration: 3600 },
+  infested: { effect: 'infested', duration: 3600 },
   water: { effect: '', duration: 0 },
   awkward: { effect: '', duration: 0 },
   thick: { effect: '', duration: 0 },
@@ -63,6 +67,16 @@ export function parsePotion(id: string): PotionSpec {
 export function potionEffects(id: string | undefined): ActivePotionEffect[] {
   if (!id) return [];
   const spec = parsePotion(id);
+  // Turtle master is the only vanilla potion that carries two effects
+  // (Potions.java: slowness III/IV + resistance II/III).
+  if (spec.base === 'turtle_master') {
+    const duration = spec.variant === 'long' ? 800 : 400;
+    const strong = spec.variant === 'strong';
+    return [
+      { id: 'slowness', duration, amplifier: strong ? 5 : 3 },
+      { id: 'resistance', duration, amplifier: strong ? 3 : 2 },
+    ];
+  }
   const def = BASE[spec.base];
   if (!def || !def.effect) return [];
   const duration = spec.variant === 'long'
@@ -176,3 +190,26 @@ export function brewResult(
 
 /** Potion item ids that carry the `potion` component. */
 export const POTION_ITEMS: ReadonlySet<string> = new Set(['potion', 'splash_potion', 'lingering_potion']);
+
+/**
+ * #minecraft:tradeable potion ids, rolled by the fletcher's master trade
+ * (`set_random_potion`). Same order as data/minecraft/tags/potion/tradeable.json.
+ */
+export const TRADEABLE_POTIONS: readonly string[] = [
+  'wind_charged', 'oozing', 'infested', 'weaving',
+  'night_vision', 'long_night_vision',
+  'invisibility', 'long_invisibility',
+  'fire_resistance', 'long_fire_resistance',
+  'leaping', 'long_leaping', 'strong_leaping',
+  'slowness', 'long_slowness', 'strong_slowness',
+  'turtle_master', 'long_turtle_master', 'strong_turtle_master',
+  'swiftness', 'long_swiftness', 'strong_swiftness',
+  'water_breathing', 'long_water_breathing',
+  'healing', 'strong_healing',
+  'harming', 'strong_harming',
+  'poison', 'long_poison', 'strong_poison',
+  'regeneration', 'long_regeneration', 'strong_regeneration',
+  'strength', 'long_strength', 'strong_strength',
+  'weakness', 'long_weakness',
+  'slow_falling', 'long_slow_falling',
+];

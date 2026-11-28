@@ -4,7 +4,7 @@
 
 import { ItemStack } from '../item/ItemStack.js';
 import type { ItemRegistry } from '../item/Item.js';
-import type { RecipeManager, CraftingGrid } from '../item/crafting/RecipeManager.js';
+import type { RecipeManager } from '../item/crafting/RecipeManager.js';
 import { AbstractContainerMenu, type MenuPlayer } from './AbstractContainerMenu.js';
 import { ResultSlot, Slot } from './Slot.js';
 import { ResultContainer } from './ResultContainer.js';
@@ -67,8 +67,11 @@ export abstract class AbstractCraftingMenu extends AbstractContainerMenu {
 
   recomputeResult(): void {
     if (this.consuming) return;
-    const recipe = this.recipeManager.getRecipeFor(this.craftSlots as CraftingGrid);
-    const result = recipe ? recipe.assemble(this.registry) : ItemStack.EMPTY;
+    // The positioned input is handed to assemble() so data-driven recipes
+    // (ImbueRecipe) can read the source stack; shaped/shapeless ignore it.
+    const pos = this.craftSlots.asPositionedCraftInput();
+    const recipe = this.recipeManager.getRecipeForInput(pos.input);
+    const result = recipe ? recipe.assemble(this.registry, pos.input) : ItemStack.EMPTY;
     this.resultSlots.setItem(0, result);
     this.resultSlots.setRecipeUsed(recipe);
   }

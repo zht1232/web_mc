@@ -57,7 +57,7 @@ import { Boat } from '../vanilla/world/entity/vehicle/Boat.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
 import { cameraBasis } from './renderer/gl/Gl.js';
 import { argbFromRgb, computeFogColor } from './renderer/environment/FogState.js';
-import { ENTITY_TYPES } from '../vanilla/world/entity/EntityType.js';
+import { ENTITY_TYPES, isUndeadType } from '../vanilla/world/entity/EntityType.js';
 import { ScreenManager } from './gui/ScreenManager.js';
 import { TitleScreen } from './gui/screens/TitleScreen.js';
 import { CreativeModeInventoryScreen } from './gui/screens/inventory/CreativeModeInventoryScreen.js';
@@ -3466,7 +3466,7 @@ export class Game {
     for (const e of this.entityManager.getEntities()) {
       if (!(e instanceof LivingEntity) || e.isRemoved() || !e.isAlive()) continue;
       apply(
-        e.getBoundingBox(), UNDEAD_ENTITY_NAMES.has(e.getTypeName()),
+        e.getBoundingBox(), isUndeadType(e.getTypeName()),
         (n) => e.heal(n),
         (n) => e.hurt(n, playerTarget),
         (id, duration, amplifier) => e.addEffect(id, duration, amplifier),
@@ -3541,7 +3541,7 @@ export class Game {
       if (!(e instanceof LivingEntity) || e.isRemoved() || !e.isAlive()) continue;
       apply(
         e.getBoundingBox(), e.x, e.z,
-        UNDEAD_ENTITY_NAMES.has(e.getTypeName()), e,
+        isUndeadType(e.getTypeName()), e,
         (n) => e.heal(n),
         (n) => e.hurt(n, playerTarget),
         (id, duration, amplifier) => e.addEffect(id, duration, amplifier),
@@ -3816,9 +3816,15 @@ export class Game {
     if (!held.item || held.item.name !== 'bow') return;
 
     let arrowSlot = -1;
+    let arrowPotion: string | null = null;
     for (let i = 0; i < 36; i++) {
       const st = this.survival.inventory.getItem(i);
-      if (!st.isEmpty() && st.item?.name === 'arrow') { arrowSlot = i; break; }
+      if (st.isEmpty() || !st.item) continue;
+      if (st.item.name === 'arrow' || st.item.name === 'tipped_arrow') {
+        arrowSlot = i;
+        if (st.item.name === 'tipped_arrow') arrowPotion = st.components.potion ?? null;
+        break;
+      }
     }
     if (arrowSlot < 0 && this.options.gamemode !== 'creative') return;
     if (arrowSlot >= 0 && this.options.gamemode !== 'creative') this.survival.inventory.removeItem(arrowSlot, 1);
@@ -3827,6 +3833,9 @@ export class Game {
     const dir = this.lookVector();
     const arrow = new Arrow(this.level, eye.x + dir.x * 0.5, eye.y - 0.1, eye.z + dir.z * 0.5);
     arrow.owner = this.entityManager.getPlayerTarget();
+    // Arrow.getPotionContents/getPotionDurationScale from the pickup item stack.
+    arrow.potion = arrowPotion;
+    arrow.potionDurationScale = arrowPotion ? 0.125 : 1;
     const speed = 1.0 + charge * 2.0;
     arrow.shoot(dir.x * speed, dir.y * speed, dir.z * speed);
     arrow.critical = charge >= 1;
@@ -5174,13 +5183,6 @@ const POTION_CLOUD_COLORS: Readonly<Record<string, readonly [number, number, num
   jump_boost: [0.4, 0.9, 0.4],
   water: [0.3, 0.5, 1],
 };
-
-/** EntityTypes in #minecraft:undead (instant health hurts them, instant damage heals them). */
-const UNDEAD_ENTITY_NAMES: ReadonlySet<string> = new Set([
-  'zombie', 'zombie_villager', 'husk', 'drowned', 'zombified_piglin',
-  'skeleton', 'stray', 'bogged', 'parched', 'wither_skeleton',
-  'phantom', 'zoglin', 'zombie_horse', 'skeleton_horse', 'wither',
-]);
 
 /** Squared distance between two axis-aligned boxes (0 when they overlap). */
 function boxDistanceSqr(a: AABB, b: AABB): number {

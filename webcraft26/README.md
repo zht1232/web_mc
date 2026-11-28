@@ -18,7 +18,7 @@ The single-player core loop is playable and covered by automated tests:
 
 - terrain streaming, block breaking/placing, survival and creative mode
 - crafting table, chest, furnace, brewing stand, enchanting table, recipe book
-- mobs, combat, bows/arrows, potions, farming/breeding, fishing, sleeping
+- mobs, combat, bows/arrows (including tipped arrows), potions, farming/breeding, fishing, sleeping
 - redstone: wire, levers, buttons, plates, torches (including burnout), repeaters,
   comparators, observers, daylight detectors, tripwires, pistons, lamps, doors,
   trapdoors, fence gates, TNT, rails
@@ -26,9 +26,8 @@ The single-player core loop is playable and covered by automated tests:
 - WebGL2 renderer with smooth lighting, sun shadows (PCF), HDR/bloom, SSAO, TAA,
   water, weather, particles and a first-person hand
 
-This is **not** full parity yet. Missing areas include villagers/trading, advancements,
-the Nether and the End, vanilla structure templates, minecarts, and several rendering
-details. The authoritative, continuously updated gap list is
+This is **not** full parity yet. Missing areas include the Nether and the End, vanilla
+structure templates and several rendering details. The authoritative, continuously updated gap list is
 [`REPORTS/STATUS.md`](REPORTS/STATUS.md).
 
 ## Quick start
@@ -118,6 +117,7 @@ node scripts/test-village-life.mjs    # farmer harvesting/replanting, bread baki
 node scripts/test-villager-sleep.mjs  # villager day/night sleep schedule, bed pose and village golem spawn (browser)
 node scripts/test-village-schedule.mjs # villager work/meet schedule: workstation gathering, bell meeting and farming window (browser)
 node scripts/test-wandering-trader.mjs # wandering trader spawner/trades/merchant screen + trader llama follow/despawn (browser)
+node scripts/test-tipped-arrow.mjs    # imbue crafting, bow-fired tipped arrows (1/8 effects) and fletcher potion trades (browser)
 node scripts/test-mob-equipment.mjs   # monster armor/weapon population and rare player-kill loot (browser)
 node scripts/test-explosion.mjs       # vanilla explosion rays, blast resistance, drop decay and TNT owner (browser)
 node scripts/test-containers.mjs      # container click rules

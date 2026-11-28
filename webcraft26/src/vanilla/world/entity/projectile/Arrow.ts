@@ -8,9 +8,10 @@
 
 import { Entity, type Targetable } from '../Entity.js';
 import { LivingEntity } from '../LivingEntity.js';
-import { entityType } from '../EntityType.js';
+import { entityType, isUndeadType } from '../EntityType.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
 import { DEG_TO_RAD } from '../../../core/Mth.js';
+import { potionEffects } from '../../item/potion/Potions.js';
 
 export class Arrow extends Entity {
   life = 0;
@@ -20,6 +21,10 @@ export class Arrow extends Entity {
   critical = false;
   /** Shooter, used for last-damage-source attribution on the player. */
   owner: Targetable | null = null;
+  /** Potion contents of the tipped arrow that fired this projectile. */
+  potion: string | null = null;
+  /** DataComponents.POTION_DURATION_SCALE: 0.125 for tipped arrows, 1 otherwise. */
+  potionDurationScale = 1;
 
   constructor(level: ClientLevel, x: number, y: number, z: number) {
     super(entityType('arrow'), level);
@@ -75,6 +80,7 @@ export class Arrow extends Entity {
       if (!(e instanceof LivingEntity)) continue;
       if (!this.segmentHits(e, oldX, oldY, oldZ)) continue;
       e.hurt(this.damage, this.owner);
+      this.applyPotionEffects(e);
       this.remove();
       return;
     }
@@ -83,6 +89,28 @@ export class Arrow extends Entity {
     if (!this.segmentHits(target, oldX, oldY, oldZ)) return;
     target.hurt(this.damage, this.owner);
     this.remove();
+  }
+
+  /**
+   * Arrow.doPostHurtEffects: apply the potion effects at the item's duration
+   * scale (tipped arrows 0.125). Instant effects resolve immediately, with the
+   * vanilla undead inversion (healing harms undead, harming heals them).
+   */
+  private applyPotionEffects(target: LivingEntity): void {
+    if (!this.potion) return;
+    const undead = isUndeadType(target.getTypeName());
+    for (const effect of potionEffects(this.potion)) {
+      if (effect.id === 'instant_damage') {
+        const amount = 6 << effect.amplifier;
+        if (undead) target.heal(amount); else target.hurt(amount, this.owner);
+      } else if (effect.id === 'instant_health') {
+        const amount = 4 << effect.amplifier;
+        if (undead) target.hurt(amount, this.owner); else target.heal(amount);
+      } else {
+        const duration = Math.max(1, Math.floor(effect.duration * this.potionDurationScale));
+        target.addEffect(effect.id, duration, effect.amplifier);
+      }
+    }
   }
 
   /** Samples the tick segment against the target's AABB. */

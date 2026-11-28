@@ -130,7 +130,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 生存背包 / 创造物品栏 | ✅ | 官方 tab 精灵、滚动、搜索、tooltip、3D 预览。2026-11-28：创造背包 Survival Inventory 页按 Java `selectTab(Type.INVENTORY)` 重排——2x2/结果槽移到 -2000 隐藏、盔甲槽 (54|108, 6|33)、副手 (35,20)、主背包 y=54/72/90、热栏 y=112、销毁槽 (173,112)，面板维持 195x136 并切到 `tab_inventory`；搜索页使用 `tab_item_search`，按本地化名称匹配并支持 `#tag`，切页清空；`test-creative-inventory` 13 项。2026-11-28 修：拿着物品左键点创造页物品栏里的其它物品时按原版**销毁手上物品**（不再交换）；(173,112) 销毁槽清空光标/Shift 清空整个背包 |
 | 玩家 3D 预览 | ✅ | 2026-11-28：按 `InventoryScreen.extractEntityInInventoryFollowsMouse` 双向鼠标角度（xAngle 转体、yAngle 抬头/压低相机）、bodyRot 180 基准、*O 插值字段同步（此前 partialTick=0 导致预览永远朝 0°）、GUI 全亮光照、盔甲（材质层）随预览渲染；创造背包预览框改到 (73,6)-(105,49) |
 | 容器点击规则（左右键/Shift/拖拽/数字键/F/Q/双击） | ✅ | `test-containers` 19 项；`AbstractContainerScreen` |
-| 合成台/箱子/熔炉/配方书 | ✅ | 真实配方、箱子会话内持久、熔炉 GUI 打开时推进 |
+| 合成台/箱子/熔炉/配方书 | ✅ | 真实配方、箱子/熔炉/酿造台内容随方块实体持久化（2026-11-28，重载后比较器读数与槽位内容均恢复）、熔炉 GUI 打开时推进 |
 | 村民交易界面 | ✅ | `MerchantScreen` 276x166：7 行报价列表/滚轮与拖动滚动/悬停高亮、3 个交易槽、经验条、等级标题、缺货印章、折扣划线、玩家背包；`test-villager-trade` |
 | 中文文案完整性 | ✅ | 2026-11-21 补齐 `menu.advancements`/`menu.stats`/`createWorld.create`/`selectWorld.difficulty` |
 | 统计（Statistics）界面 | ✅ | General/Items/Mobs 三页、6 列排序、真实计数器（挖掘/放置/拾取/合成/击杀/死亡/伤害/距离/游玩时间） |
@@ -867,6 +867,19 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   `test-jukebox` 6/6、`test-entity-save` 11/11。
 - 未完成：多台唱片机同时发声（引擎当前只保留一个可听句柄，重载时恢复最近的
   一台）。
+
+### 容器方块实体持久化（2026-11-28）
+
+- 箱子/陷阱箱/木桶/熔炉/高炉/烟熏炉/酿造台/漏斗/发射器/投掷器的内容写入
+  `minecraft:<block>` 方块实体（`{items:[{slot,id,count,components}]}`），
+  `beforeSave` 把缓存菜单写回区块并标脏；打开容器时从记录回填槽位。
+- 未打开过的容器：比较器经 `containerViewFromRecord` 直接读记录计算
+  `Container.getRedstoneSignalFromContainer`，重载后无需打开即可得到原读数。
+- 破坏容器按原版掉落全部内容并清除记录（`dropBlockContainer`）。
+- 验证：`test-container-persistence` **8/8**（保存前/重载后比较器均为 2、
+  箱子 5 格与熔炉 2 格内容恢复、破坏后 200 个物品全部掉落、记录清空），
+  回归 `test-redstone` 28/28、`test-jukebox` 6/6、`test-entity-save` 11/11。
+- 未完成：大箱子（相邻箱子合并 54 格）；漏斗仍是 27 格菜单（原版 5 格）。
 
 
 

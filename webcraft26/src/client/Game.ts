@@ -74,6 +74,7 @@ import { ItemEntity } from '../vanilla/world/entity/item/ItemEntity.js';
 import { PrimedTnt } from '../vanilla/world/entity/item/PrimedTnt.js';
 import { ContainerInput } from '../vanilla/world/inventory/ClickAction.js';
 import type { AbstractContainerMenu } from '../vanilla/world/inventory/AbstractContainerMenu.js';
+import type { Container } from '../vanilla/world/inventory/Container.js';
 import { AbstractCraftingMenu } from '../vanilla/world/inventory/AbstractCraftingMenu.js';
 import { AbstractFurnaceMenu } from '../vanilla/world/inventory/AbstractFurnaceMenu.js';
 import { EnchantingMenu } from '../vanilla/world/inventory/EnchantingMenu.js';
@@ -665,8 +666,9 @@ export class Game {
       // fill fraction adds up to 14, and any item at all adds the final point.
       containerSignal: (name, x, y, z) => {
         const menu = this.blockContainers.get(`${name}@${x},${y},${z}`) as
-          { container?: { getContainerSize(): number; getMaxStackSize(): number; getItem(i: number): ItemStack } } | undefined;
-        const container = menu?.container;
+          { container?: Container } | undefined;
+        // Without a live menu (fresh reload) the persisted block entity is the source.
+        const container = menu?.container ?? this.containerViewFromRecord(name, x, y, z);
         if (!container) return 0;
         const slots = container.getContainerSize();
         if (slots <= 0) return 0;
@@ -1939,6 +1941,7 @@ export class Game {
     // but saving while they are unloaded must still see their last snapshot.
     this.snapshotPersistentEntities();
     this.persistJukeboxProgress();
+    this.persistBlockContainers();
     const pcx = Math.floor(this.player.pos.x) >> 4;
     const pcz = Math.floor(this.player.pos.z) >> 4;
     const radius = this.options.renderDistance + CHUNK_RETAIN_MARGIN;
@@ -2647,6 +2650,9 @@ export class Game {
         this.dropItem(ItemStack.fromName(this.survival.registry, `music_disc_${song}`, 1), x, y, z);
       }
     }
+    // Vanilla container blocks drop every stored stack when broken.
+    const brokenName = this.mc.blockOf(state).name;
+    if (this.isContainerBlock(brokenName)) this.dropBlockContainer(brokenName, x, y, z);
     spawnBlockBreakParticles(state, x, y, z, 20);
     // SoundType.getBreakSound at volume (v + 1) / 2 and pitch * 0.8 (BlockBehaviour / LevelEvent 2001)
     this.sounds.play(`${this.blockSoundBase(state)}.break`, x + 0.5, y + 0.5, z + 0.5, 1, 0.8);
@@ -3167,6 +3173,7 @@ export class Game {
         );
         menu = brewing;
         this.blockContainers.set(key, menu);
+        this.restoreBlockContainer('brewing_stand', x, y, z, brewing.container);
       } else {
         this.survival.activeMenu = menu;
       }
@@ -3189,10 +3196,122 @@ export class Game {
     if (!menu) {
       menu = isFurnace ? this.survival.openFurnace() : this.survival.openChest(3);
       this.blockContainers.set(key, menu);
+      const container = (menu as unknown as { container?: Container }).container;
+      if (container) this.restoreBlockContainer(blockName, x, y, z, container);
     } else {
       this.survival.activeMenu = menu;
     }
     this.openScreen(isFurnace ? 'furnace' : 'chest');
+  }
+
+  // ------------------------------------------------------------ container records
+
+  /** Blocks whose contents live in a block entity record (chest/furnace/brewing/...). */
+  private isContainerBlock(name: string): boolean {
+    return name === 'chest' || name === 'trapped_chest' || name === 'barrel'
+      || name === 'furnace' || name === 'blast_furnace' || name === 'smoker'
+      || name === 'brewing_stand' || name === 'hopper' || name === 'dispenser'
+      || name === 'dropper' || name.includes('shulker_box');
+  }
+
+  /** Seeds a freshly opened menu from the persisted block entity record. */
+  private restoreBlockContainer(name: string, x: number, y: number, z: number, container: Container): void {
+    const chunk = this.level.getChunk(x >> 4, z >> 4);
+    const rec = chunk?.getBlockEntity(x & 15, y, z & 15);
+    if (!rec || rec.type.replace(/^minecraft:/, '') !== name) return;
+    const items = (rec.data as { items?: unknown }).items;
+    if (!Array.isArray(items)) return;
+    const size = container.getContainerSize();
+    for (const raw of items) {
+      const slot = Number((raw as { slot?: unknown } | null)?.slot);
+      if (!Number.isInteger(slot) || slot < 0 || slot >= size) continue;
+      const stack = this.stackFromData(raw);
+      if (!stack.isEmpty()) container.setItem(slot, stack);
+    }
+  }
+
+  /** Writes a container's slots into its chunk block entity (same shape as the player save). */
+  private writeBlockContainer(name: string, x: number, y: number, z: number, container: Container): void {
+    const chunk = this.level.getChunk(x >> 4, z >> 4);
+    if (!chunk) return;
+    const items: ItemStackData[] = [];
+    for (let i = 0; i < container.getContainerSize(); i++) {
+      const stack = container.getItem(i);
+      if (!stack.isEmpty()) items.push(this.stackData(stack, i));
+    }
+    chunk.addBlockEntity(x & 15, y, z & 15, { type: `minecraft:${name}`, data: { items } });
+    chunk.dirtySections.add(y >> 4);
+  }
+
+  /** Called once per save cycle: freeze every open container into its block entity. */
+  private persistBlockContainers(): void {
+    for (const [key, menu] of this.blockContainers) {
+      const m = /^([a-z_]+)@(-?\d+),(-?\d+),(-?\d+)$/.exec(key);
+      if (!m || !this.isContainerBlock(m[1])) continue;
+      const container = (menu as unknown as { container?: Container }).container;
+      if (!container) continue;
+      this.writeBlockContainer(m[1], Number(m[2]), Number(m[3]), Number(m[4]), container);
+    }
+  }
+
+  /**
+   * Container.getRedstoneSignalFromContainer computed from the persisted record, used by
+   * comparators before the player has opened the container in this session.
+   */
+  private containerViewFromRecord(
+    name: string, x: number, y: number, z: number,
+  ): Container | null {
+    const chunk = this.level.getChunk(x >> 4, z >> 4);
+    const rec = chunk?.getBlockEntity(x & 15, y, z & 15);
+    if (!rec || rec.type.replace(/^minecraft:/, '') !== name) return null;
+    const items = Array.isArray((rec.data as { items?: unknown }).items)
+      ? (rec.data as { items: unknown[] }).items : [];
+    const size = name === 'brewing_stand' ? 5
+      : name === 'furnace' || name === 'blast_furnace' || name === 'smoker' ? 3 : 27;
+    return {
+      getContainerSize: () => size,
+      getMaxStackSize: () => 64,
+      getItem: (i: number) => this.stackFromData(
+        items.find((s) => Number((s as { slot?: unknown } | null)?.slot) === i),
+      ),
+      setItem: () => undefined,
+      isEmpty: () => items.length === 0,
+      clearContent: () => undefined,
+    } as unknown as Container;
+  }
+
+  /** Breaking a container drops every stored stack and clears its record. */
+  private dropBlockContainer(name: string, x: number, y: number, z: number): void {
+    const key = `${name}@${x},${y},${z}`;
+    const menu = this.blockContainers.get(key);
+    const dropped: ItemStack[] = [];
+    if (menu) {
+      const container = (menu as unknown as { container?: Container }).container;
+      if (container) {
+        for (let i = 0; i < container.getContainerSize(); i++) {
+          const stack = container.getItem(i);
+          if (stack.isEmpty()) continue;
+          dropped.push(stack.copy());
+          container.setItem(i, ItemStack.EMPTY);
+        }
+      }
+      this.blockContainers.delete(key);
+    } else {
+      const chunk = this.level.getChunk(x >> 4, z >> 4);
+      const rec = chunk?.getBlockEntity(x & 15, y, z & 15);
+      const items = rec && Array.isArray((rec.data as { items?: unknown }).items)
+        ? (rec.data as { items: unknown[] }).items : [];
+      for (const raw of items) {
+        const stack = this.stackFromData(raw);
+        if (!stack.isEmpty()) dropped.push(stack);
+      }
+    }
+    const chunk = this.level.getChunk(x >> 4, z >> 4);
+    if (chunk) {
+      chunk.removeBlockEntity(x & 15, y, z & 15);
+      chunk.dirtySections.add(y >> 4);
+    }
+    for (const stack of dropped) this.dropItem(stack, x, y, z);
   }
 
   /**

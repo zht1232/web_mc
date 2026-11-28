@@ -28,10 +28,11 @@ export class Skeleton extends Monster {
   }
 
   override finalizeSpawn(): void {
-    const type = this.getTypeName();
-    if (type === 'skeleton' || type === 'stray' || type === 'bogged' || type === 'parched') {
-      this.equipRandomArmor(0.10);
-    }
+    // WitherSkeleton.populateDefaultEquipmentSlots: stone sword only, no armor.
+    if (this.getTypeName() === 'wither_skeleton') return;
+    // AbstractSkeleton.populateDefaultEquipmentSlots: base 15% armor + bow.
+    this.equipRandomArmor();
+    this.equipMainHand('bow');
   }
 
   rangedAttack(target: Targetable): void {

@@ -13,6 +13,16 @@ import { NearestAttackableTargetGoal } from '../ai/goal/NearestAttackableTargetG
 import { HurtByTargetGoal } from '../ai/goal/HurtByTargetGoal.js';
 import { EquipmentSlot } from '../EquipmentSlot.js';
 
+/** Mob.getEquipmentForSlot material ladder (0 leather .. 5 diamond, 26.2 adds copper). */
+const ARMOR_MATERIALS = ['leather', 'copper', 'golden', 'chainmail', 'iron', 'diamond'] as const;
+const ARMOR_PIECES: Readonly<Record<number, readonly [string, string]>> = {
+  [EquipmentSlot.HEAD.index]: ['helmet', 'helmet'],
+  [EquipmentSlot.CHEST.index]: ['chestplate', 'chestplate'],
+  [EquipmentSlot.LEGS.index]: ['leggings', 'leggings'],
+  [EquipmentSlot.FEET.index]: ['boots', 'boots'],
+};
+const ARMOR_SLOTS = [EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET];
+
 export class Monster extends Mob {
   protected registerGoals(): void {
     this.goalSelector.addGoal(0, new FloatGoal(this));
@@ -33,18 +43,31 @@ export class Monster extends Mob {
   protected getTargetRange(): number { return 16; }
 
   /**
-   * Simplified Zombie/Skeleton.populateDefaultEquipmentSlots for the fixed normal
-   * difficulty: one material roll (leather/chainmail/iron), then a 50% roll per slot.
+   * Mob.populateDefaultEquipmentSlots for normal difficulty (special multiplier 1.0):
+   * 15% armor roll, one material from the six-step ladder, then the head slot plus
+   * each lower slot, stopping with 25% chance (EQUIPMENT_POPULATION_ORDER).
    */
-  protected equipRandomArmor(chance: number): void {
+  protected equipRandomArmor(): void {
     const r = this.getRandom();
-    if (r.nextFloat() >= chance) return;
-    const roll = r.nextFloat();
-    const material = roll < 0.5 ? 'leather' : roll < 0.8 ? 'chainmail' : 'iron';
-    if (r.nextFloat() < 0.5) this.setItemSlot(EquipmentSlot.HEAD, { id: `minecraft:${material}_helmet`, count: 1 });
-    if (r.nextFloat() < 0.5) this.setItemSlot(EquipmentSlot.CHEST, { id: `minecraft:${material}_chestplate`, count: 1 });
-    if (r.nextFloat() < 0.5) this.setItemSlot(EquipmentSlot.LEGS, { id: `minecraft:${material}_leggings`, count: 1 });
-    if (r.nextFloat() < 0.5) this.setItemSlot(EquipmentSlot.FEET, { id: `minecraft:${material}_boots`, count: 1 });
+    if (r.nextFloat() >= 0.15) return;
+    let materialType = r.nextInt(3);
+    for (let i = 0; i < 3; i++) {
+      if (r.nextFloat() < 0.1087) materialType++;
+    }
+    const material = ARMOR_MATERIALS[Math.min(ARMOR_MATERIALS.length - 1, materialType)];
+    let first = true;
+    for (const slot of ARMOR_SLOTS) {
+      if (!first && r.nextFloat() < 0.25) break;
+      first = false;
+      if (this.getItemBySlot(slot)) continue;
+      const piece = ARMOR_PIECES[slot.index]?.[0];
+      if (piece) this.setItemSlot(slot, { id: `minecraft:${material}_${piece}`, count: 1 });
+    }
+  }
+
+  /** Equips a main-hand item (Zombie weapons, Drowned tridents, piglin swords). */
+  protected equipMainHand(item: string): void {
+    this.setItemSlot(EquipmentSlot.MAINHAND, { id: `minecraft:${item}`, count: 1 });
   }
 
   protected registerAttackGoals(): void {}

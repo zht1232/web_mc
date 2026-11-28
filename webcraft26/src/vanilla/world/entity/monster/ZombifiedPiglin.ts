@@ -20,4 +20,9 @@ export class ZombifiedPiglin extends Zombie {
   protected registerTargetGoals(): void {
     this.targetSelector.addGoal(1, new HurtByTargetGoal(this));
   }
+
+  /** ZombifiedPiglin.populateDefaultEquipmentSlots: golden sword, rarely a spear. */
+  override finalizeSpawn(): void {
+    this.equipMainHand(this.getRandom().nextInt(20) === 0 ? 'golden_spear' : 'golden_sword');
+  }
 }

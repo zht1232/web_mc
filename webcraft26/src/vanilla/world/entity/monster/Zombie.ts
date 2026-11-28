@@ -23,6 +23,14 @@ export class Zombie extends Monster {
 
   override finalizeSpawn(): void {
     const type = this.getTypeName();
-    if (type === 'zombie' || type === 'husk') this.equipRandomArmor(0.15);
+    if (type === 'zombie' || type === 'husk') {
+      // Mob.populateDefaultEquipmentSlots (15% armor) + Zombie's 1% weapon roll.
+      this.equipRandomArmor();
+      const r = this.getRandom();
+      if (r.nextFloat() < 0.01) {
+        const pick = r.nextInt(6);
+        this.equipMainHand(pick === 0 ? 'iron_sword' : pick === 1 ? 'iron_spear' : 'iron_shovel');
+      }
+    }
   }
 }

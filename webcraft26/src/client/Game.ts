@@ -2174,8 +2174,12 @@ export class Game {
     const rng = this.survival.random;
     const looting = playerKill ? this.survival.getSelectedStack().getEnchantmentLevel('looting') : 0;
     for (const drop of Game.MOB_LOOT[type] ?? []) {
-      const [name, min, max, chance] = drop;
-      if (chance !== undefined && rng.nextFloat() > chance) continue;
+      const [name, min, max, chance, lootingBonus, playerOnly] = drop;
+      if (playerOnly && !playerKill) continue;
+      const dropChance = chance === undefined
+        ? 1
+        : chance + (lootingBonus ?? 0) * looting;
+      if (dropChance < 1 && rng.nextFloat() > dropChance) continue;
       let count = min + rng.nextInt(max - min + 1);
       if (count > 0 && looting > 0) count += rng.nextInt(looting + 1);
       if (count <= 0) continue;
@@ -2356,16 +2360,31 @@ export class Game {
     ['nautilus_shell', 1], ['saddle', 1],
   ];
 
-  /** Vanilla entity loot tables, simplified to item/min/max/(chance). */
-  private static readonly MOB_LOOT: Readonly<Record<string, readonly (readonly [string, number, number, number?])[]>> = {
-    zombie: [['rotten_flesh', 0, 2]],
-    husk: [['rotten_flesh', 0, 2]],
-    drowned: [['rotten_flesh', 0, 2]],
+  /** Vanilla entity loot tables, simplified to item/min/max/(chance, looting bonus, player-only). */
+  private static readonly MOB_LOOT: Readonly<Record<string, readonly (readonly [string, number, number, number?, number?, boolean?])[]>> = {
+    zombie: [
+      ['rotten_flesh', 0, 2],
+      ['iron_ingot', 1, 1, 0.025, 0.01, true],
+      ['carrot', 1, 1, 0.025, 0.01, true],
+      ['potato', 1, 1, 0.025, 0.01, true],
+    ],
+    husk: [
+      ['rotten_flesh', 0, 2],
+      ['iron_ingot', 1, 1, 0.025, 0.01, true],
+      ['carrot', 1, 1, 0.025, 0.01, true],
+      ['potato', 1, 1, 0.025, 0.01, true],
+    ],
+    drowned: [
+      ['rotten_flesh', 0, 2],
+      ['copper_ingot', 1, 3, 0.11, 0.02, true],
+    ],
     skeleton: [['bone', 0, 2], ['arrow', 0, 2]],
     stray: [['bone', 0, 2], ['arrow', 0, 2]],
     bogged: [['bone', 0, 2], ['arrow', 0, 2]],
     parched: [['bone', 0, 2], ['arrow', 0, 2]],
-    wither_skeleton: [['coal', 0, 1], ['bone', 0, 2]],
+    wither_skeleton: [
+      ['coal', 0, 1], ['bone', 0, 2], ['wither_skeleton_skull', 1, 1, 0.025, 0.01, true],
+    ],
     creeper: [['gunpowder', 0, 2]],
     spider: [['string', 0, 2], ['spider_eye', 0, 1]],
     cave_spider: [['string', 0, 2], ['spider_eye', 0, 1]],
@@ -2395,6 +2414,7 @@ export class Game {
   private static readonly COOKED_MEAT: Readonly<Record<string, string>> = {
     porkchop: 'cooked_porkchop', beef: 'cooked_beef', mutton: 'cooked_mutton',
     chicken: 'cooked_chicken', rabbit: 'cooked_rabbit', cod: 'cooked_cod', salmon: 'cooked_salmon',
+    potato: 'baked_potato',
   };
 
   /** Base XP per mob; the final orb is base + random(0..2). */

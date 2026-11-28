@@ -178,6 +178,31 @@ try {
     && restored.names.filter((n) => n === 'oak_chest_boat').length === 1,
   restored.names);
 
+  // A long round trip unloads every generated chunk except the pinned saved ones;
+  // the restored cow must still be the same single entity afterwards.
+  const jump = async (x, y, z) => {
+    await page.evaluate(([px, py, pz]) => {
+      const m = window.__mc;
+      m.player.flying = true;
+      m.player.pos.x = px; m.player.pos.y = py; m.player.pos.z = pz;
+      m.player.prevPos.x = px; m.player.prevPos.y = py; m.player.prevPos.z = pz;
+      m.player.vel = new m.player.pos.constructor(0, 0, 0);
+    }, [x, y, z]);
+  };
+  await jump(bx + 1024, floorY + 2, bz + 1024);
+  await waitTicks(page, 20);
+  await jump(bx + 0.5, floorY + 1.8, bz + 4.5);
+  await waitTicks(page, 20);
+  await sleep(500);
+  const roundTrip = await page.evaluate(([x, y, z]) => {
+    const m = window.__mc;
+    const area = m.entityManager.getEntities().filter((e) =>
+      Math.abs(e.x - x) < 14 && Math.abs(e.z - z) < 14 && e.y > y - 2 && !e.isRemoved());
+    return { cows: area.filter((e) => e.getTypeName() === 'cow').length, total: area.length };
+  }, [bx, floorY, bz]);
+  check('pinned saved chunks keep their entities across a long round trip',
+    roundTrip.cows === 1, roundTrip);
+
   await page.screenshot({ path: 'shots/diag/entity-save.png' });
 } catch (err) {
   console.log('ERROR', err);

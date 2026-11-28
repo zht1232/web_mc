@@ -20,7 +20,7 @@ import {
   type DebugEntryOutput, type HudItemSlot, type HudState, type HudSurvivalExtensions,
 } from './gui/Hud.js';
 import { ItemIconAtlas } from './gui/ItemIconAtlas.js';
-import { AABB, Vec3 } from '../vanilla/core/Geometry.js';
+import { AABB, Vec3, chunkKey } from '../vanilla/core/Geometry.js';
 import { placeBlock, type PlacementContext } from './interaction/Placement.js';
 import { NoiseChunkGenerator, loadWorldgenData } from '../vanilla/world/level/levelgen/NoiseChunkGenerator.js';
 import { ChunkProvider } from './world/ChunkProvider.js';
@@ -1389,7 +1389,12 @@ export class Game {
     const count = this.level.addChunksBulk(decoded);
     // These chunks were generated (and their passive animals spawned) before the save;
     // mark them known so the chunk-generation spawn pass does not add a second wave.
-    for (const chunk of decoded) this.entityManager.markChunkKnown(chunk.x, chunk.z);
+    // They are also pinned: the client has no save-first chunk load path, so dropping
+    // a restored chunk would regenerate it from the seed and lose its stored entities.
+    for (const chunk of decoded) {
+      this.entityManager.markChunkKnown(chunk.x, chunk.z);
+      this.level.modifiedChunks.add(chunkKey(chunk.x, chunk.z));
+    }
     console.log(`[save] restored ${count} chunks in ${Math.round(performance.now() - started)} ms`);
 
     if (loaded.player) {

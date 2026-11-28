@@ -21,14 +21,14 @@ export class MeleeAttackGoal extends Goal {
 
   canUse(): boolean {
     const t = this.mob.getTarget();
-    return t !== null && t.isAlive();
+    return t !== null && this.mob.canAttackTarget(t);
   }
 
   // Never delegate to canUse(): vanilla's canUse has a cooldown and would stop
-  // the goal on most ticks. A live target is enough to keep attacking.
+  // the goal on most ticks. A live, attackable target is enough.
   canContinueToUse(): boolean {
     const t = this.mob.getTarget();
-    if (!t || !t.isAlive()) return false;
+    if (!t || !this.mob.canAttackTarget(t)) return false;
     if (!this.followingTargetEvenIfNotSeen && this.mob.getNavigation().isDone()) return false;
     return true;
   }
@@ -45,7 +45,7 @@ export class MeleeAttackGoal extends Goal {
 
   tick(): void {
     const t = this.mob.getTarget();
-    if (!t || !t.isAlive()) return;
+    if (!t || !this.mob.canAttackTarget(t)) { this.mob.setTarget(null); return; }
     if (this.attackTicks > 0) this.attackTicks--;
     if (this.pathTicks > 0) this.pathTicks--;
 

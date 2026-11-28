@@ -62,7 +62,20 @@ export class Mob extends LivingEntity {
   // ---- target -------------------------------------------------------------
 
   getTarget(): Targetable | null { return this.target; }
-  setTarget(target: Targetable | null): void { this.target = target; }
+  /**
+   * TargetingConditions.forCombat().ignoreCreative(): a creative/spectator player is
+   * never a valid combat target, even after the mob was hit by that player.
+   */
+  canAttackTarget(target: Targetable): boolean {
+    if (!target.isAlive()) return false;
+    if (target.getTypeName() !== 'player') return true;
+    const mode = this.getWorld()?.getPlayerGameMode?.() ?? 'survival';
+    return mode !== 'creative' && mode !== 'spectator';
+  }
+
+  setTarget(target: Targetable | null): void {
+    this.target = target && this.canAttackTarget(target) ? target : null;
+  }
   setAggressive(v: boolean): void { this.aggressive = v; }
   isAggressive(): boolean { return this.aggressive; }
   getMaxHeadRotation(): number { return this.maxHeadRotation; }
@@ -169,6 +182,9 @@ export class Mob extends LivingEntity {
     this.baseTick();
     this.serverAiStep();
     this.aiStep();
+    // LivingEntity.tick applies fire/lava damage after aiStep; Mob.tick overrides
+    // LivingEntity.tick, so it must forward this call or mobs never take burn damage.
+    this.tickDamageOverTime();
     this.tickAgeable();
     if (this.dead && this.deathTime > 20) this.remove();
   }

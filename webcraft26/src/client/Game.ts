@@ -21,7 +21,7 @@ import {
 } from './gui/Hud.js';
 import { ItemIconAtlas } from './gui/ItemIconAtlas.js';
 import { AABB, Vec3, chunkKey } from '../vanilla/core/Geometry.js';
-import { placeBlock, type PlacementContext } from './interaction/Placement.js';
+import { placeBlock, survivesAt, type PlacementContext } from './interaction/Placement.js';
 import { NoiseChunkGenerator, loadWorldgenData } from '../vanilla/world/level/levelgen/NoiseChunkGenerator.js';
 import { ChunkProvider } from './world/ChunkProvider.js';
 import {
@@ -52,6 +52,7 @@ import { Llama } from '../vanilla/world/entity/animal/Llama.js';
 import { TraderLlama } from '../vanilla/world/entity/animal/TraderLlama.js';
 import { IronGolem } from '../vanilla/world/entity/animal/IronGolem.js';
 import { VillagerTrades } from '../vanilla/world/entity/npc/VillagerTrades.js';
+import { MerchantOffer, type MerchantOfferJSON } from '../vanilla/world/item/trading/MerchantOffer.js';
 import { Minecart } from '../vanilla/world/entity/vehicle/Minecart.js';
 import { Boat } from '../vanilla/world/entity/vehicle/Boat.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
@@ -117,6 +118,12 @@ export interface GameOptions {
   shaderQuality: string;
   /** Vanilla Options.FRAMERATE_LIMIT: upper bound for rendered frames per second. */
   maxFps: number;
+  /** Temporal anti-aliasing (off by default: its jitter reads as distant shimmer). */
+  taa: boolean;
+  /** Adaptive 3D resolution; disable to keep a fixed sharpness. */
+  dynamicResolution: boolean;
+  /** Complementary-style waving foliage (off by default: constant motion). */
+  vegetationSway: boolean;
   language: string;
   seed?: number;
   /** worker pool size override (defaults to min(hardwareConcurrency, 4)) */
@@ -146,6 +153,9 @@ const DEFAULT_OPTIONS: GameOptions = {
   // Options.java framerate limit default is 120; without this the browser renders
   // at the full refresh rate (165+ fps), which overheats laptops for no visible gain.
   maxFps: 120,
+  taa: false,
+  dynamicResolution: true,
+  vegetationSway: false,
   language: 'zh_cn',
   seed: 0x2602c0de,
 };
@@ -357,6 +367,14 @@ export class Game {
   private entityChunkKey = '';
   /** Serialized saved chunks (chunkKey -> NBT bytes) used to restore unloaded chunks. */
   private readonly savedChunkBytes = new Map<number, Uint8Array>();
+  /**
+   * World-level snapshots for entities deliberately excluded from chunk records
+   * (villagers, tamed pets). Live entries are keyed by entity id; after a chunk
+   * unload the entry stays with its last id and is respawned when the chunk
+   * becomes active again, so saving while away no longer erases them.
+   */
+  private readonly villagerSnapshots = new Map<number, SavedVillager>();
+  private readonly petSnapshots = new Map<number, SavedPet>();
 
   onReady?: () => void;
   onStatus?: (text: string, progress: number) => void;
@@ -480,6 +498,8 @@ export class Game {
     this.renderer.renderDistance = this.options.renderDistance;
     // Initial shader state; the VideoSettings screen and F6 mutate it live afterwards.
     this.renderer.shadersEnabled = this.options.shaders;
+    this.renderer.post.taaOff = !this.options.taa;
+    this.renderer.swayEnabled = this.options.vegetationSway;
     this.renderer.shaderQuality = this.options.shaderQuality;
     await this.renderer.init();
 
@@ -671,7 +691,13 @@ export class Game {
     // TargetingConditions.forCombat().ignoreCreative() and TemptGoal's hand check need the
     // player's live game mode / held items; the vanilla entity layer has no direct Game ref.
     this.entityManager.playerGameModeProvider = () => this.options.gamemode;
-    this.entityManager.mobDeathHandler = (e) => this.dropMobLoot(e);
+    this.entityManager.mobDeathHandler = (e) => {
+      this.dropMobLoot(e);
+      // A dead villager/pet must not be respawned from its persistence snapshot.
+      this.villagerSnapshots.delete(e.id);
+      this.petSnapshots.delete(e.id);
+    };
+    this.entityManager.persistentCullHandler = (e) => this.snapshotPersistentEntity(e);
     // AgeableMob in love: hearts every 10 ticks (Animal.aiStep particle path).
     this.entityManager.animalLoveHandler = (e) => {
       spawnHearts(e.x, e.y + e.getHeight() * 0.8, e.z, 2);
@@ -748,6 +774,12 @@ export class Game {
           } else if (key === 'shadersEnabled' || key === 'shaders') {
             this.renderer.shadersEnabled = Boolean(value);
             this.applyRenderScale();
+          } else if (key === 'taa') {
+            this.renderer.post.taaOff = !Boolean(value);
+          } else if (key === 'vegetationSway') {
+            this.renderer.swayEnabled = Boolean(value);
+          } else if (key === 'dynamicResolution') {
+            if (!value) this.setRenderScale(this.maxRenderScale);
           } else if (key === 'guiScale') {
             // Window#setGuiScale: rebake the item icons at the new physical slot size and re-lay out
             // the open screen. Without this the HUD kept drawing an atlas baked for the old scale
@@ -1420,6 +1452,9 @@ export class Game {
     // restored from these bytes when the player returns, instead of being
     // regenerated from the seed (which would lose its blocks and entity records).
     this.savedChunkBytes.clear();
+    // World-level villager/pet snapshots from a previous world must not leak into this one.
+    this.villagerSnapshots.clear();
+    this.petSnapshots.clear();
     for (const bytes of loaded.chunks.values()) {
       try {
         const chunk = ChunkSerializer.fromBytes(bytes, this.mc, this.chunkCodec);
@@ -1440,12 +1475,14 @@ export class Game {
       PlayerData.applyToPlayer(loaded.player, this.player);
       const view = PlayerData.fromNbt(loaded.player);
       if (view.inventory.length > 0) {
-        for (let i = 0; i < 36; i++) this.survival.inventory.setItem(i, ItemStack.EMPTY);
+        const slots = this.survival.inventory.getContainerSize();
+        for (let i = 0; i < slots; i++) this.survival.inventory.setItem(i, ItemStack.EMPTY);
         for (const saved of view.inventory) {
           const item = this.survival.registry.byName(String(saved.id))
             ?? (saved.numericId !== undefined ? this.survival.registry.get(saved.numericId) : undefined);
-          if (!item || saved.count <= 0) continue;
-          this.survival.inventory.setItem(saved.slot & 0xff, new ItemStack(
+          const slot = saved.slot & 0xff;
+          if (!item || saved.count <= 0 || slot >= slots) continue;
+          this.survival.inventory.setItem(slot, new ItemStack(
             item, saved.count,
             saved.components as ItemComponents | undefined,
           ));
@@ -1535,7 +1572,8 @@ export class Game {
   private playerExtra(): Record<string, unknown> {
     const s = this.survival;
     const inventory: ItemStackData[] = [];
-    for (let i = 0; i < 36; i++) {
+    // 0..35 main inventory, 36..39 armor, 40 offhand, 41 body armor, 42 saddle.
+    for (let i = 0; i < s.inventory.getContainerSize(); i++) {
       const stack = s.inventory.getItem(i);
       const item = stack.getItem();
       if (!item || stack.isEmpty()) continue;
@@ -1571,7 +1609,7 @@ export class Game {
     if (!this.advancements) return;
     this.advancements.trigger('tick');
     const items: string[] = [];
-    for (let i = 0; i < 36; i++) {
+    for (let i = 0; i < this.survival.inventory.getContainerSize(); i++) {
       const stack = this.survival.inventory.getItem(i);
       if (!stack.isEmpty() && stack.item) items.push(stack.item.name);
     }
@@ -1579,27 +1617,70 @@ export class Game {
   }
 
   /** Tamed pets saved with the world (vanilla does not despawn tamed animals). */
+  private petRecord(e: Mob): SavedPet {
+    return {
+      type: e.type.name,
+      x: e.x, y: e.y, z: e.z,
+      health: e.health,
+      sitting: e.sitting,
+      owner: e.owner,
+    };
+  }
+
+  /** Snapshots one persistent entity before its chunk is culled. */
+  private snapshotPersistentEntity(e: Entity): void {
+    if (!(e instanceof Mob) || !e.isAlive()) return;
+    if (e instanceof Villager) this.villagerSnapshots.set(e.id, e.toJSON());
+    else if (e.tamed) this.petSnapshots.set(e.id, this.petRecord(e));
+  }
+
+  /** Refreshes snapshots for every live persistent entity (once per save cycle). */
+  private snapshotPersistentEntities(): void {
+    for (const e of this.entityManager.getEntities()) {
+      if (!e.isRemoved()) this.snapshotPersistentEntity(e);
+    }
+  }
+
+  private withinLoadDistance(x: number, z: number): boolean {
+    const pcx = Math.floor(this.player.pos.x) >> 4;
+    const pcz = Math.floor(this.player.pos.z) >> 4;
+    const r = this.options.renderDistance;
+    return Math.abs((Math.floor(x) >> 4) - pcx) <= r
+      && Math.abs((Math.floor(z) >> 4) - pcz) <= r;
+  }
+
   private petData(): SavedPet[] {
+    this.snapshotPersistentEntities();
+    const live = new Set<number>();
     const pets: SavedPet[] = [];
     for (const e of this.entityManager.getEntities()) {
       if (!(e instanceof Mob) || !e.tamed || e.isRemoved()) continue;
-      pets.push({
-        type: e.type.name,
-        x: e.x, y: e.y, z: e.z,
-        health: e.health,
-        sitting: e.sitting,
-        owner: e.owner,
-      });
+      live.add(e.id);
+      pets.push(this.petRecord(e));
+    }
+    for (const [id, rec] of [...this.petSnapshots]) {
+      if (live.has(id)) continue;
+      // A snapshot with no live entity inside the loaded area means it died; an
+      // unloaded chunk is farther out and keeps its snapshot for the next visit.
+      if (this.withinLoadDistance(rec.x, rec.z)) this.petSnapshots.delete(id);
+      else pets.push(rec);
     }
     return pets;
   }
 
-  /** Villagers saved with the world (profession, level, offers and job site). */
   private villagerData(): SavedVillager[] {
+    this.snapshotPersistentEntities();
+    const live = new Set<number>();
     const villagers: SavedVillager[] = [];
     for (const e of this.entityManager.getEntities()) {
       if (!(e instanceof Villager) || e.isRemoved()) continue;
+      live.add(e.id);
       villagers.push(e.toJSON());
+    }
+    for (const [id, rec] of [...this.villagerSnapshots]) {
+      if (live.has(id)) continue;
+      if (this.withinLoadDistance(rec.x, rec.z)) this.villagerSnapshots.delete(id);
+      else villagers.push(rec);
     }
     return villagers;
   }
@@ -1669,7 +1750,12 @@ export class Game {
       }
       if (e instanceof IronGolem) data.playerCreated = e.playerCreated;
       if (e instanceof Llama) data.variant = e.variant;
-      if (e instanceof WanderingTrader) data.despawnDelay = e.despawnDelay;
+      if (e instanceof WanderingTrader) {
+        data.despawnDelay = e.despawnDelay;
+        // The trader's generated offers and their use counts survive a reload;
+        // otherwise reloading resets every sold-out trade.
+        data.offers = e.offers.map((offer) => offer.toJSON());
+      }
       if (e instanceof TraderLlama) data.despawnDelay = e.despawnDelay;
       return { ...base, health: e.health, data };
     }
@@ -1683,6 +1769,9 @@ export class Game {
    * entities cannot keep the sharded save alive forever.
    */
   private captureChunkEntities(): void {
+    // Refresh world-level records first: villagers/pets are not in chunk records,
+    // but saving while they are unloaded must still see their last snapshot.
+    this.snapshotPersistentEntities();
     const pcx = Math.floor(this.player.pos.x) >> 4;
     const pcz = Math.floor(this.player.pos.z) >> 4;
     const radius = this.options.renderDistance + CHUNK_RETAIN_MARGIN;
@@ -1701,6 +1790,9 @@ export class Game {
     }
     for (const chunk of this.level.chunks.values()) {
       if (Math.max(Math.abs(chunk.x - pcx), Math.abs(chunk.z - pcz)) > radius) continue;
+      // Chunks between render and retention distance were never activated: their live
+      // entity list is empty by construction, so writing it would erase the stored records.
+      if (!chunk.entitiesActive) continue;
       const next = grouped.get(`${chunk.x},${chunk.z}`) ?? [];
       const same = JSON.stringify(next) === JSON.stringify(chunk.entities);
       // A chunk whose stored entities all died while loaded must be written empty
@@ -1732,10 +1824,55 @@ export class Game {
     const pcx = Math.floor(this.player.pos.x) >> 4;
     const pcz = Math.floor(this.player.pos.z) >> 4;
     const r = this.options.renderDistance;
+    const liveIds = new Set<number>();
+    for (const e of this.entityManager.getEntities()) if (!e.isRemoved()) liveIds.add(e.id);
+    // Villagers/pets are excluded from chunk records; their world-level snapshots
+    // are respawned when their chunk becomes active again.
+    const offlineVillagers = new Map<string, Array<[number, SavedVillager]>>();
+    for (const [id, rec] of this.villagerSnapshots) {
+      if (liveIds.has(id)) continue;
+      const key = `${Math.floor(rec.x) >> 4},${Math.floor(rec.z) >> 4}`;
+      let list = offlineVillagers.get(key);
+      if (!list) { list = []; offlineVillagers.set(key, list); }
+      list.push([id, rec]);
+    }
+    const offlinePets = new Map<string, Array<[number, SavedPet]>>();
+    for (const [id, rec] of this.petSnapshots) {
+      if (liveIds.has(id)) continue;
+      const key = `${Math.floor(rec.x) >> 4},${Math.floor(rec.z) >> 4}`;
+      let list = offlinePets.get(key);
+      if (!list) { list = []; offlinePets.set(key, list); }
+      list.push([id, rec]);
+    }
+
     for (let dz = -r; dz <= r; dz++) {
       for (let dx = -r; dx <= r; dx++) {
         const chunk = this.level.getChunk(pcx + dx, pcz + dz);
-        if (!chunk || chunk.entities.length === 0) continue;
+        if (!chunk) continue;
+        chunk.entitiesActive = true;
+        const key = `${chunk.x},${chunk.z}`;
+        for (const [oldId, rec] of offlineVillagers.get(key) ?? []) {
+          if (liveIds.has(oldId)) continue;
+          const e = this.entityManager.spawn('villager', rec.x, rec.y, rec.z);
+          if (!(e instanceof Villager)) continue;
+          e.restore(rec, this.survival.registry);
+          this.villagerSnapshots.delete(oldId);
+          this.villagerSnapshots.set(e.id, rec);
+          liveIds.add(e.id);
+        }
+        for (const [oldId, rec] of offlinePets.get(key) ?? []) {
+          if (liveIds.has(oldId)) continue;
+          const e = this.entityManager.spawn(rec.type, rec.x, rec.y, rec.z);
+          if (!(e instanceof Mob)) continue;
+          e.tamed = true;
+          e.sitting = rec.sitting;
+          e.owner = rec.owner;
+          e.health = Math.max(1, Math.min(e.maxHealth, rec.health));
+          this.petSnapshots.delete(oldId);
+          this.petSnapshots.set(e.id, rec);
+          liveIds.add(e.id);
+        }
+        if (chunk.entities.length === 0) continue;
         const records = chunk.entities;
         chunk.hadEntities = true;
         chunk.entities = [];
@@ -1765,8 +1902,12 @@ export class Game {
         e.playerCreated = true;
       }
       if (e instanceof Llama && typeof data.variant === 'number') e.variant = data.variant;
-      if (e instanceof WanderingTrader && typeof data.despawnDelay === 'number') {
-        e.setDespawnDelay(data.despawnDelay);
+      if (e instanceof WanderingTrader) {
+        if (typeof data.despawnDelay === 'number') e.setDespawnDelay(data.despawnDelay);
+        if (Array.isArray(data.offers)) {
+          e.offers = data.offers.map((raw) =>
+            MerchantOffer.fromJSON(raw as MerchantOfferJSON, this.survival.registry));
+        }
       }
       if (e instanceof TraderLlama && typeof data.despawnDelay === 'number') {
         e.despawnDelay = data.despawnDelay;
@@ -4033,7 +4174,7 @@ export class Game {
     return true;
   }
 
-  /** Recomputes fence/wall/pane connections and stair shapes next to a change. */
+  /** Recomputes connections/shapes next to a change and drops unsupported plants. */
   private updateNeighbors(x: number, y: number, z: number): void {
     for (let dy = -1; dy <= 1; dy++) {
       for (let dz = -1; dz <= 1; dz++) {
@@ -4043,6 +4184,32 @@ export class Game {
       }
     }
     this.redstone?.onBlockChanged(x, y, z);
+    this.removeUnsupportedAround(x, y, z, 0);
+  }
+
+  /**
+   * BlockState.updateNeighbourShapes: a change can invalidate a plant, torch, door
+   * or snow layer next to/above it. Remove it with its loot, then propagate so a
+   * tall grass column or a double plant collapses completely.
+   */
+  private removeUnsupportedAround(x: number, y: number, z: number, depth: number): void {
+    if (depth > 6) return;
+    const offsets: readonly (readonly [number, number, number])[] = [
+      [0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+    ];
+    for (const [dx, dy, dz] of offsets) {
+      const px = x + dx, py = y + dy, pz = z + dz;
+      const state = this.level.getBlockState(px, py, pz);
+      if (state === 0) continue;
+      if (survivesAt(this.mc, this.level, state, px, py, pz)) continue;
+      const drops = this.survival.breakBlock(
+        (qx, qy, qz) => this.level.getBlockState(qx, qy, qz), px, py, pz, true,
+      );
+      this.level.setBlockState(px, py, pz, 0);
+      for (const stack of drops) this.dropItem(stack, px, py, pz);
+      this.breakEffects(state, px, py, pz);
+      this.removeUnsupportedAround(px, py, pz, depth + 1);
+    }
   }
 
   private updateBlockShape(x: number, y: number, z: number): void {
@@ -4194,7 +4361,7 @@ export class Game {
    * targets costs a frame.
    */
   private adaptRenderScale(cpuMs: number, dt: number): void {
-    if (this.titleMode || !this.worldActive) return;
+    if (this.titleMode || !this.worldActive || !this.options.dynamicResolution) return;
     this.scaleProbeMs += dt;
     this.scaleProbeFrames++;
     if (dt > this.scaleProbeMax) this.scaleProbeMax = dt;

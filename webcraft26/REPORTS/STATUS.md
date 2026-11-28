@@ -62,6 +62,8 @@ node scripts/test-wandering-trader.mjs        # 流浪商人：生成周期/9 �
 node scripts/test-tipped-arrow.mjs            # 药箭：imbue 合成/弓发射/1/8 时长药效/制箭师随机药箭交易 10 项
 node scripts/test-fps-limit.mjs               # 帧率上限：30/120/240 档实测渲染帧率 + tick 不降频 7 项
 node scripts/test-advancements-tree.mjs       # 进度树：五根标签顺序/tree 布局/拖动与滚轮平移 8 项
+node scripts/test-review-fixes.mjs            # 审阅修复：亡灵燃烧/植物支撑/创造目标/存档槽位与快照 9 项
+node scripts/test-video-toggles.mjs           # TAA/动态分辨率/植被摆动开关并即时生效 3 项
 node scripts/test-mob-equipment.mjs           # 怪物装备与稀有掉落：护甲分布/武器/骷髅头/铜锭 13 项
 node scripts/test-explosion.mjs               # 爆炸：射线弹坑/抗性/掉落衰减/TNT 归属/遮挡暴露 10 项
 node scripts/test-icons.mjs                   # 物品图标
@@ -93,6 +95,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | HUD 空转重绘 | ✅ | 同一份 HudState 不再每帧重画；静止时 0 次 `hud.render`（`test-hud-dirty`）。聊天/Toast/受伤/切槽/缩放会立即触发一次 |
 | 物品图标降级路径 | ✅ | `createImageBitmap` 不可用时不再从 3200² 图集直接 `drawImage`（真实环境曾 90 ms/9 个图标），改为按物品缓存小画布 |
 | 帧率上限 | ✅ | 2026-11-28：视频设置「最大帧率」此前是死 UI（一直按刷新率跑满，165Hz 屏约 165fps）。现按 `Options.FRAMERATE_LIMIT` 跳帧，只跳过渲染，20Hz tick/输入/区块流式照常；默认 120，`test-fps-limit` 7 项 |
+| 画面抖动开关 | ✅ | 2026-11-28：TAA、动态分辨率、植被摆动拆成独立开关；TAA/摆动默认关（远景闪烁与草叶抖动来源），动态分辨率默认开；切换即时作用到渲染器，`test-video-toggles` 3 项 |
 
 ### 实体
 | 项 | 状态 | 说明 |
@@ -102,11 +105,13 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 骷髅弓 | ✅ | 2026-11-21 修：弓弦从瞄准方向正面翻到射手一侧 |
 | 药箭 | ✅ | 2026-11-28：`crafting_imbue` 配方（3x3 全满、中心滞留药水、其余 8 格箭 → 8 支带 `potion` 组件的药箭，消耗全部 9 格且不返还玻璃瓶）；弓发射 `tipped_arrow` 时箭实体携带药水并按原版 `POTION_DURATION_SCALE=0.125` 缩短时长、命中后施加效果（含立即伤害/治疗的亡灵反转）；`#minecraft:tradeable` 41 种药水（含 turtle_master 双效果）；`test-tipped-arrow` 10 项。缺口：药箭图标/实体未按药水颜色着色（cosmetic） |
 | 生物装备/手持物 | ✅ | 主手物品层（骷髅弓/凋灵骷髅石剑）+ 人形四层护甲（equipment/humanoid 贴图）；2026-11-28 起按原版 `Mob.populateDefaultEquipmentSlots` 生成护甲（15% 触发、皮革/铜/金/锁链/铁/钻石六档、头→靴每格 25% 停止），僵尸 1% 铁剑/铁矛/铁锹，骷髅弓，凋灵骷髅石剑且无甲，溺尸 10% 三叉戟/钓竿 + 3% 鹦鹉螺壳副手，僵尸猪灵金剑/金矛；`test-mob-equipment` |
+| 亡灵日照燃烧 | ✅ | 2026-11-28 修：`Mob.tick` 覆盖 `LivingEntity.tick` 后漏调 `tickDamageOverTime()`，僵尸/骷髅等会着火但永远不掉血（白天越积越多）。现在火焰/岩浆伤害对 mob 生效，`test-review-fixes` 实测 100 tick 掉 2 血并持续燃烧 |
 | 剪羊毛 | ✅ | 2026-11-21：剪刀右键羊 → `sheared`、掉落 1–3 个对应颜色羊毛、播放 `entity.sheep.shear`；重复点击不再掉落 |
 | 鸡下蛋 / 投蛋 | ✅ | 成年鸡 6000–12000 tick 下蛋（幼鸡不下蛋）；投掷蛋落地/命中生物后 1/8 概率孵化幼鸡 |
 | Q 丢弃物品 | ✅ | Q 丢 1 个 / Ctrl+Q 丢整组，40 tick 拾取延迟，`dropped`/`drop` 统计 |
 | 繁殖 / 喂养 / 幼年 | ✅ | 牛/猪/羊/鸡/兔/猫/豹猫/蘑菇牛：食物标签、600 tick 恋爱、6000 tick 冷却、幼年 0.5 缩放与成长、繁殖 XP、幼年无掉落；幼年专用几何体未接 |
 | 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
+| 村民 / 宠物离线存档 | ✅ | 2026-11-28：世界级快照按实体 id 维护，区块卸载前由 `persistentCullHandler` 记录，玩家回到该区块时自动重生；保存时合并在线记录与离线快照，已死亡（加载范围内无实体）的条目清除；`test-review-fixes` 覆盖 |
 | 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化。2026-11-28：食物点（面包 4 / 胡萝卜·马铃薯·甜菜根 1）拾取、12 点繁殖门槛、BreedGoal 配对、50/25/25 生物群系皮肤遗传、`BabyVillagerModel` + 宝宝贴图与 0.49×0.98 碰撞箱、年龄/食物点存档；`test-villager-trade` 14 项 + `test-golem-villager`。2026-11-28：农民 `HarvestFarmland` 目标（8 格内成熟作物→走近→收割并补种，小麦种子 0–3、胡萝卜/马铃薯/甜菜根 1–4/1–3）、3 小麦→1 面包（4 食物点）、`TradeWithVillager` 食物分享（≥24 点分给 4 格内 <12 点的村民）、小麦/种子库存存档；`test-village-life`。2026-11-28：昼夜作息——time ≥ 12000 时 `VillagerSleepGoal` 认领 32 格内空闲床（头/脚统一为床头键、一床一人），走近后躺下（`startSleeping`，关重力、`EntityRenderer` 躺姿），日出/床被破坏/受击醒来；最近 24000 tick 内睡过的 5 名村民触发村庄铁傀儡（非玩家创建）并清空睡眠记忆；`test-villager-sleep`。2026-11-28：`VillagerSchedules.VILLAGER_DEFAULT` 日程——wake 0–10 / work 10–3000 / meet 3000–6000 / idle 6000–9000 / work 9000–12000 / sleep 12000–24000；`VillagerWorkGoal` 工作时段走回工作站点并面向它，`VillagerMeetGoal` 会议时段向 32 格内的钟聚集（按实体 id 错开站位），农民 `HarvestFarmland` 只在工作时段运行；生成村庄的房屋加入红床与随机工作站点、广场井边加入钟；`test-village-schedule` 9 项 + `test-worldgen` POI 检查。2026-11-28：制箭师大师交易 `set_random_potion(#minecraft:tradeable)` → 2 绿宝石 + 5 箭换 5 支随机药箭，`test-tipped-arrow` |
 | 矿车 | ✅ | 2026-11-22：普通/箱子矿车实体与模型；`NewMinecartBehavior` 轨道跟随（直线/拐弯/坡道/摩擦/动力轨加速/未供能动力轨刹停）、检测铁轨占用供电、物品放置、右键乘坐与潜行下车、箱子矿车 27 格 GUI、生存破坏掉落；`test-minecart` 11 项 |
 | 流浪商人 / 商人羊驼 | ✅ | 2026-11-28：`WanderingTraderSpawner` 1200 tick 检查、24000 tick 刷新、25%→75% 概率、1/10 尝试、48 格内以钟（会议 POI）或玩家为参照找 2x3x2 空地，生成 1 商人 + 2 商人羊驼；3 组 26.2 TradeSet（2 买 / 2 稀有 / 5 常见）共 9 条报价，药水成本按组件匹配，交易界面无等级条并显示 `entity.minecraft.wandering_trader`，交易中冻结 AI，48000 tick 未交易后与羊驼一起消失；羊驼沿用 `LlamaModel` + 蓝色交易毯层，跟随商人（无拴绳渲染/物理）；`test-wandering-trader` 15 项 |
@@ -136,6 +141,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 挖掘/放置/生存（血量/饥饿/掉落/重生） | ✅ | |
 | 合成/熔炼/箱子 | ✅ | 见上 |
 | 剪刀（羊） | ✅ | 见「实体」；其他剪刀用途（树叶、藤蔓）未接 |
+| 植物支撑 | ✅ | 2026-11-28：方块变化后按 `BlockState.canSurvive` 重新校验邻居，失去支撑的短草/高草/甘蔗/火把/门等会掉落并连锁移除（甘蔗支撑含 substrate + 相邻水/冰规则） |
 | 弓/箭（玩家） | ✅ | 蓄力/释放、箭消耗与弓耐久、命中 mob（含 owner 过滤） |
 | 桶 / 打火石 / TNT | ✅ | 水/岩浆桶放置与装取、点火；TNT 点燃/引信/连锁；2026-11-28 起爆炸改用 `ServerExplosion` 的 1352 条边界射线（按方块爆炸抗性逐 0.3 步衰减，泥土弹坑远大于石头）、`ApplyExplosionDecay` 默认掉落衰减（每件物品 1/半径 概率保留）、`getSeenPercent` 16³ AABB 采样遮挡（墙后伤害/击退降至 1）与 `PrimedTnt` owner（玩家点燃的 TNT 把击杀/稀有掉落记给玩家）；红石信号点燃已接 |
 | 钓鱼 | ✅ | 鱼竿抛竿/浮漂漂浮/5–25s 咬钩/收竿掉落（鱼 85%、垃圾 15%，海洋幸运才出宝藏）、1–6 XP、鱼竿耐久、`fish_caught` 统计 |
@@ -156,6 +162,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 村庄 | ⚠️ | 程序化近似，不是原版 NBT 模板；无其他结构 |
 | 下界/末地/要塞/矿洞 | ❌ | 只有主世界 |
 | 存档 | ✅ | IndexedDB 自定义分块存储；支持 `.mca` 区域导入/导出 |
+| 存档写入安全 | ✅ | 2026-11-28 修审阅 P1：批量写入成功后才清除脏标记/登记已保存（失败批次下次重试，写入期间新增的 section 保持脏）；未激活区块不再被空实体列表覆盖；玩家存档覆盖 0–42 槽（盔甲/副手/鞍）；流浪商人报价与使用次数写入区块记录；村民/驯服宠物改为世界级快照（卸载前快照、回载时重生、死亡时清除），离开区块再保存不再丢失 |
 | 有限/无限世界 | ✅ | 区块流式加载；不是 Anvil 全尺寸世界 |
 
 ### 音频 / 多人
@@ -669,3 +676,22 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 验证：`tsc` 0；`node scripts/test-advancements-tree.mjs` **8/8**（五标签顺序、story
   16 节点/深度 8、7 个多子父节点全部居中、拖动与滚轮平移及越界钳制、切标签重建）；
   回归 `test-advancements` 7/7。
+
+### 审阅修复与画质开关（2026-11-28）
+
+- 存档安全：`flushDirty` 改为事务成功后才清除脏标记并登记 `savedKeys`（失败批次会重试，
+  写入期间新增 section 保持脏）；`entitiesActive` 门控避免未激活区块被空实体列表覆盖；
+  玩家快照覆盖 0–42 槽（盔甲/副手/鞍）；流浪商人报价与使用次数随区块记录保存；村民与
+  驯服宠物使用世界级快照（卸载前记录、回载重生、死亡清除）。
+- 玩法：`Mob.tick` 补调 `tickDamageOverTime()`，亡灵在日照下真正燃烧掉血；方块变化后
+  按 `canSurvive` 移除失去支撑的短草/高草/甘蔗/火把等并掉落；创造/旁观玩家在受击后也
+  不会被反击或近战续追。
+- 画质：视频设置新增 TAA / 动态分辨率 / 植被摆动开关，默认 TAA 与摆动关闭；甘蔗、
+  竹子、仙人掌的摆动权重改为按"世界高度 − 列基"连续计算，整列一起弯折，不再在方块
+  接缝处撕裂。
+- 验证：`tsc` 0；`test-review-fixes` **9/9**、`test-video-toggles` **3/3**、
+  `test-entity-save` 11/11、`test-villager-trade` 14/14、`test-wandering-trader` 15/15、
+  `test-mesher` 64/64。
+- 未完成：水面已有屏幕空间反射（只反射水前的不透明场景），缺天空/云/太阳反射与平面
+  反射；Complementary Reimagined 级别的完整光影（体积光、云、景深、反射探针）仍需独立
+  批次。

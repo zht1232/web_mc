@@ -232,6 +232,8 @@ export class WorldSaveManager implements WorldListProvider {
     }
     const started = nowMs();
     const batch: [string, unknown][] = [];
+    /** Sections dirtied at serialization time; only those may be cleared after the write. */
+    const captured: { chunk: LevelChunk; key: string; sections: number[]; entitiesDirty: boolean }[] = [];
     let written = 0;
 
     for (const chunk of level.chunks.values()) {
@@ -241,16 +243,33 @@ export class WorldSaveManager implements WorldListProvider {
       const dirty = (chunk.dirtySections?.size ?? 0) > 0 || chunk.entitiesDirty || !this.savedKeys.has(key);
       if (!dirty) continue;
       batch.push([key, ChunkSerializer.toBytes(chunk, this.codecOpts)]);
-      chunk.dirtySections?.clear();
-      chunk.dirty = false;
-      chunk.entitiesDirty = false;
-      chunk.hadEntities = chunk.entities.length > 0;
-      this.savedKeys.add(key);
+      captured.push({
+        chunk, key,
+        sections: [...chunk.dirtySections],
+        entitiesDirty: chunk.entitiesDirty,
+      });
       written++;
     }
 
     if (written === 0) this.saveCycleOpen = false;
-    if (batch.length) await this.db.chunks.putBatch(batch);
+    if (batch.length) {
+      // Only mark the captured state clean once the transaction succeeded. A failed
+      // write must keep the chunk dirty so the next slice retries it; sections
+      // dirtied while the write was in flight stay dirty as well.
+      try {
+        await this.db.chunks.putBatch(batch);
+      } catch (err) {
+        this.saveCycleOpen = false;
+        throw err;
+      }
+      for (const c of captured) {
+        for (const section of c.sections) c.chunk.dirtySections.delete(section);
+        if (c.entitiesDirty) c.chunk.entitiesDirty = false;
+        c.chunk.dirty = c.chunk.dirtySections.size > 0 || c.chunk.entitiesDirty;
+        c.chunk.hadEntities = c.chunk.entities.length > 0;
+        this.savedKeys.add(c.key);
+      }
+    }
 
     const wall = Date.now();
     if (written > 0 || wall - this.lastLevelPersist > LEVEL_PERSIST_INTERVAL_MS) {
@@ -266,10 +285,13 @@ export class WorldSaveManager implements WorldListProvider {
    */
   async saveChunk(chunk: LevelChunk): Promise<void> {
     const bytes = ChunkSerializer.toBytes(chunk, this.codecOpts);
-    chunk.dirtySections?.clear();
-    chunk.entitiesDirty = false;
-    chunk.hadEntities = chunk.entities.length > 0;
+    const sections = [...chunk.dirtySections];
+    const entitiesDirty = chunk.entitiesDirty;
     await this.saveChunkData(chunk.x, chunk.z, bytes);
+    for (const section of sections) chunk.dirtySections.delete(section);
+    if (entitiesDirty) chunk.entitiesDirty = false;
+    chunk.dirty = chunk.dirtySections.size > 0 || chunk.entitiesDirty;
+    chunk.hadEntities = chunk.entities.length > 0;
   }
 
   /** Writes already-serialized chunk bytes (the unload path caches the same bytes). */
@@ -277,8 +299,8 @@ export class WorldSaveManager implements WorldListProvider {
     const id = this.currentWorldId;
     if (!id) return;
     const key = this.chunkKey(id, cx, cz);
-    this.savedKeys.add(key);
     await this.db.chunks.put(key, bytes);
+    this.savedKeys.add(key);
   }
 
   /** Persists live level time/weather into level.dat. */

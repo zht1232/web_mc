@@ -309,6 +309,10 @@ export class LevelChunk {
   /** The chunk carried entity records when it was read/spawned; used to write an empty
    *  list back when every entity died before the chunk unloads. */
   hadEntities = false;
+  /** True once the chunk entered the render distance and its stored entities were spawned.
+   *  Only active chunks may overwrite `entities` during a save capture; a chunk in the
+   *  retain-only band between render and retain distance still owns its stored records. */
+  entitiesActive = false;
 
   constructor(
     public readonly x: number,

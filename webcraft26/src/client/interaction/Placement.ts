@@ -442,6 +442,21 @@ function stateCanPlace(s: PlacementSession, state: number, pos: Pos): boolean {
   return true;
 }
 
+/**
+ * BlockBehaviour.updateShape support check, exposed for neighbour updates:
+ * vegetation/torch/doors/etc. return air when their support disappears.
+ */
+export function survivesAt(
+  mc: MinecraftData, level: PlacementLevel, state: number, x: number, y: number, z: number,
+): boolean {
+  const session: PlacementSession = {
+    mc, level, held: '', face: UP,
+    click: { x, y, z }, clicked: { x, y, z }, relative: { x, y, z },
+    replaceClicked: false, yaw: 0, pitch: 0,
+  };
+  return canSurvive(session, state, { x, y, z });
+}
+
 // ---------------------------------------------------------------------------------------------
 // BlockState.canSurvive ports (per block family)
 // ---------------------------------------------------------------------------------------------
@@ -533,11 +548,32 @@ function canSurvive(s: PlacementSession, state: number, pos: Pos): boolean {
     return vegetationSupports(s, meta, pos);
   }
 
+  // SugarCaneBlock.canSurvive: another cane below, or a substrate with water
+  // (or frosted ice) next to that substrate.
+  if (cls === 'SugarCaneBlock') {
+    const below = posOffset(pos, DOWN);
+    const belowState = stateAt(s, below);
+    if (nameOf(mc, belowState) === meta.name) return true;
+    if (!SUGAR_CANE_SUBSTRATE.has(nameOf(mc, belowState))) return false;
+    for (const dir of HORIZONTALS) {
+      const side = nameOf(mc, stateAt(s, posOffset(below, dir)));
+      if (side === 'water' || side === 'frosted_ice') return true;
+    }
+    return false;
+  }
+
   // VegetationBlock.canSurvive (flowers, grass, ferns, saplings, bushes, roots...).
   if (isVegetationBlock(meta)) return vegetationSupports(s, meta, pos);
 
   return true; // BlockBehaviour.canSurvive default
 }
+
+/** #minecraft:substrate_overworld + #minecraft:sand (SugarCaneBlock.SUPPORTS_SUGAR_CANE). */
+const SUGAR_CANE_SUBSTRATE: ReadonlySet<string> = new Set([
+  'dirt', 'coarse_dirt', 'rooted_dirt', 'grass_block', 'podzol', 'mycelium',
+  'moss_block', 'pale_moss_block', 'mud', 'muddy_mangrove_roots',
+  'sand', 'red_sand',
+]);
 
 function isVegetationBlock(meta: BlockMeta): boolean {
   return VEGETATION_CLASSES.has(meta.cls) || meta.cls.endsWith('RootsBlock') || meta.cls.endsWith('SaplingBlock');

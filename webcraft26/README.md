@@ -120,6 +120,8 @@ node scripts/test-wandering-trader.mjs # wandering trader spawner/trades/merchan
 node scripts/test-tipped-arrow.mjs    # imbue crafting, bow-fired tipped arrows (1/8 effects) and fletcher potion trades (browser)
 node scripts/test-fps-limit.mjs       # max-framerate option actually caps render frames while ticks keep running (browser)
 node scripts/test-advancements-tree.mjs # vanilla advancement tree layout, root tab order and pan/scroll (browser)
+node scripts/test-review-fixes.mjs    # save-safety, daylight burning, plant support and creative targeting (browser)
+node scripts/test-video-toggles.mjs   # TAA / dynamic resolution / vegetation sway switches (browser)
 node scripts/test-mob-equipment.mjs   # monster armor/weapon population and rare player-kill loot (browser)
 node scripts/test-explosion.mjs       # vanilla explosion rays, resistance, drop decay, TNT owner and cover exposure (browser)
 node scripts/test-containers.mjs      # container click rules

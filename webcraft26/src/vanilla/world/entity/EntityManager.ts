@@ -113,6 +113,8 @@ export class EntityManager implements MobWorld {
   playerHeldItemsProvider?: () => readonly string[];
   /** Set by Game: drop loot / XP when a living entity dies. */
   mobDeathHandler?: (e: Entity) => void;
+  /** Called before an entity is culled because its chunk left the active set. */
+  persistentCullHandler?: (e: Entity) => void;
   /** Set by Game: spawn heart particles while an animal is in love. */
   animalLoveHandler?: (e: Entity) => void;
   /** Set by Game: award Stats.ANIMALS_BRED when two animals breed. */
@@ -294,9 +296,11 @@ export class EntityManager implements MobWorld {
       if (e.removed) continue;
 
       if (cullByChunk && !this.activeChunks.has(chunkKey(Math.floor(e.x) >> 4, Math.floor(e.z) >> 4))) {
+        this.persistentCullHandler?.(e);
         e.remove(); continue;
       }
       if (p && this.canDespawn(e) && e.distanceToSqr(px, py, pz) > despawn2) {
+        this.persistentCullHandler?.(e);
         e.remove(); continue;
       }
       e.tick();

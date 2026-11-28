@@ -76,5 +76,14 @@ export class VideoSettingsScreen extends OptionsSubScreen {
     this.addCycle(col0, this.gridRowY(5), w, this.t('options.framerateLimit'), FPS_LIMITS,
       (FPS_LIMITS as readonly number[]).includes(getOptionNumber(deps, 'maxFps', 120)) ? getOptionNumber(deps, 'maxFps', 120) : 120,
       (v) => `${v}`, (v) => setOption(deps, 'maxFps', v));
+
+    // Browser-specific image-quality switches: TAA jitter and waving foliage are the
+    // two sources of distant "shimmer"; both default off.
+    this.addToggle(col1, this.gridRowY(5), this.t('options.taa'),
+      getOptionBoolean(deps, 'taa', false), (v) => setOption(deps, 'taa', v));
+    this.addToggle(col0, this.gridRowY(6), this.t('options.dynamicResolution'),
+      getOptionBoolean(deps, 'dynamicResolution', true), (v) => setOption(deps, 'dynamicResolution', v));
+    this.addToggle(col1, this.gridRowY(6), this.t('options.vegetationSway'),
+      getOptionBoolean(deps, 'vegetationSway', false), (v) => setOption(deps, 'vegetationSway', v));
   }
 }

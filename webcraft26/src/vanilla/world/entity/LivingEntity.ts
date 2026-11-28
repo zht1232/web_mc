@@ -280,7 +280,7 @@ export class LivingEntity extends Entity implements Targetable {
    * LivingEntity.baseTick apply (net/minecraft/world/entity/Entity.java:
    * remainingFireTicks % 20 == 0 -> onFire damage 1; lavaHurt -> 4 damage).
    */
-  private tickDamageOverTime(): void {
+  protected tickDamageOverTime(): void {
     if (this.inLava) {
       this.fireTicks = Math.max(this.fireTicks, 300); // lavaIgnite: 15 s
       if (this.tickCount % 10 === 0) this.hurt(4, null);

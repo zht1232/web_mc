@@ -16,14 +16,14 @@ export class HurtByTargetGoal extends Goal {
 
   canUse(): boolean {
     const a = this.mob.getLastHurtBy();
-    if (!a || !a.isAlive()) return false;
+    if (!a || !this.mob.canAttackTarget(a)) return false;
     if (this.mob.tickCount - this.mob.getLastHurtByMobTime() >= 100) return false;
     this.chosen = a;
     return true;
   }
 
   canContinueToUse(): boolean {
-    return this.chosen !== null && this.chosen.isAlive();
+    return this.chosen !== null && this.mob.canAttackTarget(this.chosen);
   }
 
   start(): void { this.mob.setTarget(this.chosen); }

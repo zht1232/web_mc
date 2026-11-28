@@ -366,6 +366,13 @@ function swayWeightOf(state: number, mc: MinecraftData): number {
   return 0;
 }
 
+/** Plants that grow as vertical columns and must sway as one piece. */
+function isStackedPlant(state: number, mc: MinecraftData): boolean {
+  const meta = mc.blocks[mc.stateBlock[state]];
+  return meta.cls === 'SugarCaneBlock' || meta.cls === 'BambooBlock' || meta.cls === 'CactusBlock'
+    || meta.name === 'sugar_cane' || meta.name === 'bamboo' || meta.name === 'cactus';
+}
+
 /** names that vanilla renders with RenderType.translucent */
 function isTranslucentName(name: string): boolean {
   switch (name) {
@@ -796,6 +803,20 @@ class SectionMesher {
     const ox = this.input.originX + x;
     const oy = this.input.originY + y;
     const oz = this.input.originZ + z;
+    // Stacked plants (sugar cane / bamboo / cactus) must bend as one column: using the
+    // local 0..1 vertex height per block makes each layer sway independently and the
+    // column visibly tears at block boundaries. Find the column base and weight by the
+    // world height above it instead.
+    let swayBaseY: number | null = null;
+    if (sway > 0 && isStackedPlant(state, this.mc)) {
+      const name = this.mc.blocks[this.mc.stateBlock[state]].name;
+      swayBaseY = oy;
+      for (let dy = 1; dy <= 8; dy++) {
+        const below = this.input.getState(ox, oy - dy, oz);
+        if (below === 0 || this.mc.blocks[this.mc.stateBlock[below]].name !== name) break;
+        swayBaseY = oy - dy;
+      }
+    }
 
     // vanilla caches shouldRenderFace per direction across the parts of one block
     let cullValid = 0;
@@ -830,7 +851,7 @@ class SectionMesher {
       if (useAo) this.aoQuad(quad, state, ox, oy, oz, tr, tg, tb);
       else this.flatQuad(quad, state, ox, oy, oz, tr, tg, tb);
 
-      this.writeQuad(buf, quad, x, y, z, sway);
+      this.writeQuad(buf, quad, x, y, z, sway, swayBaseY);
       emitted++;
     }
 
@@ -1090,6 +1111,7 @@ class SectionMesher {
   /** writes the 4 vertices collected in vLight/vColor plus the 6 indices */
   private writeQuad(
     buf: QuadBuffer, quad: DecodedQuad, ox: number, oy: number, oz: number, sway: number,
+    swayBaseY: number | null = null,
   ): void {
     const base = buf.beginQuad();
     const p = quad.p;
@@ -1101,7 +1123,10 @@ class SectionMesher {
       // stays planted; leaves get a smaller scale from swayWeightOf().
       let color = this.vColor[i];
       if (sway > 0) {
-        const w = Math.max(0, Math.min(1, p[i * 3 + 1])) * sway;
+        const height = swayBaseY === null
+          ? p[i * 3 + 1]
+          : (this.input.originY + oy + p[i * 3 + 1] - swayBaseY) / 3;
+        const w = Math.max(0, Math.min(1, height)) * sway;
         const a = 255 - Math.round(254 * w);
         color = ((color & 0x00ffffff) | (a << 24)) >>> 0;
       }

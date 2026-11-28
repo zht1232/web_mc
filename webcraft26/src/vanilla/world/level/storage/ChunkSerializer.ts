@@ -17,6 +17,8 @@ import { StringTag } from '../../../nbt/StringTag.js';
 import { LongArrayTag } from '../../../nbt/LongArrayTag.js';
 import { ByteArrayTag } from '../../../nbt/ByteArrayTag.js';
 import { IntTag } from '../../../nbt/IntTag.js';
+import { DoubleTag } from '../../../nbt/DoubleTag.js';
+import { FloatTag } from '../../../nbt/FloatTag.js';
 import { addDataVersion, valueToTag, tagToValue } from '../../../nbt/NbtUtils.js';
 import * as NbtIo from '../../../nbt/NbtIo.js';
 import { ceilLog2 } from '../../../core/Mth.js';
@@ -264,6 +266,20 @@ function readPalettedCompound(c: CompoundTag | undefined, codec: BlockStateCodec
   return out;
 }
 
+/** Entity NBT uses a homogeneous DoubleList for Pos/Motion. */
+function doubleList(values: readonly number[]): ListTag {
+  const list = new ListTag();
+  for (const v of values) list.add(DoubleTag.of(v));
+  return list;
+}
+
+/** Entity NBT uses a homogeneous FloatList for Rotation. */
+function floatList(values: readonly number[]): ListTag {
+  const list = new ListTag();
+  for (const v of values) list.add(FloatTag.of(v));
+  return list;
+}
+
 // ---- chunk read / write ---------------------------------------------------
 
 export class ChunkSerializer {
@@ -308,6 +324,21 @@ export class ChunkSerializer {
       blockEntities.add(be);
     }
     root.put('block_entities', blockEntities);
+
+    // Entity.save() shape: id + Pos/Rotation/Motion lists + Health; the port's
+    // type-specific payload lives in `data`.
+    const entities = new ListTag();
+    for (const rec of chunk.entities) {
+      const e = new CompoundTag();
+      e.putString('id', rec.type);
+      e.put('Pos', doubleList([rec.x, rec.y, rec.z]));
+      e.put('Rotation', floatList([rec.yaw, rec.pitch]));
+      e.put('Motion', doubleList([rec.vx, rec.vy, rec.vz]));
+      if (rec.health !== undefined) e.putFloat('Health', rec.health);
+      if (rec.data) e.put('data', valueToTag(rec.data));
+      entities.add(e);
+    }
+    root.put('Entities', entities);
     return root;
   }
 
@@ -350,6 +381,28 @@ export class ChunkSerializer {
         const id = el.getStringOr('id', '');
         const data = el.getCompound('data');
         chunk.addBlockEntity(x, y, z, { type: id, data: data ? (tagToValue(data) as Record<string, unknown>) : {} });
+      }
+    }
+
+    const entities = root.getList('Entities') ?? root.getList('entities');
+    chunk.hadEntities = !!entities && entities.list.length > 0;
+    if (entities) {
+      for (const el of entities.list) {
+        if (!(el instanceof CompoundTag)) continue;
+        const type = el.getStringOr('id', '').replace(/^minecraft:/, '');
+        if (!type) continue;
+        const pos = el.getList('Pos')?.list.map(tagToValue) ?? [];
+        const rot = el.getList('Rotation')?.list.map(tagToValue) ?? [];
+        const motion = el.getList('Motion')?.list.map(tagToValue) ?? [];
+        const dataTag = el.getCompound('data');
+        chunk.entities.push({
+          type,
+          x: Number(pos[0] ?? 0), y: Number(pos[1] ?? 0), z: Number(pos[2] ?? 0),
+          yaw: Number(rot[0] ?? 0), pitch: Number(rot[1] ?? 0),
+          vx: Number(motion[0] ?? 0), vy: Number(motion[1] ?? 0), vz: Number(motion[2] ?? 0),
+          health: el.getFloat('Health'),
+          data: dataTag ? tagToValue(dataTag) as Record<string, unknown> : undefined,
+        });
       }
     }
 

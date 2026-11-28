@@ -87,6 +87,7 @@ import { PerfLog } from './PerfLog.js';
 import { runChatCommand, type CommandHost } from './ChatCommands.js';
 import { WorldSaveManager, type LoadedWorld } from './world/save/WorldSaveManager.js';
 import type { SavedPet, SavedVillager } from '../vanilla/world/level/storage/LevelSummary.js';
+import type { SavedChunkEntity } from '../vanilla/world/level/storage/SavedChunkEntity.js';
 import { AdvancementManager } from '../vanilla/world/advancements/AdvancementManager.js';
 import { AdvancementToast } from './gui/components/Toast.js';
 import { Autosave } from './world/save/Autosave.js';
@@ -1350,6 +1351,10 @@ export class Game {
         console.log(`[save] created new world ${this.currentWorldId}`);
       }
 
+      // Each save cycle starts by copying the live entities near the player into
+      // their chunks; flushDirty then writes entity-dirty chunks even when no
+      // block changed.
+      this.saveManager.setBeforeSave(() => this.captureChunkEntities());
       this.autosave = new Autosave(this.saveManager, {
         getLevel: () => this.level,
         getPlayer: () => this.player,
@@ -1382,6 +1387,9 @@ export class Game {
     }
     // Saved chunks already carry their light data; skip the per-chunk full relight.
     const count = this.level.addChunksBulk(decoded);
+    // These chunks were generated (and their passive animals spawned) before the save;
+    // mark them known so the chunk-generation spawn pass does not add a second wave.
+    for (const chunk of decoded) this.entityManager.markChunkKnown(chunk.x, chunk.z);
     console.log(`[save] restored ${count} chunks in ${Math.round(performance.now() - started)} ms`);
 
     if (loaded.player) {
@@ -1550,6 +1558,179 @@ export class Game {
       villagers.push(e.toJSON());
     }
     return villagers;
+  }
+
+  // ---- chunk entity persistence -------------------------------------------
+
+  /** ItemStack -> plain record, shared by chunk entities (same shape as the player save). */
+  private stackData(stack: ItemStack, slot = 0): ItemStackData {
+    const item = stack.getItem();
+    return {
+      slot, id: item?.namespacedId ?? 'minecraft:air', count: stack.getCount(),
+      numericId: item?.id,
+      components: Object.keys(stack.components).length > 0
+        ? stack.components as unknown as Record<string, unknown>
+        : undefined,
+    };
+  }
+
+  private stackFromData(raw: unknown): ItemStack {
+    if (!raw || typeof raw !== 'object') return ItemStack.EMPTY;
+    const d = raw as ItemStackData;
+    const item = this.survival.registry.byName(String(d.id))
+      ?? (d.numericId !== undefined ? this.survival.registry.get(d.numericId) : undefined);
+    if (!item || d.count <= 0) return ItemStack.EMPTY;
+    return new ItemStack(item, d.count, d.components as ItemComponents | undefined);
+  }
+
+  /**
+   * Builds the chunk-save record for one entity. Villagers and tamed pets keep
+   * their richer world-level serializers; projectiles/particles are transient.
+   */
+  private saveEntityRecord(e: Entity): SavedChunkEntity | null {
+    if (e instanceof Villager) return null;
+    if (e instanceof Mob && e.tamed) return null;
+    const base: SavedChunkEntity = {
+      type: e.type.name.replace(/^minecraft:/, ''),
+      x: e.x, y: e.y, z: e.z,
+      yaw: e.yaw, pitch: e.pitch,
+      vx: e.vx, vy: e.vy, vz: e.vz,
+    };
+    if (e instanceof ItemEntity) {
+      const stack = e.getItem();
+      if (stack.isEmpty()) return null;
+      return {
+        ...base,
+        data: { stack: this.stackData(stack), age: e.age, pickupDelay: e.pickupDelay },
+      };
+    }
+    if (e instanceof ExperienceOrb) {
+      return { ...base, data: { value: e.value } };
+    }
+    if (e instanceof Minecart || e instanceof Boat) {
+      const size = e.inventory.getContainerSize();
+      if (size === 0) return base;
+      const items: ItemStackData[] = [];
+      for (let i = 0; i < size; i++) {
+        const stack = e.inventory.getItem(i);
+        if (!stack.isEmpty()) items.push(this.stackData(stack, i));
+      }
+      return { ...base, data: { items } };
+    }
+    if (e instanceof Mob) {
+      const data: Record<string, unknown> = { age: e.age };
+      if (e instanceof Sheep) {
+        data.woolColor = e.woolColor;
+        data.sheared = e.sheared;
+      }
+      return { ...base, health: e.health, data };
+    }
+    return null;
+  }
+
+  /**
+   * Copies every live entity within the chunk-retention band into its chunk's
+   * `entities` list and marks the chunk for the next flush. Runs once per save
+   * cycle (WorldSaveManager.beforeSave), never per idle slice, so moving
+   * entities cannot keep the sharded save alive forever.
+   */
+  private captureChunkEntities(): void {
+    const pcx = Math.floor(this.player.pos.x) >> 4;
+    const pcz = Math.floor(this.player.pos.z) >> 4;
+    const radius = this.options.renderDistance + CHUNK_RETAIN_MARGIN;
+    const grouped = new Map<string, SavedChunkEntity[]>();
+    for (const e of this.entityManager.getEntities()) {
+      if (e.isRemoved()) continue;
+      const cx = Math.floor(e.x) >> 4;
+      const cz = Math.floor(e.z) >> 4;
+      if (Math.max(Math.abs(cx - pcx), Math.abs(cz - pcz)) > radius) continue;
+      const rec = this.saveEntityRecord(e);
+      if (!rec) continue;
+      const key = `${cx},${cz}`;
+      let list = grouped.get(key);
+      if (!list) { list = []; grouped.set(key, list); }
+      list.push(rec);
+    }
+    for (const chunk of this.level.chunks.values()) {
+      if (Math.max(Math.abs(chunk.x - pcx), Math.abs(chunk.z - pcz)) > radius) continue;
+      const next = grouped.get(`${chunk.x},${chunk.z}`) ?? [];
+      const same = JSON.stringify(next) === JSON.stringify(chunk.entities);
+      // A chunk whose stored entities all died while loaded must be written empty
+      // even though both in-memory lists are [] (hadEntities still reflects disk).
+      if (same && !(chunk.hadEntities && next.length === 0)) continue;
+      chunk.entities = next;
+      chunk.hadEntities = next.length > 0;
+      chunk.entitiesDirty = true;
+    }
+  }
+
+  /** Groups live entities by chunk (used when chunks leave the retention band). */
+  private liveEntitiesByChunk(): Map<string, SavedChunkEntity[]> {
+    const grouped = new Map<string, SavedChunkEntity[]>();
+    for (const e of this.entityManager.getEntities()) {
+      if (e.isRemoved()) continue;
+      const rec = this.saveEntityRecord(e);
+      if (!rec) continue;
+      const key = `${Math.floor(e.x) >> 4},${Math.floor(e.z) >> 4}`;
+      let list = grouped.get(key);
+      if (!list) { list = []; grouped.set(key, list); }
+      list.push(rec);
+    }
+    return grouped;
+  }
+
+  /** Spawns the entities stored in chunks that just came within render distance. */
+  private activateSavedChunkEntities(): void {
+    const pcx = Math.floor(this.player.pos.x) >> 4;
+    const pcz = Math.floor(this.player.pos.z) >> 4;
+    const r = this.options.renderDistance;
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const chunk = this.level.getChunk(pcx + dx, pcz + dz);
+        if (!chunk || chunk.entities.length === 0) continue;
+        const records = chunk.entities;
+        chunk.hadEntities = true;
+        chunk.entities = [];
+        for (const rec of records) this.spawnSavedEntity(rec);
+      }
+    }
+  }
+
+  /** Recreates one chunk-stored entity with its transform, health and type payload. */
+  private spawnSavedEntity(rec: SavedChunkEntity): void {
+    const e = this.entityManager.spawn(rec.type, rec.x, rec.y, rec.z);
+    if (!e) return;
+    e.x = rec.x; e.y = rec.y; e.z = rec.z;
+    e.xo = rec.x; e.yo = rec.y; e.zo = rec.z;
+    e.yaw = rec.yaw; e.yRotO = rec.yaw;
+    e.pitch = rec.pitch; e.xRotO = rec.pitch;
+    e.vx = rec.vx; e.vy = rec.vy; e.vz = rec.vz;
+    if (rec.health !== undefined && e instanceof LivingEntity) e.setHealth(rec.health);
+    const data = rec.data ?? {};
+    if (e instanceof Mob) {
+      if (typeof data.age === 'number') e.setAge(data.age);
+      if (e instanceof Sheep) {
+        if (typeof data.woolColor === 'number') e.woolColor = data.woolColor;
+        if (data.sheared === true || data.sheared === 1) e.sheared = true;
+      }
+    } else if (e instanceof ItemEntity) {
+      const stack = this.stackFromData(data.stack);
+      if (!stack.isEmpty()) e.item = stack;
+      if (typeof data.age === 'number') e.age = data.age;
+      if (typeof data.pickupDelay === 'number') e.pickupDelay = data.pickupDelay;
+    } else if (e instanceof Minecart || e instanceof Boat) {
+      const slots = Array.isArray(data.items) ? data.items : [];
+      const size = e.inventory.getContainerSize();
+      for (const raw of slots) {
+        const saved = raw as ItemStackData;
+        const slot = Number(saved.slot);
+        if (!Number.isInteger(slot) || slot < 0 || slot >= size) continue;
+        const stack = this.stackFromData(saved);
+        if (!stack.isEmpty()) e.inventory.setItem(slot, stack);
+      }
+    } else if (e instanceof ExperienceOrb) {
+      if (typeof data.value === 'number') e.value = data.value;
+    }
   }
 
   // ------------------------------------------------------------------ input
@@ -4014,6 +4195,8 @@ export class Game {
     }
     this.pickupNearbyItems();
     this.syncEntityChunks();
+    // Saved chunk entities spawn as their chunk enters the view (also right after a load).
+    this.activateSavedChunkEntities();
 
     this.autosave?.tick();
   }
@@ -4128,9 +4311,24 @@ export class Game {
           .finally(() => { this.chunkFlushPending = false; });
       }
     }
+    // Entities die with their chunk in this client, so snapshot every live entity
+    // before the removal and write the chunks that carry one straight back to the
+    // save store. Vanilla does the same in ChunkMap.save.
+    const live = this.saveManager ? this.liveEntitiesByChunk() : null;
     const removed = this.level.unloadFarChunks(pcx, pcz, retain);
     if (removed.length === 0) return;
-    for (const c of removed) this.entityManager.unloadChunk(c.x, c.z);
+    for (const c of removed) {
+      if (live) {
+        const records = live.get(`${c.x},${c.z}`) ?? [];
+        if (records.length > 0 || c.hadEntities) {
+          c.entities = records;
+          c.hadEntities = records.length > 0;
+          c.entitiesDirty = false;
+          void this.saveManager?.saveChunk(c).catch(() => {});
+        }
+      }
+      this.entityManager.unloadChunk(c.x, c.z);
+    }
     this.renderer.prune(this.player.pos.x, this.player.pos.z, this.level);
   }
 

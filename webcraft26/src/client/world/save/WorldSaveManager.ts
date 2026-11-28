@@ -90,6 +90,9 @@ export class WorldSaveManager implements WorldListProvider {
   private currentWorldId: string | null = null;
   private savedKeys = new Set<string>();
   private lastLevelPersist = 0;
+  /** Called once at the start of a save cycle (Game copies live entities into chunks). */
+  private beforeSave: (() => void) | null = null;
+  private saveCycleOpen = false;
 
   private constructor(private readonly db: SaveDatabase, opts: WorldSaveManagerOptions = {}) {
     this.dim = opts.dimension ?? 'overworld';
@@ -102,6 +105,13 @@ export class WorldSaveManager implements WorldListProvider {
       height: opts.height ?? 384,
     };
   }
+
+  /**
+   * Installs the per-cycle entity capture hook. It runs once when a save cycle
+   * opens, not on every idle slice: live entities move every tick, and capturing
+   * them per slice would keep the sharded flush from ever draining.
+   */
+  setBeforeSave(fn: () => void): void { this.beforeSave = fn; }
 
   /** Opens a manager. Pass a fake SaveDatabase in Node tests; omit for the real IndexedDB. */
   static async open(db?: SaveDatabase, opts?: WorldSaveManagerOptions): Promise<WorldSaveManager> {
@@ -214,6 +224,12 @@ export class WorldSaveManager implements WorldListProvider {
     void player; // reserved for future per-frame player-position persistence
     const id = this.currentWorldId;
     if (!id) return 0;
+    // One capture per save cycle: opens lazily on the first slice and closes when a
+    // slice writes nothing. flushAll resets it so an immediate save always re-captures.
+    if (!this.saveCycleOpen) {
+      this.saveCycleOpen = true;
+      this.beforeSave?.();
+    }
     const started = nowMs();
     const batch: [string, unknown][] = [];
     let written = 0;
@@ -222,15 +238,18 @@ export class WorldSaveManager implements WorldListProvider {
       if (written > 0 && nowMs() - started >= budgetMs) break;
       if (batch.length >= MAX_CHUNKS_PER_TRANSACTION) break;
       const key = this.chunkKey(id, chunk.x, chunk.z);
-      const dirty = (chunk.dirtySections?.size ?? 0) > 0 || !this.savedKeys.has(key);
+      const dirty = (chunk.dirtySections?.size ?? 0) > 0 || chunk.entitiesDirty || !this.savedKeys.has(key);
       if (!dirty) continue;
       batch.push([key, ChunkSerializer.toBytes(chunk, this.codecOpts)]);
       chunk.dirtySections?.clear();
       chunk.dirty = false;
+      chunk.entitiesDirty = false;
+      chunk.hadEntities = chunk.entities.length > 0;
       this.savedKeys.add(key);
       written++;
     }
 
+    if (written === 0) this.saveCycleOpen = false;
     if (batch.length) await this.db.chunks.putBatch(batch);
 
     const wall = Date.now();
@@ -238,6 +257,23 @@ export class WorldSaveManager implements WorldListProvider {
       await this.saveLevelData(level);
     }
     return written;
+  }
+
+  /**
+   * Writes one chunk immediately (chunk unload path). LevelChunk.entities must
+   * already hold the snapshot to keep; this is what preserves entities in a
+   * chunk that leaves the retention band before the next autosave slice.
+   */
+  async saveChunk(chunk: LevelChunk): Promise<void> {
+    const id = this.currentWorldId;
+    if (!id) return;
+    const key = this.chunkKey(id, chunk.x, chunk.z);
+    const bytes = ChunkSerializer.toBytes(chunk, this.codecOpts);
+    chunk.dirtySections?.clear();
+    chunk.entitiesDirty = false;
+    chunk.hadEntities = chunk.entities.length > 0;
+    this.savedKeys.add(key);
+    await this.db.chunks.put(key, bytes);
   }
 
   /** Persists live level time/weather into level.dat. */
@@ -304,6 +340,8 @@ export class WorldSaveManager implements WorldListProvider {
   async flushAll(level: ClientLevel, player: Player, extra: Record<string, unknown>,
     budgetMs = 1000, pets?: SavedPet[], villagers?: SavedVillager[]): Promise<number> {
     await this.savePlayer(player, extra);
+    // Force a fresh entity capture even if an idle cycle is still open.
+    this.saveCycleOpen = false;
     let total = 0;
     for (;;) {
       const n = await this.flushDirty(level, player, budgetMs);

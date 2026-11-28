@@ -226,6 +226,12 @@ export class EntityManager implements MobWorld {
   unloadChunk(cx: number, cz: number): void { this.activeChunks.delete(chunkKey(cx, cz)); }
 
   /**
+   * Marks a chunk as already generated/populated without running the chunk-generation
+   * creature pass. Used when saved chunks (with their stored entities) are restored.
+   */
+  markChunkKnown(cx: number, cz: number): void { this.knownChunks.add(chunkKey(cx, cz)); }
+
+  /**
    * Replaces the active chunk set and runs the vanilla chunk-generation creature
    * spawn for chunks seen for the first time (NaturalSpawner.spawnMobsForChunkGeneration).
    */

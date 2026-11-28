@@ -6,6 +6,7 @@
 
 import { ceilLog2 } from '../../../core/Mth.js';
 import type { MinecraftData } from '../block/state/BlockState.js';
+import type { SavedChunkEntity } from '../storage/SavedChunkEntity.js';
 
 export const SECTION_SIZE = 16;
 export const SECTION_VOLUME = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
@@ -301,6 +302,13 @@ export class LevelChunk {
   /** Section-Y values whose contents changed since the last save (save-layer dirty tracking).
    *  Unlike `dirty` this is never cleared by the renderer, so WorldSaveManager can rely on it. */
   readonly dirtySections = new Set<number>();
+  /** Entities stored with the chunk (vanilla `Entities`); spawn when the chunk becomes active. */
+  entities: SavedChunkEntity[] = [];
+  /** True when the entity list changed since the last persist (see WorldSaveManager.flushDirty). */
+  entitiesDirty = false;
+  /** The chunk carried entity records when it was read/spawned; used to write an empty
+   *  list back when every entity died before the chunk unloads. */
+  hadEntities = false;
 
   constructor(
     public readonly x: number,

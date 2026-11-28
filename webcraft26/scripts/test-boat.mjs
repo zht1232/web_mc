@@ -97,8 +97,10 @@ try {
 
   await ev(() => { window.__mc.keys.add('KeyW'); });
   const rowStart = await ev(() => ({ x: window.__boat.x, z: window.__boat.z }));
-  await waitTicks(page, 20);
-  await ev(() => { window.__mc.keys.delete('KeyW'); });
+  // 12 ticks stay clear of the 12x12 pool rim (20 ticks can reach it and stop).
+  await waitTicks(page, 12);
+  // Read while W is still held: the paddle state drops as soon as the next input tick
+  // sees the key released, which made the paddle assertion timing-dependent.
   const rowed = await ev(([x, z]) => {
     const m = window.__mc;
     const b = window.__boat;
@@ -113,6 +115,7 @@ try {
   check('W rows the boat forward and the camera follows',
     rowed.dz < -1.0 && Math.abs(rowed.dx) < 0.4 && rowed.speed > 0.05 && rowed.following === true,
     rowed);
+  await ev(() => { window.__mc.keys.delete('KeyW'); });
 
   const yawBefore = await ev(() => window.__boat.yaw);
   await ev(() => { window.__mc.keys.add('KeyD'); });

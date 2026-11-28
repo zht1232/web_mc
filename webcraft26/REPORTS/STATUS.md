@@ -53,6 +53,7 @@ node scripts/test-advancements.mjs            # 进度：roots/可见数/触发�
 node scripts/test-villager-trade.mjs          # 村民：职业/报价/交易/等级/补货/存档 14 项
 node scripts/test-minecart.mjs                # 矿车：轨道/弯道/坡道/动力轨/检测轨/乘坐/箱子 11 项
 node scripts/test-boat.mjs                    # 船/筏：浮力/划桨/转向/摩擦/放置/乘坐/箱船/掉落/像素差分 16 项
+node scripts/test-entity-save.mjs             # 区块实体存档：野生生物/矿车/船/掉落物/经验球 保存+重载 9 项
 node scripts/test-icons.mjs                   # 物品图标
 node scripts/test-taa.mjs                     # TAA
 npx tsx scripts/test-mesher.mts               # 区块网格 64 项
@@ -97,6 +98,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化；`test-villager-trade` 14 项 |
 | 矿车 | ✅ | 2026-11-22：普通/箱子矿车实体与模型；`NewMinecartBehavior` 轨道跟随（直线/拐弯/坡道/摩擦/动力轨加速/未供能动力轨刹停）、检测铁轨占用供电、物品放置、右键乘坐与潜行下车、箱子矿车 27 格 GUI、生存破坏掉落；`test-minecart` 11 项 |
 | 船 / 筏 | ✅ | 2026-11-23：10 种木材 × 普通/箱船（含竹筏）实体与模型；`AbstractBoat` 状态扫描/浮力/划桨/转向/陆地摩擦、水面吸附、物品放置（方块面或流体表面）、右键乘坐与潜行下船、箱子船 27 格 GUI（潜行右键）、`VehicleEntity` 伤害累计 40 与掉落；`test-boat` 16 项（含受控场景像素差分） |
+| 区块实体存档 | ✅ | 2026-11-23：区块 NBT `Entities` 保存野生生物（类型/位置/速度/生命/年龄/羊毛色）、矿车与船（含箱内物品）、掉落物（物品与组件）、经验球；读档按区块激活生成，不重复跑区块初始生物生成；区块离开保留带前写回实体；村民/已驯服宠物仍走世界级存档；`test-entity-save` 9 项 |
 | 更多 AI（铁傀儡、马） | ❌ | 实体工厂里没有这些类型 |
 
 ### GUI / 物品栏 / 容器
@@ -157,7 +159,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 3. 水面远处/加载瞬间偶发灰色平面：本轮未复现，保留观察；复现后查水体层/光照贴图时序。
 
 **P1（原版核心玩法缺口）**
-4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；剩余：幼年专用模型、项圈渲染、野生动物实体存档。
+4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；~~野生动物实体存档~~ ✅ 已完成区块级实体存档（见「区块实体持久化」）；剩余：幼年专用模型、项圈渲染、已保存区块的按需重载。
 5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；剩余：药箭、TNT 归属（owner）与爆炸掉落衰减、比较器/活塞等红石长尾。
 6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成列表界面 + 8 类触发器（含 `villager_trade` 与 Y 坐标谓词）；剩余：树状布局/连接线、完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
 7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；剩余：地图交易（需已填充地图/结构定位）、流浪商人、村民繁殖与铁傀儡、村民工作/睡眠日程。
@@ -383,7 +385,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   回归 `test-redstone` 28/28、`test-mobs-render` 20/20、`test-entities`、`test-save`、`smoke`。
   截图 `shots/diag/minecart.png`、`minecart-probe.png`、`minecart-chest.png`。
 - 剩余：矿车之间/矿车与生物的推挤拾取、hurt 动画与多段耐久、漏斗/TNT/熔炉矿车、
-  铁轨坡道的完整 `RailState.place`、矿车实体随区块存档、乘坐时第一人称视角偏移微调。
+  铁轨坡道的完整 `RailState.place`、乘坐时第一人称视角偏移微调。
 
 ### 船 / 筏（2026-11-23）
 
@@ -415,5 +417,32 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   破坏掉落、创造无掉落、oak/箱船像素差分轮廓、划桨动画差分）；回归 `test-minecart`
   11/11、`test-villager-trade` 14/14、`test-advancements` 7/7、`test-containers` 全过、
   `test-redstone` 28/28、`test-taming` 7/7、`smoke` 19/19。
-- 剩余：气泡柱、划桨音效、船推挤其它实体、船/箱船实体随区块存档、箱船战利品表、
+- 剩余：气泡柱、划桨音效、船推挤其它实体、箱船战利品表、
   船桨在水面/陆地的粒子与音效、骑马/铁傀儡等后续 AI。
+
+### 区块实体持久化（2026-11-23）
+
+- 存档格式：`SavedChunkEntity`（`type / Pos / Rotation / Motion / Health / data`）写入区块
+  NBT 的 `Entities` 列表（与 `block_entities` 并列）；`ChunkSerializer` 按原版实体 NBT
+  的 `id + Pos + Rotation + Motion + Health` 读写，类型附加数据放在 `data`。
+  `LevelChunk` 新增 `entities / entitiesDirty / hadEntities`。
+- 保存：每个保存周期开始时 `Game.captureChunkEntities()` 把玩家保留带内的实体按区块
+  分组写回 `chunk.entities` 并标记 `entitiesDirty`；`WorldSaveManager.beforeSave` 保证
+  只在周期开头采集一次（否则移动中的实体会让分片 flush 永远写不完）。`flushDirty` 的
+  脏条件加入 `entitiesDirty`，写完清空。采集排除村民与已驯服宠物（仍走世界级
+  `villagers/pets` 存档，避免重复）。
+- 卸载：`Game.unloadFarChunks` 在区块离开保留带前把该区块内的活实体快照写回并通过
+  `WorldSaveManager.saveChunk` 立即持久化；`hadEntities` 标记保证“实体全部死亡后走远”
+  也会把空列表写回，不会在下次读档复活。
+- 加载：`restoreWorld` 把已保存区块标记为 `knownChunk`，阻止区块初始生物生成再刷一波；
+  每 tick `activateSavedChunkEntities()` 对进入渲染距离的区块生成其 `Entities` 并清空
+  内存列表。恢复内容：生物类型/位置/朝向/速度/生命/年龄/羊羊毛色与剪毛状态；矿车与
+  船的 27 格箱内物品；掉落物物品与组件；经验球数值。
+- 验证：`tsc` 0；`node scripts/test-entity-save.mjs` **9/9**（在天空隔离场地放置牛/羊/
+  箱船/箱矿车/掉落钻石/经验球，走完整 `autosave.flushNow` 后用 `?world=` 重载，逐项核对
+  数量、生命、坐标、物品与经验值，并断言没有重复生成）；回归 `test-minecart` 11/11、
+  `test-boat` 16/16、`test-villager-trade` 14/14、`test-taming` 7/7、`smoke` 19/19。
+- 剩余：区块被移出内存后仍走“按种子重新生成”的旧路径（没有从存储按需重载区块），
+  因此未修改过的自然区块走远再回来会丢失实体；下一步需要把 `ChunkProvider` 接到
+  IndexedDB 的已保存区块。箭/投掷物/TNT 等瞬时实体的存档、实体装备/药水效果等 NBT
+  长尾也待补。

@@ -54,6 +54,8 @@ node scripts/test-villager-trade.mjs          # 村民：职业/报价/交易/�
 node scripts/test-minecart.mjs                # 矿车：轨道/弯道/坡道/动力轨/检测轨/乘坐/箱子 11 项
 node scripts/test-boat.mjs                    # 船/筏：浮力/划桨/转向/摩擦/放置/乘坐/箱船/掉落/像素差分 16 项
 node scripts/test-entity-save.mjs             # 区块实体存档：野生生物/矿车/船/掉落物/经验球 保存+重载 11 项
+node scripts/test-item-entity.mjs             # 掉落物：3D 方块模型/地面展示变换/5 份堆叠/床 composite 13 项
+node scripts/test-hand-reference.mjs          # 第一人称手持石头 vs 原版参考图剪影比对 4 项
 node scripts/test-golem-villager.mjs          # 铁傀儡 + 村民繁殖：图案生成/裂纹/治疗/战斗/食物拾取/宝宝 22 项
 node scripts/test-village-life.mjs            # 村民农业：食物分享/收割补种/面包烘焙/存档 8 项
 node scripts/test-villager-sleep.mjs          # 村民睡眠/昼夜作息 + 村庄铁傀儡生成 13 项
@@ -177,7 +179,10 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 
 **P0（视觉/功能明显错误，先做）**
 1. ~~实体装备层~~ ✅ 已完成：主手武器（骷髅弓/凋灵骷髅石剑）+ 人形四层护甲。
-2. 第一人称手持物逐项对参考图微调：尺寸/位置/旋转（`HandRenderer.drawItem` + `public/mc/hand/display.json`）。
+2. ~~第一人称手持物逐项对参考图微调~~ ✅ 2026-11-28 验证：1280x720 / yaw 30 / pitch 22 /
+   stone 选中，`scripts/test-hand-reference.mjs` 对手持石头剪影与
+   `shots/ref/ref-day-6000-hand-stone.png` 逐项比对——顶部 y=553、左缘 x=1070、
+   宽 182、高 62 完全一致，灰色像素数 7729 vs 7713（0.2%）。手持方块与参考图已对齐。
 3. 水面远处/加载瞬间偶发灰色平面：本轮未复现，保留观察；复现后查水体层/光照贴图时序。
 
 **P1（原版核心玩法缺口）**

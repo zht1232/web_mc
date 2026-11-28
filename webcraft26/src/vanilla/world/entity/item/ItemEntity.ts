@@ -49,9 +49,10 @@ export class ItemEntity extends Entity {
     }
     this.age++;
     if (this.pickupDelay > 0) this.pickupDelay--;
-    // ItemEntityRenderer: bob = sin(age/10 + bobOffs) * 0.1 + 0.1; spin = age/20 radians.
+    // ItemEntityRenderer: bob = sin(age/10 + bobOffs) * 0.1 + 0.1; ItemEntity.getSpin(age, bobOffs)
+    // is age/20 + bobOffs RADIANS (a full turn every ~126 ticks, not age/20*2PI).
     this.bob = Math.sin(this.age / 10 + this.bobOffs) * 0.1 + 0.1;
-    this.spin = (this.age / 20) * Math.PI * 2 + this.bobOffs;
+    this.spin = this.age / 20 + this.bobOffs;
     this.yRotO = this.yaw;
     this.yaw = (this.spin * 180) / Math.PI;
 

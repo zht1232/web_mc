@@ -52,6 +52,7 @@ interface LivingLike {
 }
 
 const DEG = Math.PI / 180;
+const ZERO_OFFSET: readonly [number, number, number] = [0, 0, 0];
 
 /** floats per entity vertex: pos3 uv2 tint3 light2 overlay2 */
 export const FLOATS_PER_VERTEX = 12;
@@ -338,6 +339,8 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     batch: EntityBatch,
     texId: number,
     partialTick: number,
+    /** World-space offset added after the root matrix (ItemEntity stacked copies). */
+    offset: readonly [number, number, number] = ZERO_OFFSET,
   ): void {
     const rx = e.xo + (e.x - e.xo) * partialTick;
     const ry = e.yo + (e.y - e.yo) * partialTick;
@@ -422,6 +425,9 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
 
     // EntityRenderer pose scale (baby) then CreeperRenderer.scale
     this.rootMatrix(e, partialTick, mE, bodyRot, deathDeg);
+    if (offset[0] !== 0 || offset[1] !== 0 || offset[2] !== 0) {
+      mE[3] += offset[0]; mE[7] += offset[1]; mE[11] += offset[2];
+    }
 
     // ---- per-part matrices ---------------------------------------------------
     const parts = model.parts;

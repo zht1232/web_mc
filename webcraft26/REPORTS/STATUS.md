@@ -153,7 +153,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 床睡觉 | ✅ | 夜晚/雷暴、8 格内无怪物、床上方无遮挡才能入睡；60 tick 后跳到次日清晨、清雨、设置重生点并持久化；黑屏淡入淡出；睡眠中禁止移动/挖掘/攻击 |
 | 村民交易 | ✅ | 成年村民右键打开交易界面；报价成本/结果/使用次数、补货（每天 2 次）、等级提升追加报价；地图交易未接（流浪商人见下行） |
 | 成就（Advancements） | ⚠️ | 见「GUI」进度行：列表界面 + 8 类基础触发器（含 `villager_trade`）可用；树状布局与完整条件待补 |
-| 经验球/掉落物 | ✅ | |
+| 经验球/掉落物 | ✅ | 掉落物用物品图标 sprite（非 4px 占位），2026-11-28 补齐 26.2 `ItemEntityRenderer`：`spin=age/20+bobOffs` 弧度（此前多乘 2π，20 tick 就转一圈）、`bob` 加 `ITEM_MIN_HOVER_HEIGHT 0.0625`、按 `ItemClusterRenderState.getRenderedAmount` 渲染 1/2/3/4/5 份（≤1→1、≤16→2、≤32→3、≤48→4、其余→5），扁平 sprite 沿局部 Z 0.09375 排开 + ±0.075 随机 X/Y（种子 = 物品 id + damage）；`test-item-entity` 6 项。块状物品的真实 3D 模型仍走图标 sprite（后续批次） |
 
 ### 世界生成 / 存档
 | 项 | 状态 | 说明 |
@@ -751,5 +751,21 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 验证：`tsc` 0；`test-creative-inventory` **10/10**、
   `test-player-motion` **6/6**（飞行三速 + 草/草方块粒子色）、
   `test-water-reflect` 7/7、`test-mob-equipment` 13/13。
+
+### 掉落物渲染（2026-11-28）
+
+- `ItemEntity.getSpin(age, bobOffs)` 是 `age/20 + bobOffs` 弧度；旧代码
+  `(age/20)*2π` 让掉落物 20 tick 转一整圈，现按 `ItemEntity.java:429` 修正。
+- bob 高度补 `ItemEntityRenderer.ITEM_MIN_HOVER_HEIGHT = 0.0625`。
+- 堆叠数量按 `ItemClusterRenderState.getRenderedAmount` 渲染 1–5 份：
+  扁平模型沿局部 Z 以 0.09375 排开，后续份再叠加 ±0.075 的随机 X/Y
+  （`RandomSource.setSeed(itemId + damage)`；`EntityRenderer.appendModel`
+  增加世界偏移参数）。
+- 验证：`tsc` 0；`node scripts/test-item-entity.mjs` **6/6**
+  （64 堆叠每帧 5 份模型、单物品 1 份、spin/bob 与 Java 公式逐值一致、
+  两帧截图 7813 像素变化）；回归 `test-entity-save` 11/11。
+- 未完成：块状物品掉落实体仍用图标 sprite，未用 3D 方块模型；
+  `music/record` 音频资源不在仓库（无法凭空生成）。
+
 
 

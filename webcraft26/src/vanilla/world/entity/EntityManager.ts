@@ -105,7 +105,8 @@ export class EntityManager implements MobWorld {
   private readonly chunksPerTick: number;
 
   /** Set by Game: forwards explosion damage/block destruction to the world. */
-  explosionHandler?: (x: number, y: number, z: number, power: number, interaction?: 'mob' | 'tnt') => void;
+  explosionHandler?: (x: number, y: number, z: number, power: number,
+    interaction?: 'mob' | 'tnt', owner?: Targetable | null) => void;
   /** Set by Game: local player game mode, used by targeting conditions. */
   playerGameModeProvider?: () => string;
   /** Set by Game: non-empty main-hand + offhand item names, used by TemptGoal. */
@@ -178,9 +179,10 @@ export class EntityManager implements MobWorld {
   removeEntity(e: Entity): void { e.remove(); }
 
   /** Source: Explosion. Game installs this to damage the player + break blocks. */
-  explode(x: number, y: number, z: number, power: number, interaction: 'mob' | 'tnt' = 'mob'): void {
+  explode(x: number, y: number, z: number, power: number, interaction: 'mob' | 'tnt' = 'mob',
+    owner: Targetable | null = null): void {
     if (this.explosionHandler) {
-      this.explosionHandler(x, y, z, power, interaction);
+      this.explosionHandler(x, y, z, power, interaction, owner);
       return;
     }
     const r2 = power * power;

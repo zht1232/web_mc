@@ -36,7 +36,7 @@ import { ThrownEgg } from '../vanilla/world/entity/projectile/ThrownEgg.js';
 import { ThrownPotion } from '../vanilla/world/entity/projectile/ThrownPotion.js';
 import { AreaEffectCloud } from '../vanilla/world/entity/AreaEffectCloud.js';
 import { RedstoneSystem } from '../vanilla/world/redstone/RedstoneSystem.js';
-import type { Entity } from '../vanilla/world/entity/Entity.js';
+import type { Entity, Targetable } from '../vanilla/world/entity/Entity.js';
 import { LivingEntity } from '../vanilla/world/entity/LivingEntity.js';
 import { Mob } from '../vanilla/world/entity/Mob.js';
 import { MobCategory } from '../vanilla/world/entity/MobCategory.js';
@@ -645,7 +645,7 @@ export class Game {
         );
       }
     };
-    this.entityManager.explosionHandler = (x, y, z, power, interaction) => this.explode(x, y, z, power, interaction);
+    this.entityManager.explosionHandler = (x, y, z, power, interaction, owner) => this.explode(x, y, z, power, interaction, owner);
     // TargetingConditions.forCombat().ignoreCreative() and TemptGoal's hand check need the
     // player's live game mode / held items; the vanilla entity layer has no direct Game ref.
     this.entityManager.playerGameModeProvider = () => this.options.gamemode;
@@ -2326,6 +2326,9 @@ export class Game {
   private playerFireTicks = 0;
   /** Vanilla mobGriefing gamerule: MOB explosions break blocks while true. */
   private mobGriefing = true;
+  /** GameRules.TNT_EXPLOSION_DROP_DECAY / MOB_EXPLOSION_DROP_DECAY (both default true). */
+  private tntExplosionDropDecay = true;
+  private mobExplosionDropDecay = true;
 
   // ---- bed sleeping (ServerPlayer.startSleepInBed / stopSleepInBed) ----
   private sleeping = false;
@@ -2427,73 +2430,73 @@ export class Game {
   };
 
   /**
-   * Explosion (net/minecraft/world/level/Explosion): damages entities by distance and
-   * breaks the blocks of the blast sphere (dropping their loot through the normal loot tables).
-   *
-   * f = power * 2 (Explosion.radius); q = 1 - d/f. Damage follows
-   * `(q*q + q) / 2 * 7 * f + 1`, so a point-blank TNT is lethal like vanilla.
+   * Explosion (net/minecraft/world/level/ServerExplosion): damages entities by distance and
+   * breaks blocks via the vanilla 1352 boundary rays. Block destruction uses the blast
+   * radius (power), while damage/knockback use radius * 2; TNT/mob explosions apply the
+   * default explosionDropDecay gamerules (each dropped item survives with chance 1/radius).
    * `interaction` is Level.ExplosionInteraction: TNT always breaks blocks, mob
    * explosions (creeper) only while the mobGriefing gamerule is on.
    */
-  private explode(x: number, y: number, z: number, power: number, interaction: 'mob' | 'tnt' = 'mob'): void {
+  private explode(x: number, y: number, z: number, power: number,
+    interaction: 'mob' | 'tnt' = 'mob', owner: Targetable | null = null): void {
     // Explosion.java: playSound(EntityType.GENERIC_EXPLODE, 4.0F, (1 + (random - random) * 0.2))
     this.sounds.play('entity.generic.explode', x, y, z, 4, 0.9 + Math.random() * 0.2);
     spawnExplosion(x, y, z, power / 2);
-    const f = power * 2;
-    const radius = Math.max(1, Math.floor(f));
+    const radius = Math.max(1e-5, power);
+    const damageRange = power * 2;
     // Level.ExplosionInteraction.MOB destroys blocks only while the mobGriefing gamerule is on.
     if (interaction === 'tnt' || this.mobGriefing) {
-      const cx = Math.floor(x), cy = Math.floor(y), cz = Math.floor(z);
-      const destroyed: { x: number; y: number; z: number }[] = [];
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dz = -radius; dz <= radius; dz++) {
-          for (let dx = -radius; dx <= radius; dx++) {
-            const bx = cx + dx, by = cy + dy, bz = cz + dz;
-            // Explosion.explode: distance from the blast centre to the block centre.
-            if (Math.hypot(bx + 0.5 - x, by + 0.5 - y, bz + 0.5 - z) > f) continue;
-            const state = this.level.getBlockState(bx, by, bz);
-            if (state === 0) continue;
-            const meta = this.mc.blockOf(state);
-            if (meta.hardness < 0 || meta.resistance > 100) continue; // bedrock / barrier
-            // TntBlock.wasExploded: a nearby TNT block is primed, not destroyed.
-            if (meta.name === 'tnt') {
-              this.level.setBlockState(bx, by, bz, 0);
-              this.primeTnt(bx + 0.5, by, bz + 0.5, 10 + Math.floor(Math.random() * 10));
-              destroyed.push({ x: bx, y: by, z: bz });
-              continue;
-            }
-            const drops = this.survival.breakBlock((qx, qy, qz) => this.level.getBlockState(qx, qy, qz), bx, by, bz, true);
-            this.level.setBlockState(bx, by, bz, 0);
-            destroyed.push({ x: bx, y: by, z: bz });
-            for (const stack of drops) this.dropItem(stack, bx, by, bz);
-            this.breakEffects(state, bx, by, bz);
-          }
+      const destroyed = this.collectExplosionBlocks(x, y, z, radius);
+      const decay = interaction === 'tnt' ? this.tntExplosionDropDecay : this.mobExplosionDropDecay;
+      const rng = this.survival.random;
+      for (const pos of destroyed) {
+        const state = this.level.getBlockState(pos.x, pos.y, pos.z);
+        if (state === 0) continue;
+        const meta = this.mc.blockOf(state);
+        // TntBlock.wasExploded: a nearby TNT block is primed, not destroyed.
+        if (meta.name === 'tnt') {
+          this.level.setBlockState(pos.x, pos.y, pos.z, 0);
+          this.primeTnt(pos.x + 0.5, pos.y, pos.z + 0.5, 10 + Math.floor(Math.random() * 10), owner);
+          continue;
         }
+        const drops = this.survival.breakBlock((qx, qy, qz) => this.level.getBlockState(qx, qy, qz), pos.x, pos.y, pos.z, true);
+        this.level.setBlockState(pos.x, pos.y, pos.z, 0);
+        for (const stack of drops) {
+          // ApplyExplosionDecay: every item survives with probability 1/radius.
+          if (decay) {
+            let kept = 0;
+            for (let i = 0; i < stack.getCount(); i++) if (rng.nextFloat() <= 1 / radius) kept++;
+            if (kept <= 0) continue;
+            stack.setCount(kept);
+          }
+          this.dropItem(stack, pos.x, pos.y, pos.z);
+        }
+        this.breakEffects(state, pos.x, pos.y, pos.z);
       }
-      this.updateNeighbors(Math.floor(x), Math.floor(y), Math.floor(z));
+      for (const pos of destroyed) this.updateNeighbors(pos.x, pos.y, pos.z);
       this.redstone.onBlocksChanged(destroyed);
     }
 
-    // Explosion.finalizeExplosion: knockback + damage for every living entity inside f.
+    // Explosion.finalizeExplosion: knockback + damage for every living entity inside radius*2.
     for (const e of this.entityManager.getEntities()) {
       if (e.isRemoved() || !(e instanceof LivingEntity) || !e.isAlive()) continue;
       const ey = e.y + e.getHeight() / 2;
       const d = Math.hypot(e.x - x, ey - y, e.z - z);
-      if (d >= f) continue;
-      const q = 1 - d / f;
+      if (d >= damageRange) continue;
+      const q = 1 - d / damageRange;
       const nx = e.x - x, ny = ey - y, nz = e.z - z;
       const len = Math.hypot(nx, ny, nz) || 1;
       e.push((nx / len) * q, (ny / len) * q, (nz / len) * q);
-      e.hurt(((q * q + q) / 2) * 7 * f + 1, null);
+      e.hurt(((q * q + q) / 2) * 7 * damageRange + 1, owner);
     }
 
     // Player damage: creative players are invulnerable (spectator is not a supported mode yet).
     if (this.options.gamemode !== 'creative') {
       const px = this.player.pos.x, py = this.player.pos.y + 0.9, pz = this.player.pos.z;
       const d = Math.hypot(px - x, py - y, pz - z);
-      if (d < f) {
-        const q = 1 - d / f;
-        this.survival.damage(((q * q + q) / 2) * 7 * f + 1, 'explosion');
+      if (d < damageRange) {
+        const q = 1 - d / damageRange;
+        this.survival.damage(((q * q + q) / 2) * 7 * damageRange + 1, 'explosion');
         const nx = px - x, ny = py - y, nz = pz - z;
         const len = Math.hypot(nx, ny, nz) || 1;
         this.player.vel = new Vec3(
@@ -2505,11 +2508,55 @@ export class Game {
     }
   }
 
+  /**
+   * ServerExplosion.calculateExplodedPositions: 1352 rays from the 16x16x16 cube boundary,
+   * each starting with radius * (0.7 .. 1.3) and losing (resistance + 0.3) * 0.3 per 0.3
+   * step, plus the constant 0.225 decay. Only blocks still reached are returned.
+   */
+  private collectExplosionBlocks(x: number, y: number, z: number, radius: number): { x: number; y: number; z: number }[] {
+    const rng = this.survival.random;
+    const found = new Map<string, { x: number; y: number; z: number }>();
+    const minY = this.level.minY;
+    const maxY = this.level.minY + this.level.height - 1;
+    for (let xx = 0; xx < 16; xx++) {
+      for (let yy = 0; yy < 16; yy++) {
+        for (let zz = 0; zz < 16; zz++) {
+          if (xx !== 0 && xx !== 15 && yy !== 0 && yy !== 15 && zz !== 0 && zz !== 15) continue;
+          let xd = (xx / 15) * 2 - 1;
+          let yd = (yy / 15) * 2 - 1;
+          let zd = (zz / 15) * 2 - 1;
+          const len = Math.hypot(xd, yd, zd);
+          if (len === 0) continue;
+          xd /= len; yd /= len; zd /= len;
+          let remaining = radius * (0.7 + rng.nextFloat() * 0.6);
+          let px = x, py = y, pz = z;
+          while (remaining > 0) {
+            const bx = Math.floor(px), by = Math.floor(py), bz = Math.floor(pz);
+            if (by < minY || by > maxY) break;
+            const state = this.level.getBlockState(bx, by, bz);
+            if (state !== 0) {
+              // BlockBehaviour.getExplosionResistance: fluids/blocks use their blast resistance.
+              const resistance = this.mc.blockOf(state).resistance;
+              remaining -= (resistance + 0.3) * 0.3;
+            }
+            if (remaining > 0 && state !== 0) {
+              found.set(`${bx},${by},${bz}`, { x: bx, y: by, z: bz });
+            }
+            px += xd * 0.3; py += yd * 0.3; pz += zd * 0.3;
+            remaining -= 0.22500001;
+          }
+        }
+      }
+    }
+    return [...found.values()];
+  }
+
   /** PrimedTnt: create the entity and play TNT_PRIMED (TntBlock.prime). */
-  private primeTnt(x: number, y: number, z: number, fuse: number): void {
+  private primeTnt(x: number, y: number, z: number, fuse: number, owner: Targetable | null = null): void {
     const tnt = this.entityManager.spawn('tnt', x, y, z);
     if (!(tnt instanceof PrimedTnt)) return;
     tnt.setFuse(fuse);
+    tnt.setOwner(owner);
     this.sounds.play('entity.tnt.primed', x, y, z, 1, 1);
   }
 
@@ -3776,7 +3823,7 @@ export class Game {
     if (clicked !== 0 && this.mc.blockOf(clicked).name === 'tnt') {
       this.level.setBlockState(hit.x, hit.y, hit.z, 0);
       this.updateNeighbors(hit.x, hit.y, hit.z);
-      this.primeTnt(hit.x + 0.5, hit.y, hit.z + 0.5, 80);
+      this.primeTnt(hit.x + 0.5, hit.y, hit.z + 0.5, 80, this.entityManager.getPlayerTarget());
       if (this.options.gamemode !== 'creative') this.survival.getSelectedStack().hurtAndBreak(1);
       this.useCooldown = 10;
       return;

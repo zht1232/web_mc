@@ -5,7 +5,7 @@
 // TntBlock; the explosion itself is resolved by the world hook (Game) so block
 // destruction, chain reactions and entity damage stay in one place.
 
-import { Entity } from '../Entity.js';
+import { Entity, type Targetable } from '../Entity.js';
 import { entityType } from '../EntityType.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
 
@@ -13,6 +13,8 @@ export class PrimedTnt extends Entity {
   fuse = 80;
   /** Explosion.power for TNT (TntBlock sets 4.0F). */
   explosionPower = 4;
+  /** PrimedTnt owner: the player who lit the TNT (kill credit / rare loot). */
+  owner: Targetable | null = null;
 
   constructor(level: ClientLevel, x = 0, y = 0, z = 0) {
     super(entityType('tnt'), level);
@@ -21,6 +23,8 @@ export class PrimedTnt extends Entity {
 
   /** PrimedTnt.setFuse. */
   setFuse(ticks: number): void { this.fuse = ticks; }
+  /** PrimedTnt.setOwner. */
+  setOwner(owner: Targetable | null): void { this.owner = owner; }
 
   tick(): void {
     this.baseTick();
@@ -37,7 +41,7 @@ export class PrimedTnt extends Entity {
     if (this.fuse <= 0) {
       this.remove();
       // PrimedTnt.explode: Explosion at getY(0.0625) with Level.ExplosionInteraction.TNT.
-      this.world?.explode?.(this.x, this.y + 0.0625, this.z, this.explosionPower, 'tnt');
+      this.world?.explode?.(this.x, this.y + 0.0625, this.z, this.explosionPower, 'tnt', this.owner);
     }
   }
 }

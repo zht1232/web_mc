@@ -70,7 +70,7 @@ export interface MobWorld {
    * `interaction` is Level.ExplosionInteraction: mob explosions respect the
    * mobGriefing gamerule, TNT always breaks blocks.
    */
-  explode?(x: number, y: number, z: number, power: number, interaction?: 'mob' | 'tnt'): void;
+  explode?(x: number, y: number, z: number, power: number, interaction?: 'mob' | 'tnt', owner?: Targetable | null): void;
 }
 
 export interface DamageSource {

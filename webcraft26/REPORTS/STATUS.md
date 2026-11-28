@@ -57,6 +57,7 @@ node scripts/test-entity-save.mjs             # 区块实体存档：野生生�
 node scripts/test-golem-villager.mjs          # 铁傀儡 + 村民繁殖：图案生成/裂纹/治疗/战斗/食物拾取/宝宝 22 项
 node scripts/test-village-life.mjs            # 村民农业：食物分享/收割补种/面包烘焙/存档 8 项
 node scripts/test-mob-equipment.mjs           # 怪物装备与稀有掉落：护甲分布/武器/骷髅头/铜锭 13 项
+node scripts/test-explosion.mjs               # 爆炸：射线弹坑/抗性/掉落衰减/TNT 归属 6 项
 node scripts/test-icons.mjs                   # 物品图标
 node scripts/test-taa.mjs                     # TAA
 npx tsx scripts/test-mesher.mts               # 区块网格 64 项
@@ -127,7 +128,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 合成/熔炼/箱子 | ✅ | 见上 |
 | 剪刀（羊） | ✅ | 见「实体」；其他剪刀用途（树叶、藤蔓）未接 |
 | 弓/箭（玩家） | ✅ | 蓄力/释放、箭消耗与弓耐久、命中 mob（含 owner 过滤） |
-| 桶 / 打火石 / TNT | ✅ | 水/岩浆桶放置与装取、点火；TNT 点燃/引信/爆炸/连锁/BLOCK 破坏与生物伤害；红石信号点燃已接 |
+| 桶 / 打火石 / TNT | ✅ | 水/岩浆桶放置与装取、点火；TNT 点燃/引信/连锁；2026-11-28 起爆炸改用 `ServerExplosion` 的 1352 条边界射线（按方块爆炸抗性逐 0.3 步衰减，泥土弹坑远大于石头）、`ApplyExplosionDecay` 默认掉落衰减（每件物品 1/半径 概率保留）与 `PrimedTnt` owner（玩家点燃的 TNT 把击杀/稀有掉落记给玩家）；红石信号点燃已接 |
 | 钓鱼 | ✅ | 鱼竿抛竿/浮漂漂浮/5–25s 咬钩/收竿掉落（鱼 85%、垃圾 15%，海洋幸运才出宝藏）、1–6 XP、鱼竿耐久、`fish_caught` 统计 |
 | 附魔台 | ✅ | 书架功率 0–15、三档等级花费、青金石消耗、按物品类别随机词条与等级、`enchant_item` 统计与音效 |
 | 药水 / 酿造 | ✅ | 14 种药水 + 水/粗制/浓稠/平凡；红石延长、萤石强化、发酵蛛眼腐化；火药→喷溅、龙息→滞留；酿造台 3 瓶 + 原料 + 烈焰粉 20 燃料、400 tick；右键开酿造台；玻璃瓶装水；饮用应用效果并归还玻璃瓶；喷溅/滞留投掷物、距离衰减范围效果、滞留云（半径 3/600 tick/0.25 时长）；效果与 `potion` 组件随存档保存 |
@@ -164,7 +165,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 
 **P1（原版核心玩法缺口）**
 4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；~~野生动物实体存档~~ ✅ 已完成区块级实体存档（见「区块实体持久化」）；剩余：幼年专用模型、项圈渲染、大型世界的数据库按需区块加载。
-5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；剩余：药箭、TNT 归属（owner）与爆炸掉落衰减、比较器/活塞等红石长尾。
+5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；~~TNT 归属与爆炸掉落衰减~~ ✅ 已按 `ServerExplosion` 射线算法 + `ApplyExplosionDecay` + `PrimedTnt.owner` 重写；剩余：药箭、爆炸可见度（`getSeenPercent` 遮挡）、比较器/活塞等红石长尾。
 6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成列表界面 + 8 类触发器（含 `villager_trade` 与 Y 坐标谓词）；剩余：树状布局/连接线、完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
 7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；~~村民繁殖与铁傀儡~~ ✅ 已加入食物点繁殖/宝宝模型与南瓜图案生成的铁傀儡；~~村民农业~~ ✅ 农民收割/补种/烤面包 + 食物分享；剩余：地图交易（需已填充地图/结构定位）、流浪商人、袭击、村民睡眠/工作日程（昼夜作息与床）、村庄八卦生成铁傀儡。
 8. ~~夜间怪物装备/掉落表与自然生成权重对齐~~ ✅ 已完成原版护甲分布/武器/副手与玩家击杀稀有掉落（僵尸铁锭·胡萝卜·马铃薯、溺尸铜锭、凋灵骷髅头）；自然生成权重本就来自 vanilla `worldgen.json` 的 biome spawners。
@@ -529,3 +530,25 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   300 凋灵骷髅头、200 溺尸铜锭）；`npx tsx scripts/test-entities.mts` 全过。
 - 剩余：非骷髅类人形生物的通用主手物品渲染（僵尸剑/溺尸三叉戟/猪灵金剑目前只影响
   掉落，不显示在手）、附魔装备生成、僵尸增援/敲门、溺尸三叉戟投掷与鹦鹉螺坐骑。
+
+### 爆炸模型重写（2026-11-28）
+
+- 方块破坏：`Game.explode` 不再使用 `power * 2` 球体，而是逐行移植
+  `ServerExplosion.calculateExplodedPositions`——16³ 边界 1352 条射线，每条初始
+  `radius * (0.7 + rand * 0.6)`，每 0.3 格扣 `(爆炸抗性 + 0.3) * 0.3` 再扣固定
+  0.225；只有仍有余量的方块被破坏。TNT（power 4）在泥土里形成约 4 格半径的弹坑，
+  在石头里只炸掉紧贴中心的少量方块；同时按 `ServerLevel.explode` 的 block interaction
+  区分 TNT / mob（mobGriefing）两类爆炸。
+- 伤害：生物/玩家伤害与击退仍用 `radius * 2` 的衰减距离（与原版 `getEntityDamageAmount`
+  一致），现在与方块破坏半径分开。
+- 掉落衰减：新增 `GameRules.tnt/mob_explosion_drop_decay` 默认值（true）与
+  `ApplyExplosionDecay`——每个掉落物品以 `1 / radius` 概率保留（TNT 25%、苦力怕
+  33%），再走 `ItemEntity` 掉落。
+- 归属：`PrimedTnt.owner` / `setOwner`；打火石点燃的 TNT 记录玩家，爆炸伤害用 owner
+  作为攻击者，因此 `lastHurtBy`、击杀统计与玩家专属稀有掉落都能正确记到玩家；连锁
+  TNT 继承爆炸的间接来源。
+- 验证：`tsc` 0；`node scripts/test-explosion.mjs` **6/6**（15×7×15 泥土立方 222 块
+  被毁、最远 4.12 格、54 个掉落；同尺寸石头立方仅 25 块；玩家点燃的 TNT 把 100 血
+  铁傀儡打到 72.6 且 `lastHurtBy` 为玩家）；回归 `test-redstone` 28/28、`smoke` 19/19。
+- 剩余：`getSeenPercent` 方块遮挡对伤害/击退的削减、爆炸掉落堆叠合并、TNT 矿车、
+  爆炸击退对玩家的 `hurtMarked` 处理。

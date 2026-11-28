@@ -22,8 +22,9 @@
 // frame is drawn straight into the default framebuffer exactly like the pre-shader build.
 
 import { GlProgram, mat4Invert } from '../gl/Gl.js';
+import { setComplementSkyUniforms, type ComplementSkyUniforms } from '../environment/ComplementSky.js';
 import {
-  BLUR_FRAG, BLOOM_PREFILTER_FRAG, COMPOSITE_FRAG, FULLSCREEN_VERT, FXAA_FRAG,
+  BLUR_FRAG, BLOOM_PREFILTER_FRAG, CLOUD_FRAG, COMPOSITE_FRAG, FULLSCREEN_VERT, FXAA_FRAG,
   TAA_FRAG, UPSAMPLE_FRAG, VOLUMETRIC_FRAG,
 } from './PostShaders.js';
 
@@ -50,10 +51,30 @@ export interface VolumetricParams {
   eyeBrightness: number;
 }
 
+/**
+ * Per-frame inputs for the volumetric-cloud pass. The cloud colours live in the sky uniform
+ * block (cloudColors.glsl is CPU-evaluated in ComplementSky.ts).
+ */
+export interface CloudParams {
+  cameraX: number; cameraY: number; cameraZ: number;
+  shadow0: WebGLTexture | null;
+  shadow1: WebGLTexture | null;
+  lightViewProj0: Float32Array;
+  lightViewProj1: Float32Array;
+  texel0: number;
+  texel1: number;
+  noise: WebGLTexture | null;
+  sky: ComplementSkyUniforms;
+  /** Drift clock in seconds (1 block/s, the pack's CLOUD_SPEED_MULT 100). */
+  windTime: number;
+}
+
 /** Bloom mip count per tier. Low is the "no bloom, no FXAA" tier required by the task. */
 const BLOOM_MIPS: Record<PostQuality, number> = { off: 0, low: 0, medium: 4, high: 5, ultra: 6 };
 /** Sun shadow map resolution per tier (task: 1024 / 2048 / 4096, 2048 default). */
 export const SHADOW_SIZES: Record<PostQuality, number> = { off: 0, low: 1024, medium: 2048, high: 2048, ultra: 4096 };
+/** CLOUD_ALT1 (common.glsl) plus the vanilla layer height offset: the volumetric slab centre. */
+const CLOUD_ALTITUDE = 192.33;
 
 interface BloomMip {
   tex: WebGLTexture;
@@ -78,6 +99,8 @@ export interface PostStats {
   taa: boolean;
   /** Volumetric light (god rays) rendered this frame. */
   volumetric: boolean;
+  /** Volumetric clouds composited this frame. */
+  clouds: boolean;
 }
 
 export class PostProcessor {
@@ -88,6 +111,7 @@ export class PostProcessor {
   private readonly upsample: GlProgram;
   private readonly taaPass: GlProgram;
   private readonly volumetric: GlProgram;
+  private readonly clouds: GlProgram;
 
   private readonly quadVao: WebGLVertexArrayObject;
   private readonly blackTex: WebGLTexture;
@@ -117,6 +141,13 @@ export class PostProcessor {
   private volHeight = 0;
   private volumetricParams: VolumetricParams | null = null;
   private volumetricUsed = false;
+  /** Half-resolution volumetric-cloud target (CLOUD_FRAG output, alpha-blended in composite). */
+  private cloudTex: WebGLTexture | null = null;
+  private cloudFbo: WebGLFramebuffer | null = null;
+  private cloudWidth = 0;
+  private cloudHeight = 0;
+  private cloudParams: CloudParams | null = null;
+  private cloudsUsed = false;
   private ldrTex: WebGLTexture | null = null;
   private ldrFbo: WebGLFramebuffer | null = null;
   private mips: BloomMip[] = [];
@@ -155,6 +186,9 @@ export class PostProcessor {
   /** 0 disables the pass entirely (the probes A/B with this). The pack's HDR add is scaled
    *  down for this display-referred pipeline (its scene sits far above 1.0, ours does not). */
   volumetricStrength = 0.3;
+  /** Volumetric clouds (replaces the vanilla voxel cloud layer while active). */
+  cloudsEnabled = true;
+  cloudsStrength = 1;
   /** 0 = normal, 1 = raw HDR scene, 2 = bloom only, 4 = SSAO mask (verification helper). */
   debug = 0;
 
@@ -235,6 +269,7 @@ export class PostProcessor {
     this.upsample = new GlProgram(gl, FULLSCREEN_VERT, UPSAMPLE_FRAG, 'post.upsample');
     this.taaPass = new GlProgram(gl, FULLSCREEN_VERT, TAA_FRAG, 'post.taa');
     this.volumetric = new GlProgram(gl, FULLSCREEN_VERT, VOLUMETRIC_FRAG, 'post.volumetric');
+    this.clouds = new GlProgram(gl, FULLSCREEN_VERT, CLOUD_FRAG, 'post.clouds');
 
     // Fullscreen triangle: (-1,-1) (3,-1) (-1,3) covers the whole clip space with one
     // primitive, so no diagonal seam and one fewer vertex than a quad.
@@ -289,6 +324,7 @@ export class PostProcessor {
       ssao: this.ssaoEnabled,
       taa: this.taaEnabled,
       volumetric: this.volumetricUsed,
+      clouds: this.cloudsUsed,
     };
   }
 
@@ -307,6 +343,18 @@ export class PostProcessor {
    */
   setVolumetricSource(params: VolumetricParams | null): void {
     this.volumetricParams = params;
+  }
+
+  /** Cloud colours + shadow cascades for this frame (null disables the pass). */
+  setCloudSource(params: CloudParams | null): void {
+    this.cloudParams = params;
+  }
+
+  /** True when the shader path owns the cloud layer (Game skips the vanilla clouds then). */
+  get cloudsHandled(): boolean {
+    return this.enabled && this.cloudsEnabled && this.cloudsStrength > 0
+      && this.qualityValue !== 'low' && this.qualityValue !== 'off'
+      && this.shadowsEnabled && this.shadowSize > 0;
   }
 
   // ------------------------------------------------------------------ targets
@@ -346,6 +394,12 @@ export class PostProcessor {
     this.volTex = null;
     this.volWidth = 0;
     this.volHeight = 0;
+    if (this.cloudFbo) gl.deleteFramebuffer(this.cloudFbo);
+    if (this.cloudTex) gl.deleteTexture(this.cloudTex);
+    this.cloudFbo = null;
+    this.cloudTex = null;
+    this.cloudWidth = 0;
+    this.cloudHeight = 0;
     for (const f of this.historyFbo) if (f) gl.deleteFramebuffer(f);
     for (const t of this.historyTex) if (t) gl.deleteTexture(t);
     this.historyFbo = [null, null];
@@ -539,6 +593,7 @@ export class PostProcessor {
     this.sceneBound = true;
     this.depthCopied = false;
     this.volumetricUsed = false;
+    this.cloudsUsed = false;
     return true;
   }
 
@@ -636,6 +691,7 @@ export class PostProcessor {
     const colorTex = (this.taaEnabled && this.sceneTex) ? (this.runTaa() ?? this.sceneTex) : this.sceneTex;
     const bloom = this.mips.length > 0 ? this.runBloomChain(colorTex) : this.blackTex;
     const volumetricTex = this.runVolumetric();
+    const cloudTex = this.runClouds();
     const useFxaa = this.qualityValue !== 'low';
 
     // Composite -> LDR intermediate (so FXAA can read it), or straight to the screen. When the
@@ -660,6 +716,10 @@ export class PostProcessor {
     gl.bindTexture(gl.TEXTURE_2D, volumetricTex ?? this.blackTex);
     this.composite.set1i('uVolumetric', 3);
     this.composite.set1f('uVolumetricStrength', volumetricTex ? this.volumetricStrength : 0);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, cloudTex ?? this.blackTex);
+    this.composite.set1i('uClouds', 4);
+    this.composite.set1f('uCloudStrength', cloudTex ? this.cloudsStrength : 0);
     this.composite.set1f('uNear', this.nearPlane);
     this.composite.set1f('uFar', this.farPlane);
     this.composite.set1f('uAoRadius', this.ssaoRadius);
@@ -774,6 +834,90 @@ export class PostProcessor {
     } else {
       this.volTex = tex;
       this.volFbo = fbo;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return ok;
+  }
+
+  /**
+   * Volumetric clouds at half resolution (CLOUD_FRAG). The slab is lit by the CPU-evaluated
+   * cloudAmbientColor/cloudLightColor and terminates against the scene depth copy, so terrain
+   * occludes it without a second depth buffer.
+   */
+  private runClouds(): WebGLTexture | null {
+    if (!this.cloudsEnabled || this.cloudsStrength <= 0) return null;
+    if (!this.enabled || this.qualityValue === 'low' || this.qualityValue === 'off') return null;
+    if (!this.shadowsEnabled || !this.depthTextureOk || !this.depthCopied) return null;
+    const params = this.cloudParams;
+    if (!params || !params.noise || !params.shadow0 || !params.shadow1 || !this.depthCopyTex) return null;
+    if (!this.ensureCloudTarget()) return null;
+
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.cloudFbo);
+    gl.viewport(0, 0, this.cloudWidth, this.cloudHeight);
+    this.clouds.use();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.depthCopyTex);
+    this.clouds.set1i('uDepth', 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, params.noise);
+    this.clouds.set1i('uCloudNoise', 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, params.shadow0);
+    this.clouds.set1i('uShadow0', 2);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, params.shadow1);
+    this.clouds.set1i('uShadow1', 3);
+    this.clouds.setMat4('uInvViewProj', this.invViewProj);
+    this.clouds.setMat4('uLightViewProj0', params.lightViewProj0);
+    this.clouds.setMat4('uLightViewProj1', params.lightViewProj1);
+    this.clouds.set3f('uCameraPos', params.cameraX, params.cameraY, params.cameraZ);
+    this.clouds.set2f('uResolution', this.cloudWidth, this.cloudHeight);
+    this.clouds.set1f('uFar', this.farPlane);
+    this.clouds.set1f('uTexel0', params.texel0);
+    this.clouds.set1f('uTexel1', params.texel1);
+    this.clouds.set1f('uCloudAltitude', CLOUD_ALTITUDE);
+    this.clouds.set1f('uCloudWind', params.windTime);
+    setComplementSkyUniforms(this.clouds, params.sky);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.activeTexture(gl.TEXTURE0);
+    this.cloudsUsed = true;
+    return this.cloudTex;
+  }
+
+  /** Allocates the half-resolution cloud target (HDR when available). */
+  private ensureCloudTarget(): boolean {
+    const w = Math.max(1, this.width >> 1);
+    const h = Math.max(1, this.height >> 1);
+    if (this.cloudTex && this.cloudFbo && this.cloudWidth === w && this.cloudHeight === h) return true;
+    this.cloudWidth = w;
+    this.cloudHeight = h;
+    if (this.cloudFbo) { this.gl.deleteFramebuffer(this.cloudFbo); this.cloudFbo = null; }
+    if (this.cloudTex) { this.gl.deleteTexture(this.cloudTex); this.cloudTex = null; }
+    const gl = this.gl;
+    const tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    if (this.useHalfFloat) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    }
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fbo = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    if (!ok) {
+      gl.deleteFramebuffer(fbo);
+      gl.deleteTexture(tex);
+      console.warn('[post] cloud target incomplete; volumetric clouds disabled');
+    } else {
+      this.cloudTex = tex;
+      this.cloudFbo = fbo;
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return ok;

@@ -11,6 +11,8 @@
 //   - torch light uses the two-term power curve on the block light level
 //   - shadows use a distorted, texel-snapped map with rotated Poisson taps
 
+import { COMPLEMENT_SKY_GLSL } from '../environment/ComplementSky.js';
+
 /** Full-screen triangle. Cheaper than a quad and avoids the diagonal seam. */
 export const FULLSCREEN_VERT = `#version 300 es
 precision highp float;
@@ -45,11 +47,13 @@ uniform sampler2D uColor;
 uniform sampler2D uBloom;
 uniform sampler2D uDepth;       // scene depth (depth-difference SSAO)
 uniform sampler2D uVolumetric;  // half-res light shafts (VOLUMETRIC_FRAG)
+uniform sampler2D uClouds;      // half-res volumetric clouds (CLOUD_FRAG, alpha = coverage)
 uniform vec2 uResolution;
 
 uniform float uExposure;       // TM_EXPOSURE
 uniform float uBloomStrength;  // BLOOM_STRENGTH
 uniform float uVolumetricStrength; // 0 disables the light-shaft add
+uniform float uCloudStrength;      // 0 disables the cloud composite
 uniform float uTime;
 uniform int uDebug;
 // Depth-based SSAO: linearised depth difference against 8 screen-space neighbours.
@@ -190,9 +194,16 @@ void main() {
   if (uDebug == 4) { fragColor = vec4(vec3(ao), 1.0); return; }
   // Light-shaft mask for the volumetric probe: x8 so the (subtle) shafts are measurable.
   if (uDebug == 5) { fragColor = vec4(clamp(texture(uVolumetric, vUV).rgb * 8.0, 0.0, 1.0), 1.0); return; }
+  // Cloud coverage mask (alpha) for the volumetric-cloud probe.
+  if (uDebug == 6) { fragColor = vec4(vec3(texture(uClouds, vUV).a), 1.0); return; }
 
   // composite5.glsl:142 - mix, never add.
   color = mix(color, bloom, uBloomStrength);
+
+  // Volumetric clouds are alpha-composited (deferred1.glsl:404 mixes them into the sky
+  // background before the tonemap). Terrain occlusion is handled inside CLOUD_FRAG.
+  vec4 clouds = texture(uClouds, vUV);
+  color = mix(color, clouds.rgb, clamp(clouds.a * uCloudStrength, 0.0, 1.0));
 
   // composite1.glsl:325 - light shafts are ADDED after the display->linear decode (the pack
   // adds them after pow(color, 2.2)), so they interact with the tonemap like sun light.
@@ -626,3 +637,207 @@ void main() {
 // ============================== Step 5: output ============================== //
   fragColor = vec4(max(accum * vlMult, vec3(0.0)), accumWeight);
 }`;
+
+/**
+ * Volumetric clouds, ported from the pack's lib/atmospherics/clouds/reimaginedClouds.glsl
+ * (CLOUD_STYLE 1, CLOUD_QUALITY 2) and mainClouds.glsl:
+ *   - one slab, altitude CLOUD_ALT1 = 192 blocks +/- cloudStretch 4.2, cloudTallness 8.4
+ *   - density is sampled from the cloud coverage field through GetRoundedCloudCoord
+ *     (cloudNarrowness 0.07, cloudRoundness 0.125) with the isosurface threshold
+ *     `noise > pow(|alt - y| / stretch, 8) * 0.5 + 0.25`
+ *   - CLOUD_QUALITY 2 shading: two extra 2D samples along the sun direction, `light` starts
+ *     at 2.0; cloud shading = (VdotSM1 * shadowTime * 0.25 + 0.5 * shading + 0.08) * light
+ *   - colour = cloudAmbientColor * 0.95 * (1 - 0.35 * shading)
+ *            + cloudLightColor * 0.9 * (0.1 + shading), mixed with the sky gradient by the
+ *     horizontal distance fade, alpha = sqrt(clamp(distanceRatio, 0, 0.75) * 1.33333)
+ *   - sun shadow darkens samples inside the cascade (lightMult 0.25)
+ *
+ * Engine differences: the slab march is capped at 48 samples at half resolution, and the
+ * scene depth copy terminates the ray so terrain occludes the clouds. The pack's gaux4
+ * cloud-water texture is replaced by the generated field in TextureManager.cloudNoise.
+ */
+export const CLOUD_FRAG = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+
+in vec2 vUV;
+
+uniform sampler2D uDepth;
+uniform sampler2D uCloudNoise;
+uniform sampler2D uShadow0;
+uniform sampler2D uShadow1;
+uniform mat4 uInvViewProj;
+uniform mat4 uLightViewProj0;
+uniform mat4 uLightViewProj1;
+uniform vec3 uCameraPos;
+uniform vec2 uResolution;
+uniform float uFar;
+uniform float uTexel0;
+uniform float uTexel1;
+uniform float uCloudAltitude;
+uniform float uCloudWind;
+uniform vec3 uCloudAmbientColor;
+uniform vec3 uCloudLightColor;
+
+out vec4 fragColor;
+
+${COMPLEMENT_SKY_GLSL}
+
+const float CLOUD_STRETCH = 4.2;
+const float CLOUD_TALLNESS = 8.4;
+const float CLOUD_DISTANCE = 4000.0;
+const float CLOUD_ROUNDNESS = 0.125;
+const float CLOUD_NARROWNESS = 0.07;
+
+float cloudHash(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+// cloudCoord.glsl GetRoundedCloudCoord: snaps the scaled world position to the coverage grid
+// and rounds the cell corners (the cloud silhouette).
+vec2 roundedCloudCoord(vec2 pos, float roundness) {
+  vec2 coord = pos.yx + 0.5;
+  vec2 signCoord = sign(coord);
+  coord = abs(coord) + 1.0;
+  vec2 i = floor(coord);
+  vec2 f = coord - i;
+  f = smoothstep(vec2(0.5 - roundness), vec2(0.5 + roundness), f);
+  coord = i + f;
+  return (coord - 0.5) * signCoord / 256.0;
+}
+
+vec3 modifyTracePos(vec3 p) {
+  // 1 block/s wind, matching CLOUD_SPEED_MULT 100 (syncedTime).
+  p.z -= uCloudWind;
+  p.x += uCloudAltitude * 64.0;
+  p.xz *= CLOUD_NARROWNESS;
+  return p;
+}
+
+float cloudDensity(vec2 coord) {
+  return texture(uCloudNoise, roundedCloudCoord(coord, CLOUD_ROUNDNESS)).b;
+}
+
+bool sampleCloudNoise(vec3 tracePos, out vec3 tracePosM) {
+  tracePosM = modifyTracePos(tracePos);
+  vec2 coord = roundedCloudCoord(tracePosM.xz, CLOUD_ROUNDNESS);
+  float noise = texture(uCloudNoise, coord).b;
+  float threshold = clamp(abs(uCloudAltitude - tracePos.y) / CLOUD_STRETCH, 0.001, 0.999);
+  threshold = threshold * threshold;
+  threshold = threshold * threshold;
+  threshold = threshold * threshold;
+  return noise > threshold * 0.5 + 0.25;
+}
+
+float shadowTap(sampler2D map, vec2 uv, float z, float texel) {
+  float sum = 0.0;
+  for (int y = 0; y < 2; y++) {
+    for (int x = 0; x < 2; x++) {
+      vec2 o = (vec2(float(x), float(y)) - 0.5) * texel;
+      float stored = texture(map, uv + o).r;
+      sum += (z - 0.0008 <= stored) ? 1.0 : 0.0;
+    }
+  }
+  return sum * 0.25;
+}
+
+/** 1 = cloud lit by the sun, 0.25 = inside a terrain shadow (pack GetShadowOnCloud). */
+float cloudSunVisibility(vec3 worldPos) {
+  vec4 p0 = uLightViewProj0 * vec4(worldPos, 1.0);
+  vec3 s0 = p0.xyz / p0.w * 0.5 + 0.5;
+  if (s0.x > 0.0 && s0.x < 1.0 && s0.y > 0.0 && s0.y < 1.0 && s0.z < 1.0) {
+    return mix(0.25, 1.0, shadowTap(uShadow0, s0.xy, s0.z, uTexel0));
+  }
+  vec4 p1 = uLightViewProj1 * vec4(worldPos, 1.0);
+  vec3 s1 = p1.xyz / p1.w * 0.5 + 0.5;
+  if (s1.x > 0.0 && s1.x < 1.0 && s1.y > 0.0 && s1.y < 1.0 && s1.z < 1.0) {
+    return mix(0.25, 1.0, shadowTap(uShadow1, s1.xy, s1.z, uTexel1));
+  }
+  return 1.0;
+}
+
+void main() {
+  float depth = texture(uDepth, vUV).r;
+  bool sky = depth >= 0.999999;
+  vec4 clip = vec4(vUV * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+  vec4 world = uInvViewProj * clip;
+  world /= world.w;
+  vec3 rel = world.xyz - uCameraPos;
+  float sceneDist = sky ? uFar : length(rel);
+  vec3 dir = rel / max(length(rel), 1e-4);
+
+  float dither = cloudHash(floor(vUV * uResolution));
+  float higherAlt = uCloudAltitude + CLOUD_STRETCH;
+  float lowerAlt = uCloudAltitude - CLOUD_STRETCH;
+
+  // Slab entry/exit along the view ray; a ray parallel to the plane is nudged so the
+  // division stays finite (the distance checks below handle the result).
+  float ny = dir.y;
+  if (abs(ny) < 1e-4) ny = ny < 0.0 ? -1e-4 : 1e-4;
+  float dLower = (lowerAlt - uCameraPos.y) / ny;
+  float dHigher = (higherAlt - uCameraPos.y) / ny;
+  float enter = max(min(dLower, dHigher), 0.0);
+  float exitT = max(dLower, dHigher);
+  if (exitT < 0.0) { fragColor = vec4(0.0); return; }
+  exitT = min(exitT, min(CLOUD_DISTANCE, sceneDist));
+  if (exitT <= enter) { fragColor = vec4(0.0); return; }
+
+  float span = exitT - enter;
+  int samples = clamp(int(span / 8.0), 8, 48);
+  float stepLength = span / float(samples);
+  vec3 traceAdd = dir * stepLength;
+  vec3 tracePos = uCameraPos + dir * enter + traceAdd * dither;
+  tracePos.y -= traceAdd.y;
+
+  float VdotS = dot(dir, uSunWorldDir);
+  float VdotSM1 = max(uSunVisibility > 0.5 ? VdotS : -VdotS, 0.0);
+  float gradientNoise = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x
+    + 0.00583715 * gl_FragCoord.y));
+
+  for (int i = 0; i < 48; i++) {
+    if (i >= samples) break;
+    tracePos += traceAdd;
+    vec3 traceRel = tracePos - uCameraPos;
+    float lTrace = length(traceRel);
+    float lTraceXZ = length(traceRel.xz);
+    if (lTrace > sceneDist) break;
+    if (lTraceXZ > CLOUD_DISTANCE) break;
+
+    vec3 tracePosM;
+    if (!sampleCloudNoise(tracePos, tracePosM)) continue;
+
+    float lightMult = cloudSunVisibility(tracePos);
+    float shading = 1.0 - (higherAlt - tracePos.y) / CLOUD_TALLNESS;
+    shading = pow(max(shading, 0.0), 0.8);
+
+    // CLOUD_QUALITY 2: march the coverage field a little way toward the sun.
+    float shadingM = 1.0 - shading;
+    vec3 lightPos = tracePosM;
+    vec3 lightStep = uSunWorldDir * 0.08 * uShadowTime;
+    float light = 2.0;
+    lightPos += (1.0 + gradientNoise) * lightStep;
+    light -= cloudDensity(lightPos.xz) * shadingM;
+    lightPos += gradientNoise * lightStep;
+    light -= cloudDensity(lightPos.xz) * shadingM;
+
+    float lit = VdotSM1 * uShadowTime * 0.25 + 0.5 * shading + 0.08;
+    shading = lit * light * lightMult;
+
+    vec3 colorSample = uCloudAmbientColor * 0.95 * (1.0 - 0.35 * shading)
+      + uCloudLightColor * 0.9 * (0.1 + shading);
+    vec3 cloudSkyColor = complementSky(dir, dither, false, false);
+    float distanceRatio = (CLOUD_DISTANCE - lTraceXZ) / CLOUD_DISTANCE;
+    float fogFactor = pow(clamp(distanceRatio, 0.0, 1.0), 2.0) * 0.707;
+    colorSample *= 1.0 - 0.2 * max(uSunVisibility * uSunVisibility, uNightFactor);
+    colorSample = mix(cloudSkyColor, colorSample, fogFactor * 0.707);
+
+    float alpha = sqrt(clamp(distanceRatio, 0.0, 0.75) * 1.33333);
+    fragColor = vec4(colorSample, alpha);
+    return;
+  }
+
+  fragColor = vec4(0.0);
+}`;
+

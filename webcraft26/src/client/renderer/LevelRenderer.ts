@@ -243,6 +243,9 @@ export class LevelRenderer {
   get shadersEnabled(): boolean { return this.post.enabled; }
   set shadersEnabled(value: boolean) { this.post.setEnabled(value); }
 
+  /** True while the shader path draws the cloud layer (Game then skips the vanilla clouds). */
+  get cloudsHandledByShaders(): boolean { return this.post.cloudsHandled; }
+
   /** Called by Game.render right after the default framebuffer has been cleared. */
   beginScene(): void {
     this.post.beginScene();
@@ -1135,8 +1138,21 @@ export class LevelRenderer {
         rain: rainLevel,
         eyeBrightness: Math.max(0, Math.min(1, eyeSkyLight / 15)),
       });
+      this.post.setCloudSource({
+        cameraX: camera.x, cameraY: camera.y, cameraZ: camera.z,
+        shadow0: this.shadow.cascadeTexture(0),
+        shadow1: this.shadow.cascadeTexture(1),
+        lightViewProj0: this.shadow.cascadeMatrix(0),
+        lightViewProj1: this.shadow.cascadeMatrix(1),
+        texel0: this.shadow.cascadeTexel(0),
+        texel1: this.shadow.cascadeTexel(1),
+        noise: this.textures.cloudNoise,
+        sky: skyUniforms,
+        windTime: performance.now() / 1000,
+      });
     } else {
       this.post.setVolumetricSource(null);
+      this.post.setCloudSource(null);
     }
 
     this.terrain.use();

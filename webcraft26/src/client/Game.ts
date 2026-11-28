@@ -5246,7 +5246,11 @@ export class Game {
         this.level.getRainLevel(),
         this.levelLike,
       );
-      this.cloudRenderer.render(this.renderer.viewProjection, camera, this.level.time, this.levelLike);
+      // The shader path draws its own raymarched cloud layer; drawing the vanilla voxel
+      // clouds too would double the cloud cover.
+      if (!this.renderer.cloudsHandledByShaders) {
+        this.cloudRenderer.render(this.renderer.viewProjection, camera, this.level.time, this.levelLike);
+      }
     }
 
     // Vanilla order: solid/cutout terrain -> entities -> particles -> block breaking ->

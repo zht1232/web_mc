@@ -144,6 +144,8 @@ export interface ComplementSkyUniforms {
   uSkyNightDown: Vec3;
   uSkySunsetDownP: Vec3;
   uHighlightColor: Vec3;
+  uCloudAmbientColor: Vec3;
+  uCloudLightColor: Vec3;
   uSunWorldDir: Vec3;
   uSunFactor: number;
   uSunVisibility: number;
@@ -248,6 +250,34 @@ export function complementSkyUniforms(sky: SkyState, rainLevel: number): Complem
   // Sun position from the timeline angle, same convention as LevelRenderer.updateSunLight.
   const sunDir: Vec3 = [-Math.sin(sunAngleRad), Math.cos(sunAngleRad), 0];
 
+  // lightAndAmbientColors.glsl (OVERWORLD, non-COMPOSITE1) + cloudColors.glsl: the
+  // volumetric-cloud pass tints its samples with these instead of re-deriving the lighting.
+  const sunsetClearAmbient = scale3(mul3(noonClearAmbient, [1.21, 0.92, 0.76]), 0.95);
+  const dayAmbient = mix3(sunsetClearAmbient, noonClearAmbient, noonFactor);
+  const dayRainAmbient = scale3([0.2, 0.2, 0.25], 1.8 + 0.5 * vsBrightness);
+  const nightClearAmbient = scale3([0.09, 0.12, 0.17], 0.9 * (1.55 + vsBrightness * 0.77));
+  const nightRainAmbient = scale3([0.16, 0.2, 0.3], 0.75 + 0.6 * vsBrightness);
+  const clearAmbient = mix3(nightClearAmbient, dayAmbient, sunVisibility2);
+  const rainAmbient = mix3(nightRainAmbient, dayRainAmbient, sunVisibility2);
+  const ambientColor = mix3(clearAmbient, rainAmbient, rainFactor);
+
+  const cloudRainColor = mix3(nightMiddle, dayMiddle, sunFactor);
+  const cloudAmbientFactor: Vec3 = [
+    sunVisibility2 * (0.55 + 0.2 * noonFactor) + 0.35,
+    sunVisibility2 * (0.55 + 0.1 * noonFactor) + 0.35,
+    sunVisibility2 * 0.55 + 0.35,
+  ];
+  // mainClouds.glsl:91 applies the rain dim before the slab is traced.
+  const cloudAmbientColor = scale3(
+    mix3(mul3(ambientColor, cloudAmbientFactor), scale3(cloudRainColor, 0.5), rainFactor),
+    1 - 0.25 * rainFactor,
+  );
+  const cloudLightColor = mix3(
+    scale3(lightColor, 1.3),
+    scale3(cloudRainColor, 0.45),
+    noonFactor * rainFactor,
+  );
+
   return {
     uSkyDayUp: dayUp,
     uSkyDayMid: dayMiddle,
@@ -257,6 +287,8 @@ export function complementSkyUniforms(sky: SkyState, rainLevel: number): Complem
     uSkyNightDown: nightDown,
     uSkySunsetDownP: sunsetDownP,
     uHighlightColor: highlightColor,
+    uCloudAmbientColor: cloudAmbientColor,
+    uCloudLightColor: cloudLightColor,
     uSunWorldDir: sunDir,
     uSunFactor: sunFactor,
     uSunVisibility: sunVisibility,
@@ -286,6 +318,8 @@ export function setComplementSkyUniforms(target: SkyUniformTarget, u: Complement
   target.set3f('uSkyNightDown', ...u.uSkyNightDown);
   target.set3f('uSkySunsetDownP', ...u.uSkySunsetDownP);
   target.set3f('uHighlightColor', ...u.uHighlightColor);
+  target.set3f('uCloudAmbientColor', ...u.uCloudAmbientColor);
+  target.set3f('uCloudLightColor', ...u.uCloudLightColor);
   target.set3f('uSunWorldDir', ...u.uSunWorldDir);
   target.set1f('uSunFactor', u.uSunFactor);
   target.set1f('uSunVisibility', u.uSunVisibility);

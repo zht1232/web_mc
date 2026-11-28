@@ -91,7 +91,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | HDR/Bloom/SSAO/TAA/FXAA | ✅ | high/ultra 档；F6 总开关 |
 | 水面 | ✅ | 2026-11-28：按 Complementary Reimagined r5.9.3 源码移植——30 步 SSR（6 次细化、边界/亮度衰减）、GetSky 天空反射（三段渐变+日落带+太阳眩光）、GGX 高光、深度差水雾与 Fresnel⁴ alpha；默认档平面镜面水。未含折射/焦散与云/星空反射 |
 | 体积光（god rays） | ✅ | 2026-11-28：按 `lib/atmospherics/volumetricLight/volumetricLight.glsl` 移植——半分辨率 10 near + 1 far 采样、fogCurve 0.9/distribution 2.0、双级联阴影遮蔽、COMPOSITE1 的 lightColor 与 Step1/Step5 系数；medium/high/ultra 启用，`test-volumetric-light` 6/6 |
-| 体积云 | ❌ | 仍是 billboard 云，未做 26.2 体积云 |
+| 体积云 | ✅ | 2026-11-28：按 `lib/atmospherics/clouds/reimaginedClouds.glsl`（CLOUD_STYLE 1 / CLOUD_QUALITY 2）移植——192±4.2 云层 slab 半分辨率射线行进（最多 48 步）、GetRoundedCloudCoord 等值面、双采样朝阳着色、地形深度遮挡与级联阴影；覆盖率噪声场由 256² 可平铺 fBm 按 pack 纹理的 24% 二值分布生成（`TextureManager.cloudNoise`）。shader 云启用时跳过原版 26.2 体素云层，`test-volumetric-clouds` 5/5 |
 | 第一人称手/手持物 | ⚠️ | display transform 已按 JSON 移植；物品略偏大/贴边，待逐项对参考图 |
 | 粒子 | ⚠️ | 方块破碎/环境粒子已有；粒子表覆盖不完整。2026-11-28：方块破碎粒子按 `BlockTintSource.colorAsTerrainParticle` 上色——草/蕨/树叶用群系草色/叶色，草方块明确不上色（dirt 贴图），红石线按 power 上色；`test-player-motion` 实测草粒子 (0.33,0.79,0.25) |
 | 菜单/设置页帧率 | ✅ | 2026-11-21 修：菜单打开时不再绘制被立即擦掉的 HUD；菜单泥土背景改为一次缓存 + 单次 `drawImage`；HUD 改为脏标记重绘。1600x900@1.5 下暂停页 10→56 fps、视频设置 12→60 fps，`screens` 59.5→1.0 ms/帧 |
@@ -207,7 +207,16 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
       验证：`test-volumetric-light` **6/6**（实心屋顶下 debug 亮度 0.001 → 露天 1.0；
       朝太阳的叶墙把光轴压到 0.001；开/关 45.9% 像素改变、GL error 0），
       截图 `shots/diag/volumetric-beams-on/off.png`、`volumetric-on/off.png`
-- [ ] 体积云：当前仍是 billboard 云，不是 26.2 体积实现
+- [x] 体积云：按 `reimaginedClouds.glsl`（CLOUD_STYLE 1 / CLOUD_QUALITY 2）移植为半分辨率
+      `CLOUD_FRAG`——192±4.2 云层 slab、`GetRoundedCloudCoord`（narrowness 0.07 / roundness
+      0.125）等值面 `noise > pow(|alt-y|/stretch,8)*0.5+0.25`、两次朝阳 2D 采样着色、
+      级联阴影压暗（lightMult 0.25）、按水平距离淡出并与天空渐变混合；场景深度截断射线，
+      地形可遮挡云层。覆盖率纹理用 256² 可平铺 fBm 按 pack `cloud-water.png` 的 24%
+      二值分布生成，避免再分发 pack 资源。shader 云启用时 `CloudRenderer` 的原版体素云层
+      不再绘制（`Game` 检查 `renderer.cloudsHandledByShaders`）。
+      验证：`test-volumetric-clouds` **5/5**（云层覆盖率 43.4%、开关 41% 像素改变、
+      日落与 GL error 0），截图 `shots/diag/clouds-on/off-vanilla.png`、
+      `clouds-below-on/off-vanilla.png`、`clouds-sunset.png`
 - [ ] 景深（DOF，`program/deferred*/final` 中的手部/近景模糊）
 - [ ] 云/星空进入水面反射：zip 的 `SKY_EFFECT_REFLECTION_TRANSLUCENT` 仅在
       DETAIL_QUALITY>=3 定义，当前按默认档 2 关闭；高画质档需要补
@@ -770,8 +779,8 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   （high 档噪声开关差 32573 px、medium 档 0 px）。`LevelRenderer.waveTimeOverride`
   是探针用的水波时钟冻结钩子（默认 null = 实时）。
 - 仍未完成：水下焦散、天空的云与星空进入反射（pack 默认
-  `DETAIL_QUALITY>=3` 才开 `SKY_EFFECT_REFLECTION_TRANSLUCENT`）、体积云、
-  景深、完整 gbuffer 管线。
+  `DETAIL_QUALITY>=3` 才开 `SKY_EFFECT_REFLECTION_TRANSLUCENT`）、景深、
+  完整 gbuffer 管线。
 
 ### 创造背包 / 玩家预览 / 创造飞行 / 粒子染色（2026-11-28）
 

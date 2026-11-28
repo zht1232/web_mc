@@ -31,6 +31,15 @@ export class TextureManager {
   /** Refraction noise (refraction.glsl samples the pack's `noisetex` through this). */
   noise: WebGLTexture | null = null;
 
+  /**
+   * Cloud coverage field for the volumetric-cloud pass (pack: lib/textures/cloud-water.png,
+   * B = density). The pack texture's B channel is binary (24% of texels at 255, the rest 0),
+   * so the field is generated as a tileable fBm thresholded at its 76th percentile; LINEAR
+   * sampling of that binary mask gives the rounded cloud silhouettes. R/G stay neutral (the
+   * pack stores water normals there, unused by clouds).
+   */
+  cloudNoise: WebGLTexture | null = null;
+
   readonly images = new Map<string, HTMLImageElement>();
 
   constructor(private readonly gl: WebGL2RenderingContext) {
@@ -49,6 +58,67 @@ export class TextureManager {
       noise[i * 4 + 3] = 255;
     }
     this.noise = createTexture2D(gl, N, N, noise, gl.LINEAR, gl.REPEAT);
+
+    // Cloud density: tileable 5-octave value noise thresholded to the pack texture's 24%
+    // coverage (its B channel is binary), so the isosurface in CLOUD_FRAG carves the same
+    // puffy islands instead of a continuous fog sheet.
+    const NC = 256;
+    const cloud = new Uint8Array(NC * NC * 4);
+    const field = new Float32Array(NC * NC);
+    const grids: Float32Array[] = [];
+    let cseed = 0x51ed270b;
+    const crnd = () => { cseed = (Math.imul(cseed, 1664525) + 1013904223) >>> 0; return cseed / 4294967296; };
+    for (let o = 0; o < 5; o++) {
+      const f = 8 << o;
+      const g = new Float32Array(f * f);
+      for (let i = 0; i < g.length; i++) g[i] = crnd();
+      grids.push(g);
+    }
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    for (let y = 0; y < NC; y++) {
+      for (let x = 0; x < NC; x++) {
+        let v = 0;
+        let amp = 0.5;
+        let norm = 0;
+        for (let o = 0; o < grids.length; o++) {
+          const f = 8 << o;
+          const g = grids[o];
+          const fx = (x / NC) * f;
+          const fy = (y / NC) * f;
+          const x0 = Math.floor(fx);
+          const y0 = Math.floor(fy);
+          const tx = fx - x0;
+          const ty = fy - y0;
+          const sx = tx * tx * (3 - 2 * tx);
+          const sy = ty * ty * (3 - 2 * ty);
+          const xa = x0 % f;
+          const ya = y0 % f;
+          const xb = (x0 + 1) % f;
+          const yb = (y0 + 1) % f;
+          v += lerp(
+            lerp(g[ya * f + xa], g[ya * f + xb], sx),
+            lerp(g[yb * f + xa], g[yb * f + xb], sx),
+            sy,
+          ) * amp;
+          norm += amp;
+          amp *= 0.5;
+        }
+        field[y * NC + x] = v / norm;
+      }
+    }
+    const sorted = Float32Array.from(field).sort();
+    const cut = sorted[Math.floor(sorted.length * 0.76)];
+    // One-texel soft edge around the cut keeps the isosurface from speckling at grazing angles.
+    const feather = 0.02;
+    for (let i = 0; i < field.length; i++) {
+      const o = i * 4;
+      const edge = Math.max(0, Math.min(1, (field[i] - (cut - feather)) / (2 * feather)));
+      cloud[o] = 128;
+      cloud[o + 1] = 128;
+      cloud[o + 2] = Math.round(edge * 255);
+      cloud[o + 3] = 128;
+    }
+    this.cloudNoise = createTexture2D(gl, NC, NC, cloud, gl.LINEAR, gl.REPEAT);
   }
 
   async load(base = '/mc'): Promise<void> {

@@ -47,6 +47,7 @@ const MOBS = [
   'witch', 'drowned', 'husk', 'stray', 'bogged', 'zombie_villager', 'wolf', 'fox', 'cat', 'ocelot', 'squid', 'glow_squid',
   'parrot', 'rabbit', 'silverfish', 'villager', 'iron_golem', 'horse', 'donkey', 'llama', 'turtle', 'dolphin', 'cod',
   'salmon', 'panda', 'bee', 'goat', 'phantom', 'pillager', 'magma_cube', 'blaze', 'ghast', 'wither_skeleton',
+  'wandering_trader',
 ];
 
 // every SoundType used by a block in blocks.json (its `sound` field is the break event, e.g. block.stone.break)

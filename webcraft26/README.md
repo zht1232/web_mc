@@ -117,6 +117,7 @@ node scripts/test-golem-villager.mjs  # iron golem pattern/combat/cracks + villa
 node scripts/test-village-life.mjs    # farmer harvesting/replanting, bread baking and villager food sharing (browser)
 node scripts/test-villager-sleep.mjs  # villager day/night sleep schedule, bed pose and village golem spawn (browser)
 node scripts/test-village-schedule.mjs # villager work/meet schedule: workstation gathering, bell meeting and farming window (browser)
+node scripts/test-wandering-trader.mjs # wandering trader spawner/trades/merchant screen + trader llama follow/despawn (browser)
 node scripts/test-mob-equipment.mjs   # monster armor/weapon population and rare player-kill loot (browser)
 node scripts/test-explosion.mjs       # vanilla explosion rays, blast resistance, drop decay and TNT owner (browser)
 node scripts/test-containers.mjs      # container click rules

@@ -42,7 +42,10 @@ import { Cat, Ocelot } from './animal/Cat.js';
 import { Parrot } from './animal/Parrot.js';
 import { Bat } from './ambient/Bat.js';
 import { Villager } from './npc/Villager.js';
+import { WanderingTrader } from './npc/WanderingTrader.js';
 import { IronGolem } from './animal/IronGolem.js';
+import { Llama } from './animal/Llama.js';
+import { TraderLlama } from './animal/TraderLlama.js';
 import { Minecart } from './vehicle/Minecart.js';
 import { Boat } from './vehicle/Boat.js';
 import { Squid, GlowSquid, Cod, Salmon } from './animal/WaterAnimal.js';
@@ -89,7 +92,10 @@ const CTORS: Record<string, Ctor> = {
   ocelot: l => new Ocelot(l),
   parrot: l => new Parrot(l),
   villager: l => new Villager(l),
+  wandering_trader: l => new WanderingTrader(l),
   iron_golem: l => new IronGolem(l),
+  llama: l => new Llama(l),
+  trader_llama: l => new TraderLlama(l),
   minecart: l => new Minecart(l, 'minecart'),
   chest_minecart: l => new Minecart(l, 'chest_minecart'),
   // ambient

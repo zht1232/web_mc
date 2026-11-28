@@ -17,6 +17,8 @@ import { rollOffer } from '../../inventory/EnchantingMenu.js';
 export interface CostSpec {
   id: string;
   count: number;
+  /** Potion component required by a potion cost (wandering trader water bottle). */
+  potion?: string;
 }
 
 export interface ResultSpec {
@@ -40,6 +42,7 @@ export interface TradeSpec {
 export interface MerchantOfferJSON {
   wantsId: string;
   wantsCount: number;
+  wantsPotion?: string;
   additionalId?: string;
   additionalCount?: number;
   resultId: string;
@@ -60,6 +63,7 @@ const strip = (id: string): string => id.replace(/^minecraft:/, '');
 export class MerchantOffer {
   readonly baseCostAId: string;
   readonly baseCostACount: number;
+  readonly baseCostAPotion: string | undefined;
   readonly costB: CostSpec | null;
   result: ItemStack;
   readonly maxUses: number;
@@ -79,8 +83,9 @@ export class MerchantOffer {
     priceLevel = 1,
   ) {
     this.baseCostAId = strip(spec.wants.id);
+    this.baseCostAPotion = spec.wants.potion ? strip(spec.wants.potion) : undefined;
     this.costB = spec.additional
-      ? { id: strip(spec.additional.id), count: spec.additional.count }
+      ? { id: strip(spec.additional.id), count: spec.additional.count, potion: spec.additional.potion }
       : null;
     this.maxUses = spec.maxUses;
     this.xp = spec.xp;
@@ -109,7 +114,7 @@ export class MerchantOffer {
   static fromJSON(json: MerchantOfferJSON, registry: ItemRegistry): MerchantOffer {
     const item = registry.byName(strip(json.resultId));
     const spec: TradeSpec = {
-      wants: { id: json.wantsId, count: json.wantsCount },
+      wants: { id: json.wantsId, count: json.wantsCount, potion: json.wantsPotion },
       additional: json.additionalId ? { id: json.additionalId, count: json.additionalCount ?? 1 } : undefined,
       gives: { id: json.resultId, count: json.resultCount },
       maxUses: json.maxUses,
@@ -131,6 +136,7 @@ export class MerchantOffer {
     return {
       wantsId: this.baseCostAId,
       wantsCount: this.baseCostACount,
+      wantsPotion: this.baseCostAPotion,
       additionalId: this.costB?.id,
       additionalCount: this.costB?.count,
       resultId: this.result.item ? strip(this.result.item.name) : 'air',
@@ -150,7 +156,9 @@ export class MerchantOffer {
   /** MerchantOffer.getCostA with the demand/special-price adjustment. */
   getCostA(): ItemStack {
     const item = this.registry.byName(this.baseCostAId);
-    return item ? new ItemStack(item, this.getModifiedCostCount(item.maxStack)) : ItemStack.EMPTY;
+    if (!item) return ItemStack.EMPTY;
+    const components = this.baseCostAPotion ? { potion: this.baseCostAPotion } : undefined;
+    return new ItemStack(item, this.getModifiedCostCount(item.maxStack), components);
   }
 
   private getModifiedCostCount(maxStack: number): number {
@@ -161,13 +169,17 @@ export class MerchantOffer {
 
   getBaseCostA(): ItemStack {
     const item = this.registry.byName(this.baseCostAId);
-    return item ? new ItemStack(item, this.baseCostACount) : ItemStack.EMPTY;
+    if (!item) return ItemStack.EMPTY;
+    const components = this.baseCostAPotion ? { potion: this.baseCostAPotion } : undefined;
+    return new ItemStack(item, this.baseCostACount, components);
   }
 
   getCostB(): ItemStack {
     if (!this.costB) return ItemStack.EMPTY;
     const item = this.registry.byName(this.costB.id);
-    return item ? new ItemStack(item, this.costB.count) : ItemStack.EMPTY;
+    if (!item) return ItemStack.EMPTY;
+    const components = this.costB.potion ? { potion: this.costB.potion } : undefined;
+    return new ItemStack(item, this.costB.count, components);
   }
 
   getResult(): ItemStack { return this.result; }
@@ -190,14 +202,17 @@ export class MerchantOffer {
     this.demand = this.demand + this.uses - (this.maxUses - this.uses);
   }
 
-  private matches(stack: ItemStack, id: string): boolean {
-    return !!stack.item && (stack.item.name === id || strip(stack.item.namespacedId) === id);
+  private matches(stack: ItemStack, id: string, potion?: string): boolean {
+    if (!stack.item || !(stack.item.name === id || strip(stack.item.namespacedId) === id)) return false;
+    return potion ? stack.components.potion === potion : true;
   }
 
   satisfiedBy(buyA: ItemStack, buyB: ItemStack): boolean {
-    if (!this.matches(buyA, this.baseCostAId) || buyA.getCount() < this.getCostA().getCount()) return false;
+    if (!this.matches(buyA, this.baseCostAId, this.baseCostAPotion)
+      || buyA.getCount() < this.getCostA().getCount()) return false;
     if (!this.costB) return buyB.isEmpty();
-    return this.matches(buyB, this.costB.id) && buyB.getCount() >= this.costB.count;
+    return this.matches(buyB, this.costB.id, this.costB.potion)
+      && buyB.getCount() >= this.costB.count;
   }
 
   take(buyA: ItemStack, buyB: ItemStack): boolean {

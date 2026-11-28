@@ -11,7 +11,7 @@ import {
   BoatModel, ChestBoatModel,
   PigModel, CowModel, SheepModel, SheepFurModel, ChickenModel, WolfModel, FoxModel, FelineModel, ParrotModel,
   RabbitModel, BatModel, SquidModel, CodModel, SalmonModel,
-  IronGolemModel, BabyVillagerModel,
+  IronGolemModel, BabyVillagerModel, LlamaModel,
   QuadrupedModel,
 } from './EntityModels.js';
 
@@ -42,6 +42,9 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   slime: { model: SlimeModel, texture: 'slime/slime' },
   witch: { model: WitchModel, texture: 'witch/witch' },
   villager: { model: VillagerModel, texture: 'villager/villager' },
+  wandering_trader: { model: VillagerModel, texture: 'wandering_trader/wandering_trader' },
+  llama: { model: LlamaModel, texture: 'llama/llama_creamy' },
+  trader_llama: { model: LlamaModel, texture: 'llama/llama_creamy' },
   iron_golem: { model: IronGolemModel, texture: 'iron_golem/iron_golem' },
   minecart: { model: MinecartModel, texture: 'minecart/minecart' },
   chest_minecart: { model: MinecartModel, texture: 'minecart/minecart' },
@@ -131,6 +134,9 @@ export const VILLAGER_TEXTURES: readonly string[] = [
 export const EXTRA_TEXTURE_KEYS: readonly string[] = [
   'sheep/sheep_wool',
   ...VILLAGER_TEXTURES,
+  'wandering_trader/wandering_trader',
+  ...['creamy', 'white', 'brown', 'gray'].map((v) => `llama/llama_${v}`),
+  'equipment/llama_body/trader_llama',
   ...IRON_GOLEM_CRACK_TEXTURES,
   ...ARMOR_MATERIALS.map(ARMOR_LAYER1_TEXTURE),
   ...ARMOR_LEGGING_MATERIALS.map(ARMOR_LAYER2_TEXTURE),

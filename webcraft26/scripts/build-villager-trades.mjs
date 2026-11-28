@@ -2,9 +2,11 @@
 //
 //   MC_DATA=/path/to/client/data/minecraft node scripts/build-villager-trades.mjs
 //
-// Writes data/villager_trades.json. Trades that need server-side map generation or
-// arbitrary loot-function modifiers are skipped and counted in the output; random
-// enchantment offers keep a `enchantRandomly` flag for the runtime to roll.
+// Writes data/villager_trades.json (professions) and data/wandering_trader_trades.json
+// (the buying/uncommon/common TradeSets used by WanderingTrader.updateTrades).
+// Trades that need server-side map generation or loot functions this runtime does
+// not evaluate are skipped and counted in the output; random enchantment offers
+// keep an `enchantRandomly` flag for the runtime to roll.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -105,3 +107,59 @@ for (const [profession, data] of Object.entries(out)) {
   console.log(profession, data.levels.map((l) => l.trades.length).join('/'));
 }
 console.log(`villager trades: ${total}, skipped: ${skipped}`);
+
+// --- WanderingTrader.updateTrades: buying -> uncommon -> common -------------
+const wandering = { sets: [] };
+let wtTotal = 0;
+let wtSkipped = 0;
+for (const name of ['buying', 'uncommon', 'common']) {
+  const setFile = path.join(DATA, 'trade_set', 'wandering_trader', `${name}.json`);
+  if (!fs.existsSync(setFile)) continue;
+  const set = readJson(setFile);
+  const trades = [];
+  for (const id of resolveTradeTag(set.trades)) {
+    const rel = strip(id);
+    const file = path.join(DATA, 'villager_trade', `${rel}.json`);
+    if (!fs.existsSync(file)) continue;
+    const raw = readJson(file);
+    if (raw.merchant_predicate || !raw.wants || !raw.gives) { wtSkipped++; continue; }
+    let enchantRandomly = false;
+    let potion = null;
+    let unsupported = false;
+    for (const mod of raw.given_item_modifiers ?? []) {
+      if (mod.function === 'minecraft:enchant_randomly') enchantRandomly = true;
+      else if (mod.function === 'minecraft:set_name') { /* cosmetic name only */ }
+      else if (mod.function === 'minecraft:set_potion') potion = strip(mod.id);
+      else { unsupported = true; break; }
+    }
+    if (unsupported) { wtSkipped++; continue; }
+    const wants = costOf(raw.wants);
+    const gives = resultOf(raw.gives);
+    if (!wants || !gives) { wtSkipped++; continue; }
+    const wantPotion = raw.wants.components?.['minecraft:potion_contents']?.potion;
+    if (wantPotion) wants.potion = strip(wantPotion);
+    if (potion) gives.potion = potion;
+    const trade = {
+      wants,
+      gives,
+      maxUses: Math.trunc(raw.max_uses ?? 4),
+      xp: Math.trunc(raw.xp ?? 1),
+      priceMultiplier: raw.reputation_discount ?? 0,
+    };
+    const additional = costOf(raw.additional_wants);
+    if (additional) trade.additional = additional;
+    if (raw.double_trade_price_enchantments) trade.doubleTradePrice = true;
+    if (enchantRandomly) trade.enchantRandomly = true;
+    trades.push(trade);
+    wtTotal++;
+  }
+  wandering.sets.push({
+    name,
+    amount: Math.trunc(set.amount ?? 1),
+    allowDuplicates: set.allow_duplicates === true,
+    trades,
+  });
+}
+fs.writeFileSync(path.join(OUT, 'wandering_trader_trades.json'), JSON.stringify(wandering), 'utf8');
+for (const set of wandering.sets) console.log(`wandering ${set.name}: ${set.trades.length} (${set.amount} offers)`);
+console.log(`wandering trader trades: ${wtTotal}, skipped: ${wtSkipped}`);

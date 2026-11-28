@@ -94,13 +94,13 @@ export class MerchantScreen extends AbstractContainerScreen {
   protected override drawLabels(g: GuiGraphics): void {
     const info = this.info();
     const level = Math.max(1, Math.min(5, info?.level ?? 1));
-    let title = this.title;
+    let title = info?.titleKey ? this.t(info.titleKey) : this.title;
     if (info?.showProgress) {
       const format = this.t('merchant.title');
       const levelName = this.t(`merchant.level.${level}`);
       title = format.includes('%s')
-        ? format.replace('%s', this.title).replace('%s', levelName)
-        : `${this.title} - ${levelName}`;
+        ? format.replace('%s', title).replace('%s', levelName)
+        : `${title} - ${levelName}`;
     }
     g.drawString(title, 49 + Math.floor(IMAGE_WIDTH / 2) - Math.floor(g.textWidth(title) / 2), 6, LABEL_COLOR, false);
     const trades = this.t('merchant.trades');

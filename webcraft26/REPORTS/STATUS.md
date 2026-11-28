@@ -58,6 +58,7 @@ node scripts/test-golem-villager.mjs          # 铁傀儡 + 村民繁殖：图�
 node scripts/test-village-life.mjs            # 村民农业：食物分享/收割补种/面包烘焙/存档 8 项
 node scripts/test-villager-sleep.mjs          # 村民睡眠/昼夜作息 + 村庄铁傀儡生成 13 项
 node scripts/test-village-schedule.mjs        # 村民日程：工作站点聚集/钟声会议/农民工作时段 9 项
+node scripts/test-wandering-trader.mjs        # 流浪商人：生成周期/9 条报价/交易界面/羊驼跟随与消失 15 项
 node scripts/test-mob-equipment.mjs           # 怪物装备与稀有掉落：护甲分布/武器/骷髅头/铜锭 13 项
 node scripts/test-explosion.mjs               # 爆炸：射线弹坑/抗性/掉落衰减/TNT 归属 6 项
 node scripts/test-icons.mjs                   # 物品图标
@@ -103,6 +104,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
 | 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化。2026-11-28：食物点（面包 4 / 胡萝卜·马铃薯·甜菜根 1）拾取、12 点繁殖门槛、BreedGoal 配对、50/25/25 生物群系皮肤遗传、`BabyVillagerModel` + 宝宝贴图与 0.49×0.98 碰撞箱、年龄/食物点存档；`test-villager-trade` 14 项 + `test-golem-villager`。2026-11-28：农民 `HarvestFarmland` 目标（8 格内成熟作物→走近→收割并补种，小麦种子 0–3、胡萝卜/马铃薯/甜菜根 1–4/1–3）、3 小麦→1 面包（4 食物点）、`TradeWithVillager` 食物分享（≥24 点分给 4 格内 <12 点的村民）、小麦/种子库存存档；`test-village-life`。2026-11-28：昼夜作息——time ≥ 12000 时 `VillagerSleepGoal` 认领 32 格内空闲床（头/脚统一为床头键、一床一人），走近后躺下（`startSleeping`，关重力、`EntityRenderer` 躺姿），日出/床被破坏/受击醒来；最近 24000 tick 内睡过的 5 名村民触发村庄铁傀儡（非玩家创建）并清空睡眠记忆；`test-villager-sleep`。2026-11-28：`VillagerSchedules.VILLAGER_DEFAULT` 日程——wake 0–10 / work 10–3000 / meet 3000–6000 / idle 6000–9000 / work 9000–12000 / sleep 12000–24000；`VillagerWorkGoal` 工作时段走回工作站点并面向它，`VillagerMeetGoal` 会议时段向 32 格内的钟聚集（按实体 id 错开站位），农民 `HarvestFarmland` 只在工作时段运行；生成村庄的房屋加入红床与随机工作站点、广场井边加入钟；`test-village-schedule` 9 项 + `test-worldgen` POI 检查 |
 | 矿车 | ✅ | 2026-11-22：普通/箱子矿车实体与模型；`NewMinecartBehavior` 轨道跟随（直线/拐弯/坡道/摩擦/动力轨加速/未供能动力轨刹停）、检测铁轨占用供电、物品放置、右键乘坐与潜行下车、箱子矿车 27 格 GUI、生存破坏掉落；`test-minecart` 11 项 |
+| 流浪商人 / 商人羊驼 | ✅ | 2026-11-28：`WanderingTraderSpawner` 1200 tick 检查、24000 tick 刷新、25%→75% 概率、1/10 尝试、48 格内以钟（会议 POI）或玩家为参照找 2x3x2 空地，生成 1 商人 + 2 商人羊驼；3 组 26.2 TradeSet（2 买 / 2 稀有 / 5 常见）共 9 条报价，药水成本按组件匹配，交易界面无等级条并显示 `entity.minecraft.wandering_trader`，交易中冻结 AI，48000 tick 未交易后与羊驼一起消失；羊驼沿用 `LlamaModel` + 蓝色交易毯层，跟随商人（无拴绳渲染/物理）；`test-wandering-trader` 15 项 |
 | 船 / 筏 | ✅ | 2026-11-23：10 种木材 × 普通/箱船（含竹筏）实体与模型；`AbstractBoat` 状态扫描/浮力/划桨/转向/陆地摩擦、水面吸附、物品放置（方块面或流体表面）、右键乘坐与潜行下船、箱子船 27 格 GUI（潜行右键）、`VehicleEntity` 伤害累计 40 与掉落；`test-boat` 16 项（含受控场景像素差分） |
 | 区块实体存档 | ✅ | 2026-11-23：区块 NBT `Entities` 保存野生生物（类型/位置/速度/生命/年龄/羊毛色）、矿车与船（含箱内物品）、掉落物（物品与组件）、经验球；读档按区块激活生成，不重复跑区块初始生物生成；已保存区块卸载后从保留的 NBT 字节恢复（方块与实体一起），不再按种子重生成；区块离开保留带前写回实体；村民/已驯服宠物仍走世界级存档；`test-entity-save` 11 项 |
 | 铁傀儡 | ✅ | 2026-11-28：南瓜+4 铁块的 `CarvedPumpkinBlock` 图案生成（真实右键放置路径、清空方块、`PlayerCreated`）、100 生命/15 攻击（随机伤害+上抛）/击退抗性/1 格跨越、怪物目标选择（排除苦力怕与创造玩家）、铁锭治疗 25、裂纹层（低/中/高贴图）、铁锭/虞美人掉落；`test-golem-villager` |
@@ -137,7 +139,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 状态效果 HUD | ✅ | 右上角一列 24x24 背景 + 18x18 图标、剩余时间、等级罗马数字；剩余 <10s 闪烁；中毒/凋零时心形变绿/黑 |
 | 红石 | ✅ | 红石线功率/连接形状、拉杆/按钮/压力板、红石火把（反相 + 2 tick 调度 + 8 次/60 tick burnout）、中继器（1–4 档延迟/单向）、比较器（容器/蛋糕/堆肥桶模拟输入、侧输入、compare/subtract、2 tick）、侦测器（2 tick 脉冲）、日光探测器（天空光 + 太阳角 + 反相）、拌线/拌线钩、红石灯、木/铁门、活板门、栅栏门、TNT 信号点燃、活塞（普通/粘性，推/拉/12 格/不可推方块）、铁轨形状与动力轨供电、检测铁轨由矿车占用供电；缺粘液/蜂蜜牵引链、活塞 moving_piston 动画、矿车实体碰撞推挤、物品展示框/讲台/唱片机的比较器模拟输出 |
 | 床睡觉 | ✅ | 夜晚/雷暴、8 格内无怪物、床上方无遮挡才能入睡；60 tick 后跳到次日清晨、清雨、设置重生点并持久化；黑屏淡入淡出；睡眠中禁止移动/挖掘/攻击 |
-| 村民交易 | ✅ | 成年村民右键打开交易界面；报价成本/结果/使用次数、补货（每天 2 次）、等级提升追加报价；地图交易与流浪商人未接 |
+| 村民交易 | ✅ | 成年村民右键打开交易界面；报价成本/结果/使用次数、补货（每天 2 次）、等级提升追加报价；地图交易未接（流浪商人见下行） |
 | 成就（Advancements） | ⚠️ | 见「GUI」进度行：列表界面 + 8 类基础触发器（含 `villager_trade`）可用；树状布局与完整条件待补 |
 | 经验球/掉落物 | ✅ | |
 
@@ -169,7 +171,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；~~野生动物实体存档~~ ✅ 已完成区块级实体存档（见「区块实体持久化」）；剩余：幼年专用模型、项圈渲染、大型世界的数据库按需区块加载。
 5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；~~TNT 归属与爆炸掉落衰减~~ ✅ 已按 `ServerExplosion` 射线算法 + `ApplyExplosionDecay` + `PrimedTnt.owner` 重写；剩余：药箭、爆炸可见度（`getSeenPercent` 遮挡）、比较器/活塞等红石长尾。
 6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成列表界面 + 8 类触发器（含 `villager_trade` 与 Y 坐标谓词）；剩余：树状布局/连接线、完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
-7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；~~村民繁殖与铁傀儡~~ ✅ 已加入食物点繁殖/宝宝模型与南瓜图案生成的铁傀儡；~~村民农业~~ ✅ 农民收割/补种/烤面包 + 食物分享；~~村民睡眠/工作日程（昼夜作息与床）~~ ✅ 已加入日落入睡/日出醒来、床认领与躺姿、受击/床毁唤醒，~~村庄八卦生成铁傀儡~~ ✅ 简化为 5 名最近 24000 tick 内睡过的村民生成（无 gossip 系统），~~工作/聚集时段~~ ✅ 已按原版日程加入工作站点工作、钟声会议与农民工作时段门控，生成村庄已带床/工作站点/钟；剩余：地图交易（需已填充地图/结构定位）、流浪商人、袭击。
+7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；~~村民繁殖与铁傀儡~~ ✅ 已加入食物点繁殖/宝宝模型与南瓜图案生成的铁傀儡；~~村民农业~~ ✅ 农民收割/补种/烤面包 + 食物分享；~~村民睡眠/工作日程（昼夜作息与床）~~ ✅ 已加入日落入睡/日出醒来、床认领与躺姿、受击/床毁唤醒，~~村庄八卦生成铁傀儡~~ ✅ 简化为 5 名最近 24000 tick 内睡过的村民生成（无 gossip 系统），~~工作/聚集时段~~ ✅ 已按原版日程加入工作站点工作、钟声会议与农民工作时段门控，生成村庄已带床/工作站点/钟，~~流浪商人~~ ✅ 已加入生成周期、9 条 26.2 报价、交易界面与商人羊驼；剩余：地图交易（需已填充地图/结构定位）、袭击。
 8. ~~夜间怪物装备/掉落表与自然生成权重对齐~~ ✅ 已完成原版护甲分布/武器/副手与玩家击杀稀有掉落（僵尸铁锭·胡萝卜·马铃薯、溺尸铜锭、凋灵骷髅头）；自然生成权重本就来自 vanilla `worldgen.json` 的 biome spawners。
 
 **P2（长尾一致性）**
@@ -601,3 +603,28 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   `test-golem-villager` 22/22、`test-villager-trade` 14/14、`smoke` 19/19。
 - 剩余：工作动画/音效与 POI 全量（床 `occupied`、工作站点头部朝向）、地图交易、
   流浪商人、袭击、钟的交互与村庄英雄。
+
+### 流浪商人与商人羊驼（2026-11-28）
+
+- 生成：`WanderingTraderSpawner` 按 26.2 `CustomSpawner` 移植——每 1200 tick 结算一次，
+  `spawnDelay` 每次 -1200，归零后重置 24000、概率 +25（25→75）；`rand(100) <= chance`
+  通过后执行 1/10 尝试。参照点取玩家 48 格内最近的钟（会议 POI），没有则用玩家位置；
+  10 次随机列 + `ON_GROUND` 校验 + 2x3x2 空间检查；成功后生成 1 个流浪商人，并在
+  4 格内生成 2 只商人羊驼。
+- 商人：9 条报价＝`wandering_trader/buying` 2 条 + `uncommon` 2 条 + `common` 5 条
+  （26.2 TradeSet 数据由 `scripts/build-villager-trades.mjs` 生成到
+  `data/wandering_trader_trades.json`，集合内不重复；附魔铁镐那种需要战利品函数过滤的
+  报价暂跳过）；药水成本按 `potion` 组件匹配；没有等级条/补货；交易时冻结 AI；
+  48000 tick 内未交易则消失（DespawnDelay 随存档）。
+- 羊驼：`Llama` / `TraderLlama` 实体（4 种毛色、30 生命），`LlamaModel` + 0.5 膨胀的
+  `LlamaDecorModel`（`equipment/llama_body/trader_llama` 蓝色毯层）；本移植没有拴绳
+  渲染/物理，改用 16 格内跟随商人的 FollowTraderGoal；DespawnDelay 跟随商人一起消失。
+- 资源：`build-sounds.mjs` 增加 wandering_trader 事件（ambient/yes/no/hurt/death/trade/
+  disappeared/reappeared/drink_milk/drink_potion）；vite 构建复制新的交易 JSON。
+- 验证：`tsc` 0；`npm run build`（dist 含 `data/wandering_trader_trades.json`）；
+  `node scripts/test-wandering-trader.mjs` **15/15**（延迟周期、1 商人+2 羊驼、9 报价、
+  48000 延迟、贴图/毯层、渲染像素、界面标题/无等级条、翡翠报价购买、羊驼跟随、同步
+  消失）；回归 `test-villager-trade` 14/14、`test-villager-sleep` 13/13、
+  `test-village-schedule` 9/9、`test-mobs-render` 20 项全过、`smoke` 19/19。
+- 剩余：夜间隐身/白天喝牛奶现身、拴绳渲染与物理、商人羊驼吐口水/箱子/骑乘、袭击与
+  不祥之兆。

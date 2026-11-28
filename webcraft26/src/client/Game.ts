@@ -45,6 +45,11 @@ import { Animal } from '../vanilla/world/entity/animal/Animal.js';
 import { Wolf } from '../vanilla/world/entity/animal/Wolf.js';
 import { Cat } from '../vanilla/world/entity/animal/Cat.js';
 import { Villager } from '../vanilla/world/entity/npc/Villager.js';
+import { WanderingTrader } from '../vanilla/world/entity/npc/WanderingTrader.js';
+import { WanderingTraderSpawner } from '../vanilla/world/entity/npc/WanderingTraderSpawner.js';
+import { WanderingTraderTrades } from '../vanilla/world/entity/npc/WanderingTraderTrades.js';
+import { Llama } from '../vanilla/world/entity/animal/Llama.js';
+import { TraderLlama } from '../vanilla/world/entity/animal/TraderLlama.js';
 import { IronGolem } from '../vanilla/world/entity/animal/IronGolem.js';
 import { VillagerTrades } from '../vanilla/world/entity/npc/VillagerTrades.js';
 import { Minecart } from '../vanilla/world/entity/vehicle/Minecart.js';
@@ -174,6 +179,7 @@ export class Game {
   icons!: ItemIconAtlas;
 
   entityManager!: EntityManager;
+  wanderingTraderSpawner!: WanderingTraderSpawner;
   entityRenderer!: EntityRenderDispatcher;
   screens!: ScreenManager;
   survival!: SurvivalState;
@@ -412,6 +418,7 @@ export class Game {
       loadWorldData('/mc'),
       AdvancementManager.load('/data'),
       VillagerTrades.load('/data'),
+      WanderingTraderTrades.load('/data'),
       this.textures.load('/mc'),
       this.font.load('/mc'),
       this.guiTextures.preload([...HUD_SPRITES, ...MOB_EFFECT_TEXTURES]),
@@ -540,6 +547,13 @@ export class Game {
     this.entityManager = new EntityManager(this.level, this.player, this.seedBig, {
       despawnDistance: 128,
       registry: this.survival.registry,
+    });
+    // ServerLevel's custom spawner: the wandering trader's 1200-tick/24000-tick cycle.
+    this.wanderingTraderSpawner = new WanderingTraderSpawner({
+      level: this.level,
+      random: this.entityManager.random,
+      getPlayer: () => this.entityManager.getPlayer(),
+      spawn: (e) => this.entityManager.spawnEntity(e),
     });
     // Client-side redstone: signal queries, wire power, diodes, buttons/plates and the
     // mechanisms they drive (lamp/door/trapdoor/gate/TNT). Hooks use the entity manager.
@@ -1294,6 +1308,9 @@ export class Game {
           futureXp: active.getFutureTraderXp(),
           canRestock: active.canRestock(),
           showProgress: active.showProgressBar(),
+          titleKey: active.getMerchant() instanceof WanderingTrader
+            ? 'entity.minecraft.wandering_trader'
+            : 'entity.minecraft.villager',
           select: (index: number) => {
             active.setSelectionHint(index);
             active.tryMoveItems(index);
@@ -1643,6 +1660,9 @@ export class Game {
         data.sheared = e.sheared;
       }
       if (e instanceof IronGolem) data.playerCreated = e.playerCreated;
+      if (e instanceof Llama) data.variant = e.variant;
+      if (e instanceof WanderingTrader) data.despawnDelay = e.despawnDelay;
+      if (e instanceof TraderLlama) data.despawnDelay = e.despawnDelay;
       return { ...base, health: e.health, data };
     }
     return null;
@@ -1735,6 +1755,13 @@ export class Game {
       }
       if (e instanceof IronGolem && (data.playerCreated === true || data.playerCreated === 1)) {
         e.playerCreated = true;
+      }
+      if (e instanceof Llama && typeof data.variant === 'number') e.variant = data.variant;
+      if (e instanceof WanderingTrader && typeof data.despawnDelay === 'number') {
+        e.setDespawnDelay(data.despawnDelay);
+      }
+      if (e instanceof TraderLlama && typeof data.despawnDelay === 'number') {
+        e.despawnDelay = data.despawnDelay;
       }
     } else if (e instanceof ItemEntity) {
       const stack = this.stackFromData(data.stack);
@@ -2975,20 +3002,21 @@ export class Game {
     this.sounds.play('block.chest.open', boat.x, boat.y, boat.z, 1, 1);
   }
 
-  /** Villager.startTrading: open the merchant menu and bind the trade callback. */
-  private openMerchant(villager: Villager): void {
-    const menu = this.survival.openMerchant(villager);
-    menu.setMerchantLevel(villager.professionLevel);
-    menu.setShowProgressBar(true);
+  /** Villager/AbstractVillager.startTrading: open the merchant menu and bind the trade callback. */
+  private openMerchant(merchant: Villager | WanderingTrader): void {
+    const menu = this.survival.openMerchant(merchant);
+    // Wandering traders have no profession level bar (WanderingTrader.showProgressBar false).
+    menu.setMerchantLevel(merchant instanceof Villager ? merchant.professionLevel : 1);
+    menu.setShowProgressBar(merchant instanceof Villager);
     menu.onTrade = (offer) => {
       this.stats.award('custom', 'traded_with_villager');
       this.advancements.trigger('villager_trade', {
         item: offer.getResult().item?.name,
         y: this.player.pos.y,
       });
-      this.sounds.play('entity.villager.yes', villager.x, villager.y, villager.z, 1, 1);
+      this.sounds.play(merchant.getNotifyTradeSound(), merchant.x, merchant.y, merchant.z, 1, 1);
     };
-    villager.setTradingPlayer(this.player);
+    merchant.setTradingPlayer(this.player);
     this.openScreen('merchant');
   }
 
@@ -3132,16 +3160,18 @@ export class Game {
       this.useCooldown = 8;
       return;
     }
-    // Villager.mobInteract: babies refuse, an offerless adult shakes its head,
-    // otherwise the merchant screen opens. Talking is counted for statistics.
-    if (entityTarget instanceof Villager) {
+    // Villager/WanderingTrader.mobInteract: babies refuse, offerless merchants
+    // shake their head, otherwise the merchant screen opens.
+    if (entityTarget instanceof Villager || entityTarget instanceof WanderingTrader) {
+      const merchant = entityTarget;
       this.stats.award('custom', 'talked_to_villager');
-      if (entityTarget.isBaby() || entityTarget.getOffers().length === 0) {
-        this.sounds.play('entity.villager.no', entityTarget.x, entityTarget.y, entityTarget.z, 1, 1);
+      if ((merchant instanceof Villager && merchant.isBaby()) || merchant.getOffers().length === 0) {
+        const sound = merchant instanceof WanderingTrader ? 'entity.wandering_trader.no' : 'entity.villager.no';
+        this.sounds.play(sound, merchant.x, merchant.y, merchant.z, 1, 1);
         this.useCooldown = 8;
         return;
       }
-      this.openMerchant(entityTarget);
+      this.openMerchant(merchant);
       this.useCooldown = 8;
       return;
     }
@@ -4333,6 +4363,7 @@ export class Game {
     this.tickStatistics(moved.jumped);
     this.tickSleep();
     this.tickVillageGolemSpawn();
+    this.wanderingTraderSpawner.tick();
     this.survival.tickEnvironment(inLava, this.player.inWater, this.playerFireTicks > 0);
     // Container GUIs: open furnace menus cook one tick and mirror their progress into the screen.
     this.tickActiveMenu();

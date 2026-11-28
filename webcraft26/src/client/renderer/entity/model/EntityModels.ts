@@ -678,6 +678,46 @@ export const VillagerModel: BakedModel = withAnimator(bakeModel(makeModel(64, 64
 });
 
 /**
+ * Source: net.minecraft.client.model.animal.llama.LlamaModel.createBodyLayer
+ * (128x64). Head with neck/ears, horizontal body, four legs. The chest boxes
+ * are omitted (the port only renders trader llamas, which carry no chest).
+ */
+function llamaParts(grow: number): PartDef[] {
+  const leg = B(-2, 0, -2, 4, 14, 4, 29, 29, false, grow);
+  return [
+    P('head', 0, 7, -6, [
+      B(-2, -14, -10, 4, 4, 9, 0, 0, false, grow),
+      B(-4, -16, -6, 8, 18, 6, 0, 14, false, grow),
+      B(-4, -19, -4, 3, 3, 2, 17, 0, false, grow),
+      B(1, -19, -4, 3, 3, 2, 17, 0, false, grow),
+    ]),
+    P('body', 0, 5, 2, [B(-6, -10, -7, 12, 18, 10, 29, 0, false, grow)], { rx: HALF_PI }),
+    P('right_hind_leg', -3.5, 10, 6, [leg]),
+    P('left_hind_leg', 3.5, 10, 6, [leg]),
+    P('right_front_leg', -3.5, 10, -5, [leg]),
+    P('left_front_leg', 3.5, 10, -5, [leg]),
+  ];
+}
+function llamaAnimator(model: BakedModel, ctx: AnimContext): void {
+  // Source: LlamaModel.setupAnim (head look, 1.4x leg swing with alternating phase).
+  const head = pose(model, 'head');
+  head.rx = ctx.headPitch;
+  head.ry = ctx.headYaw;
+  const ap = ctx.limbSwing, as = ctx.limbSwingAmount;
+  pose(model, 'right_hind_leg').rx = Math.cos(ap * 0.6662) * 1.4 * as;
+  pose(model, 'left_hind_leg').rx = Math.cos(ap * 0.6662 + Math.PI) * 1.4 * as;
+  pose(model, 'right_front_leg').rx = Math.cos(ap * 0.6662 + Math.PI) * 1.4 * as;
+  pose(model, 'left_front_leg').rx = Math.cos(ap * 0.6662) * 1.4 * as;
+}
+export const LlamaModel: BakedModel = withAnimator(
+  bakeModel(makeModel(128, 64, llamaParts(0))), llamaAnimator,
+);
+/** Same geometry inflated by 0.5 (ModelLayers.LLAMA_DECOR's CubeDeformation). */
+export const LlamaDecorModel: BakedModel = withAnimator(
+  bakeModel(makeModel(128, 64, llamaParts(0.5))), llamaAnimator,
+);
+
+/**
  * Source: net.minecraft.client.model.object.cart.MinecartModel.createBodyLayer
  * (64x32): the flat bottom, four raised sides, all authored around y=4 and
  * re-anchored by MinecartRenderer's 0.375 offset.

@@ -12,6 +12,7 @@ import {
 } from './model/ModelRegistry.js';
 import {
   ArmorHelmetModel, ArmorChestModel, ArmorLegsModel, ArmorBootsModel, BabyVillagerModel,
+  LlamaDecorModel,
 } from './model/EntityModels.js';
 import type { BakedModel } from './model/ModelBox.js';
 import type { Entity } from '../../../vanilla/world/entity/Entity.js';
@@ -19,6 +20,7 @@ import type { Mob } from '../../../vanilla/world/entity/Mob.js';
 import type { LivingEntity } from '../../../vanilla/world/entity/LivingEntity.js';
 import { EquipmentSlot } from '../../../vanilla/world/entity/EquipmentSlot.js';
 import { SHEEP_WOOL_RGB, type Sheep } from '../../../vanilla/world/entity/animal/Sheep.js';
+import { LLAMA_VARIANTS, type Llama } from '../../../vanilla/world/entity/animal/Llama.js';
 import type { Villager } from '../../../vanilla/world/entity/npc/Villager.js';
 
 /**
@@ -45,6 +47,7 @@ import type { Villager } from '../../../vanilla/world/entity/npc/Villager.js';
  */
 const EXTRA_SCALE: Readonly<Record<string, number>> = {
   witch: 0.9375,
+  wandering_trader: 0.9375, // ModelLayers.WANDERING_TRADER = villagerLayer * 0.9375
   fox: 1.25,
   ocelot: 1.25,
   parrot: 5 / 3,
@@ -73,6 +76,9 @@ const SHADOW_RADIUS: Readonly<Record<string, number>> = {
   cod: 0.5,             // 0.3  * scale 0.6
   salmon: 0.5714286,    // 0.4  * scale 0.7
   iron_golem: 0.7,      // IronGolemRenderer super(..., 0.7F)
+  llama: 0.7,           // LlamaRenderer super(..., 0.7F)
+  trader_llama: 0.7,
+  wandering_trader: 0.5, // WanderingTraderRenderer super(..., 0.5F)
 };
 
 const HUMAN_ARMOR_TYPES: ReadonlySet<string> = new Set([
@@ -123,6 +129,11 @@ export class MobRenderer extends EntityRenderer<Entity> {
   }
   getTextureKey(e: Entity): string {
     if (this.typeName === 'villager' && (e as Villager).isBaby()) return 'villager/villager_baby';
+    // LlamaRenderer.getTextureLocation: one skin per coat variant.
+    if (this.typeName === 'llama' || this.typeName === 'trader_llama') {
+      const variant = LLAMA_VARIANTS[(e as Llama).variant] ?? 'creamy';
+      return `llama/llama_${variant}`;
+    }
     return this.entry.texture;
   }
   getTint(): readonly [number, number, number] { return this.tint; }
@@ -177,6 +188,15 @@ export class MobRenderer extends EntityRenderer<Entity> {
   getLayers(e: Entity): readonly EntityLayer[] {
     if (this.typeName === 'villager') return this.villagerProfessionLayers(e);
     if (this.typeName === 'iron_golem') return this.ironGolemCrackLayer(e);
+    // LlamaDecorLayer: trader llamas always wear the blue trader carpet.
+    if (this.typeName === 'trader_llama') {
+      this.layerScratch[0] = {
+        model: LlamaDecorModel,
+        texture: 'equipment/llama_body/trader_llama',
+        tint: WHITE,
+      };
+      return this.layerScratch;
+    }
     if (this.woolLayers) {
       const sheep = e as Sheep;
       if (sheep.sheared) return super.getLayers(e);

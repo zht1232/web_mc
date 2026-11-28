@@ -112,6 +112,8 @@ export interface MerchantInfo {
   futureXp: number;
   canRestock: boolean;
   showProgress: boolean;
+  /** Title translation key (wandering traders are not "Villager"). */
+  titleKey?: string;
   /** MerchantMenu.setSelectionHint + tryMoveItems. */
   select(index: number): void;
 }

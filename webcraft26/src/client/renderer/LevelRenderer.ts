@@ -1100,6 +1100,7 @@ export class LevelRenderer {
     // The old hand-rolled fogStart/fogEnd formula is gone; terrain, entities, weather and sky
     // all consume the same vanilla fog data now.
     const forward = cameraBasis((camera.yaw * Math.PI) / 180, (camera.pitch * Math.PI) / 180).forward;
+    const eyeSkyLight = level.getSkyLight(Math.floor(camera.x), Math.floor(camera.y), Math.floor(camera.z));
     const fog = computeFog({
       fogType: 'atmospheric',
       renderDistanceBlocks: this.renderDistance * 16,
@@ -1116,8 +1117,27 @@ export class LevelRenderer {
       skyFogEndDistance: sky.skyFogEndDistance,
       cloudFogEndDistance: sky.cloudFogEndDistance,
       rainLevel,
-      skyLightLevel: level.getSkyLight(Math.floor(camera.x), Math.floor(camera.y), Math.floor(camera.z)),
+      skyLightLevel: eyeSkyLight,
     });
+
+    // Light shafts (post VOLUMETRIC_FRAG): the pack marches this frame's shadow maps, so the
+    // matrices/textures must be the exact ones the shadow pass just rendered.
+    if (this.shadowsActive) {
+      this.post.setVolumetricSource({
+        cameraX: camera.x, cameraY: camera.y, cameraZ: camera.z,
+        lightDir: [...this.sunDir],
+        shadow0: this.shadow.cascadeTexture(0),
+        shadow1: this.shadow.cascadeTexture(1),
+        lightViewProj0: this.shadow.cascadeMatrix(0),
+        lightViewProj1: this.shadow.cascadeMatrix(1),
+        texel0: this.shadow.cascadeTexel(0),
+        texel1: this.shadow.cascadeTexel(1),
+        rain: rainLevel,
+        eyeBrightness: Math.max(0, Math.min(1, eyeSkyLight / 15)),
+      });
+    } else {
+      this.post.setVolumetricSource(null);
+    }
 
     this.terrain.use();
     this.terrain.setMat4('uViewProj', this.viewProj);

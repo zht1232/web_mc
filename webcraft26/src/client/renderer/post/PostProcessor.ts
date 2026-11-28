@@ -24,11 +24,31 @@
 import { GlProgram, mat4Invert } from '../gl/Gl.js';
 import {
   BLUR_FRAG, BLOOM_PREFILTER_FRAG, COMPOSITE_FRAG, FULLSCREEN_VERT, FXAA_FRAG,
-  TAA_FRAG, UPSAMPLE_FRAG,
+  TAA_FRAG, UPSAMPLE_FRAG, VOLUMETRIC_FRAG,
 } from './PostShaders.js';
 
 export type PostQuality = 'off' | 'low' | 'medium' | 'high' | 'ultra';
 export const POST_QUALITIES: readonly PostQuality[] = ['off', 'low', 'medium', 'high', 'ultra'];
+
+/**
+ * Per-frame inputs for the volumetric-light pass (VOLUMETRIC_FRAG). LevelRenderer fills this
+ * after it has rendered this frame's shadow map; the matrices/textures must be the ones that
+ * produced that map or the shafts and the terrain shadows disagree.
+ */
+export interface VolumetricParams {
+  cameraX: number; cameraY: number; cameraZ: number;
+  /** Direction TO the sun (the pack's sunVec), used for the VdotL/vlTime terms. */
+  lightDir: readonly [number, number, number];
+  shadow0: WebGLTexture | null;
+  shadow1: WebGLTexture | null;
+  lightViewProj0: Float32Array;
+  lightViewProj1: Float32Array;
+  texel0: number;
+  texel1: number;
+  rain: number;
+  /** Sky light at the camera / 15: density of the far (unshadowed) sample. */
+  eyeBrightness: number;
+}
 
 /** Bloom mip count per tier. Low is the "no bloom, no FXAA" tier required by the task. */
 const BLOOM_MIPS: Record<PostQuality, number> = { off: 0, low: 0, medium: 4, high: 5, ultra: 6 };
@@ -56,6 +76,8 @@ export interface PostStats {
   ssao: boolean;
   /** Temporal anti-aliasing active this frame (high/ultra tiers only). */
   taa: boolean;
+  /** Volumetric light (god rays) rendered this frame. */
+  volumetric: boolean;
 }
 
 export class PostProcessor {
@@ -65,6 +87,7 @@ export class PostProcessor {
   private readonly fxaa: GlProgram;
   private readonly upsample: GlProgram;
   private readonly taaPass: GlProgram;
+  private readonly volumetric: GlProgram;
 
   private readonly quadVao: WebGLVertexArrayObject;
   private readonly blackTex: WebGLTexture;
@@ -87,6 +110,13 @@ export class PostProcessor {
   /** Opaque-scene colour snapshot for the water pass's screen-space reflections. */
   private waterColorTex: WebGLTexture | null = null;
   private waterColorFbo: WebGLFramebuffer | null = null;
+  /** Half-resolution light-shaft target (VOLUMETRIC_FRAG output, added in composite). */
+  private volTex: WebGLTexture | null = null;
+  private volFbo: WebGLFramebuffer | null = null;
+  private volWidth = 0;
+  private volHeight = 0;
+  private volumetricParams: VolumetricParams | null = null;
+  private volumetricUsed = false;
   private ldrTex: WebGLTexture | null = null;
   private ldrFbo: WebGLFramebuffer | null = null;
   private mips: BloomMip[] = [];
@@ -120,6 +150,11 @@ export class PostProcessor {
   bloomUpsampleWeight = 0.5;
   /** Master switch for the sun/moon shadow pass (kept separate for cheap A/B debugging). */
   shadowsEnabled = true;
+  /** Volumetric light (god rays); needs the shadow map + depth copy. */
+  volumetricEnabled = true;
+  /** 0 disables the pass entirely (the probes A/B with this). The pack's HDR add is scaled
+   *  down for this display-referred pipeline (its scene sits far above 1.0, ours does not). */
+  volumetricStrength = 0.3;
   /** 0 = normal, 1 = raw HDR scene, 2 = bloom only, 4 = SSAO mask (verification helper). */
   debug = 0;
 
@@ -199,6 +234,7 @@ export class PostProcessor {
     this.fxaa = new GlProgram(gl, FULLSCREEN_VERT, FXAA_FRAG, 'post.fxaa');
     this.upsample = new GlProgram(gl, FULLSCREEN_VERT, UPSAMPLE_FRAG, 'post.upsample');
     this.taaPass = new GlProgram(gl, FULLSCREEN_VERT, TAA_FRAG, 'post.taa');
+    this.volumetric = new GlProgram(gl, FULLSCREEN_VERT, VOLUMETRIC_FRAG, 'post.volumetric');
 
     // Fullscreen triangle: (-1,-1) (3,-1) (-1,3) covers the whole clip space with one
     // primitive, so no diagonal seam and one fewer vertex than a quad.
@@ -252,6 +288,7 @@ export class PostProcessor {
       depthTexture: this.depthTextureOk,
       ssao: this.ssaoEnabled,
       taa: this.taaEnabled,
+      volumetric: this.volumetricUsed,
     };
   }
 
@@ -262,6 +299,14 @@ export class PostProcessor {
   setDepthRange(near: number, far: number): void {
     this.nearPlane = near;
     this.farPlane = far;
+  }
+
+  /**
+   * Light-shaft sources for this frame. LevelRenderer passes null when the shader path or the
+   * shadow pass is off, which disables the volumetric pass for the frame.
+   */
+  setVolumetricSource(params: VolumetricParams | null): void {
+    this.volumetricParams = params;
   }
 
   // ------------------------------------------------------------------ targets
@@ -295,6 +340,12 @@ export class PostProcessor {
     if (this.waterColorTex) gl.deleteTexture(this.waterColorTex);
     this.waterColorFbo = null;
     this.waterColorTex = null;
+    if (this.volFbo) gl.deleteFramebuffer(this.volFbo);
+    if (this.volTex) gl.deleteTexture(this.volTex);
+    this.volFbo = null;
+    this.volTex = null;
+    this.volWidth = 0;
+    this.volHeight = 0;
     for (const f of this.historyFbo) if (f) gl.deleteFramebuffer(f);
     for (const t of this.historyTex) if (t) gl.deleteTexture(t);
     this.historyFbo = [null, null];
@@ -487,6 +538,7 @@ export class PostProcessor {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.sceneBound = true;
     this.depthCopied = false;
+    this.volumetricUsed = false;
     return true;
   }
 
@@ -583,6 +635,7 @@ export class PostProcessor {
     // everything downstream (bloom prefilter + composite) reads the resolved colour.
     const colorTex = (this.taaEnabled && this.sceneTex) ? (this.runTaa() ?? this.sceneTex) : this.sceneTex;
     const bloom = this.mips.length > 0 ? this.runBloomChain(colorTex) : this.blackTex;
+    const volumetricTex = this.runVolumetric();
     const useFxaa = this.qualityValue !== 'low';
 
     // Composite -> LDR intermediate (so FXAA can read it), or straight to the screen. When the
@@ -603,6 +656,10 @@ export class PostProcessor {
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.hasDepthCopy ? this.depthCopyTex : (this.depthTex ?? this.blackTex));
     this.composite.set1i('uDepth', 2);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, volumetricTex ?? this.blackTex);
+    this.composite.set1i('uVolumetric', 3);
+    this.composite.set1f('uVolumetricStrength', volumetricTex ? this.volumetricStrength : 0);
     this.composite.set1f('uNear', this.nearPlane);
     this.composite.set1f('uFar', this.farPlane);
     this.composite.set1f('uAoRadius', this.ssaoRadius);
@@ -638,6 +695,88 @@ export class PostProcessor {
     this.frameCount++;
     // gl.getError() forces a CPU/GPU sync (~25% of the frame on the main thread), so it is only queried
     // on demand from the stats getter instead of once per frame.
+  }
+
+  /**
+   * Volumetric light (god rays) at half resolution. Requires the pre-hand depth copy (the world
+   * distance along each view ray), this frame's shadow cascades and a minimum quality tier:
+   * LIGHTSHAFT_QUALI 2 is the pack default, and `low` keeps the pre-shader look.
+   */
+  private runVolumetric(): WebGLTexture | null {
+    if (!this.volumetricEnabled || this.volumetricStrength <= 0) return null;
+    if (!this.enabled || this.qualityValue === 'low' || this.qualityValue === 'off') return null;
+    if (!this.shadowsEnabled || !this.depthTextureOk || !this.depthCopied) return null;
+    const params = this.volumetricParams;
+    if (!params || !params.shadow0 || !params.shadow1 || !this.depthCopyTex) return null;
+    if (!this.ensureVolumetricTarget()) return null;
+
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.volFbo);
+    gl.viewport(0, 0, this.volWidth, this.volHeight);
+    this.volumetric.use();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.depthCopyTex);
+    this.volumetric.set1i('uDepth', 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, params.shadow0);
+    this.volumetric.set1i('uShadow0', 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, params.shadow1);
+    this.volumetric.set1i('uShadow1', 2);
+    this.volumetric.setMat4('uInvViewProj', this.invViewProj);
+    this.volumetric.setMat4('uLightViewProj0', params.lightViewProj0);
+    this.volumetric.setMat4('uLightViewProj1', params.lightViewProj1);
+    this.volumetric.set3f('uCameraPos', params.cameraX, params.cameraY, params.cameraZ);
+    this.volumetric.set3f('uLightDir', params.lightDir[0], params.lightDir[1], params.lightDir[2]);
+    this.volumetric.set2f('uResolution', this.volWidth, this.volHeight);
+    this.volumetric.set1f('uFar', this.farPlane);
+    this.volumetric.set1f('uRain', params.rain);
+    this.volumetric.set1f('uEyeBrightness', params.eyeBrightness);
+    this.volumetric.set1f('uStrength', this.volumetricStrength);
+    this.volumetric.set1f('uTexel0', params.texel0);
+    this.volumetric.set1f('uTexel1', params.texel1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.activeTexture(gl.TEXTURE0);
+    this.volumetricUsed = true;
+    return this.volTex;
+  }
+
+  /** Allocates the half-resolution light-shaft target (HDR when available). */
+  private ensureVolumetricTarget(): boolean {
+    const w = Math.max(1, this.width >> 1);
+    const h = Math.max(1, this.height >> 1);
+    if (this.volTex && this.volFbo && this.volWidth === w && this.volHeight === h) return true;
+    this.volWidth = w;
+    this.volHeight = h;
+    if (this.volFbo) { this.gl.deleteFramebuffer(this.volFbo); this.volFbo = null; }
+    if (this.volTex) { this.gl.deleteTexture(this.volTex); this.volTex = null; }
+    const gl = this.gl;
+    const tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    if (this.useHalfFloat) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    }
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fbo = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    if (!ok) {
+      gl.deleteFramebuffer(fbo);
+      gl.deleteTexture(tex);
+      console.warn('[post] volumetric target incomplete; light shafts disabled');
+    } else {
+      this.volTex = tex;
+      this.volFbo = fbo;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return ok;
   }
 
   /**

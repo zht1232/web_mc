@@ -44,10 +44,12 @@ in vec2 vUV;
 uniform sampler2D uColor;
 uniform sampler2D uBloom;
 uniform sampler2D uDepth;       // scene depth (depth-difference SSAO)
+uniform sampler2D uVolumetric;  // half-res light shafts (VOLUMETRIC_FRAG)
 uniform vec2 uResolution;
 
 uniform float uExposure;       // TM_EXPOSURE
 uniform float uBloomStrength;  // BLOOM_STRENGTH
+uniform float uVolumetricStrength; // 0 disables the light-shaft add
 uniform float uTime;
 uniform int uDebug;
 // Depth-based SSAO: linearised depth difference against 8 screen-space neighbours.
@@ -186,9 +188,15 @@ void main() {
   if (uDebug == 1) { fragColor = vec4(texture(uColor, vUV).rgb, 1.0); return; }
   if (uDebug == 2) { fragColor = vec4(bloom, 1.0); return; }
   if (uDebug == 4) { fragColor = vec4(vec3(ao), 1.0); return; }
+  // Light-shaft mask for the volumetric probe: x8 so the (subtle) shafts are measurable.
+  if (uDebug == 5) { fragColor = vec4(clamp(texture(uVolumetric, vUV).rgb * 8.0, 0.0, 1.0), 1.0); return; }
 
   // composite5.glsl:142 - mix, never add.
   color = mix(color, bloom, uBloomStrength);
+
+  // composite1.glsl:325 - light shafts are ADDED after the display->linear decode (the pack
+  // adds them after pow(color, 2.2)), so they interact with the tonemap like sun light.
+  color += texture(uVolumetric, vUV).rgb * uVolumetricStrength;
 
   color = tonemapComplementary(color);
   color = bslSaturation(color);
@@ -428,4 +436,193 @@ out vec4 fragColor;
 void main() {
   if (texture(uAtlas, vec3(vUV, float(vLayer))).a < uAlphaTest) discard;
   fragColor = vec4(1.0);
+}`;
+
+/**
+ * Volumetric light / god rays, ported from the pack's
+ * lib/atmospherics/volumetricLight/volumetricLight.glsl (GetVolumetricLight) with the
+ * COMPOSITE1 default parameters:
+ *   LIGHTSHAFT_QUALI 2  -> 10 near samples, 1 far sample
+ *   fogCurve 0.9, sampleDistribution 2.0, sampleDistributionFar 2.5
+ *   maxDistance = max(far * 0.98, 128), qualityThreshold = min(far, shadowDistance) * 0.98
+ *   vlColor from lib/colors/lightAndAmbientColors.glsl (COMPOSITE1 branch): noon
+ *   (0.4,0.75,1.3), sunset `pow((0.62,0.39,0.24), 1.5 + invNoon) * 6.8`, night (0.08,0.12,0.23)
+ *   and the Step 1 / Step 5 multipliers (VdotUM * VdotLM * vlTime, invNoonFactor2 * 0.875 +
+ *   0.125, 1.4 - 0.4 * rain).
+ *
+ * Differences forced by the engine: the two shadow cascades replace shadowtex0/1 (near 40
+ * blocks, far 132; beyond that a sample counts as lit), and the "sky visible" gate
+ * (SALS, colortex5.a) is approximated by the sky light at the camera (uEyeBrightness for the
+ * far sample). The result is a half-resolution additive buffer consumed by COMPOSITE_FRAG.
+ */
+export const VOLUMETRIC_FRAG = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+
+in vec2 vUV;
+
+uniform sampler2D uDepth;        // pre-hand depth copy (full res)
+uniform sampler2D uShadow0;      // near cascade depth (40 blocks)
+uniform sampler2D uShadow1;      // far cascade depth (132 blocks)
+uniform mat4 uInvViewProj;
+uniform mat4 uLightViewProj0;
+uniform mat4 uLightViewProj1;
+uniform vec3 uCameraPos;
+uniform vec3 uLightDir;          // direction TO the sun (same convention as the pack's sunVec)
+uniform vec2 uResolution;        // half-res target size
+uniform float uFar;
+uniform float uRain;
+uniform float uEyeBrightness;    // sky light at the camera / 15 (pack: eyeBrightnessM)
+uniform float uStrength;
+uniform float uTexel0;
+uniform float uTexel1;
+
+out vec4 fragColor;
+
+float smoothstep1(float x) {
+  x = clamp(x, 0.0, 1.0);
+  return x * x * (3.0 - 2.0 * x);
+}
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+// 2x2 PCF visibility: 1 = lit, 0 = shadowed.
+float shadowTap(sampler2D map, vec2 uv, float z, float texel) {
+  float sum = 0.0;
+  for (int y = 0; y < 2; y++) {
+    for (int x = 0; x < 2; x++) {
+      vec2 o = (vec2(float(x), float(y)) - 0.5) * texel;
+      float stored = texture(map, uv + o).r;
+      sum += (z - 0.0008 <= stored) ? 1.0 : 0.0;
+    }
+  }
+  return sum * 0.25;
+}
+
+// pack GetShadowPos/GetShadow: near cascade first, then far, else "no occluder".
+float visibility(vec3 worldPos) {
+  vec4 p0 = uLightViewProj0 * vec4(worldPos, 1.0);
+  vec3 s0 = p0.xyz / p0.w * 0.5 + 0.5;
+  if (s0.x > 0.0 && s0.x < 1.0 && s0.y > 0.0 && s0.y < 1.0 && s0.z < 1.0) {
+    return shadowTap(uShadow0, s0.xy, s0.z, uTexel0);
+  }
+  vec4 p1 = uLightViewProj1 * vec4(worldPos, 1.0);
+  vec3 s1 = p1.xyz / p1.w * 0.5 + 0.5;
+  if (s1.x > 0.0 && s1.x < 1.0 && s1.y > 0.0 && s1.y < 1.0 && s1.z < 1.0) {
+    return shadowTap(uShadow1, s1.xy, s1.z, uTexel1);
+  }
+  return 1.0;
+}
+
+void main() {
+// ============================== Step 1: factors ============================== //
+  float depth = texture(uDepth, vUV).r;
+  bool sky = depth >= 0.999999;
+  vec4 clip = vec4(vUV * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+  vec4 world = uInvViewProj * clip;
+  world /= world.w;
+  vec3 delta = world.xyz - uCameraPos;
+  float sceneDist = length(delta);
+  vec3 rayDir = delta / max(sceneDist, 1e-4);
+  float lViewPos1 = sky ? uFar : sceneDist;
+
+  float sunVisibility = clamp(uLightDir.y + 0.0625, 0.0, 0.125) / 0.125;
+  float sunVisibility2 = sunVisibility * sunVisibility;
+  float noonFactor = sqrt(max(uLightDir.y, 0.0));
+  float nightFactor = sqrt(max(-uLightDir.y, 0.0));
+  float invNoonFactor = 1.0 - noonFactor;
+  float invNoonFactor2 = invNoonFactor * invNoonFactor;
+  float rainFactor = clamp(uRain, 0.0, 1.0);
+  float rainFactor2 = rainFactor * rainFactor;
+  const float vsBrightness = 0.5;
+
+  // lightAndAmbientColors.glsl (COMPOSITE1 / light-shaft colours).
+  vec3 noonClearLightColor = vec3(0.4, 0.75, 1.3);
+  vec3 sunsetClearLightColor = pow(vec3(0.62, 0.39, 0.24), vec3(1.5 + invNoonFactor)) * 6.8;
+  vec3 nightClearLightColor = vec3(0.08, 0.12, 0.23);
+  vec3 dayRainLightColor = vec3(0.21, 0.16, 0.13) * 0.85 + noonFactor * vec3(0.0, 0.02, 0.06);
+  vec3 nightRainLightColor = vec3(0.03, 0.035, 0.05) * (0.5 + 0.5 * vsBrightness);
+  float noonFactorDM = noonFactor * noonFactor;
+  vec3 dayLightColor = mix(sunsetClearLightColor, noonClearLightColor, noonFactorDM);
+  vec3 clearLightColor = mix(nightClearLightColor, dayLightColor, sunVisibility2);
+  vec3 rainLightColor = mix(nightRainLightColor, dayRainLightColor * 0.6, sunVisibility2) * 2.5;
+  vec3 vlColor = mix(clearLightColor, rainLightColor, rainFactor);
+
+  float vlMult = 1.0;
+  float vlSceneIntensity = 1.0;
+  float rainyNight = (1.0 - sunVisibility) * rainFactor;
+  float invRainFactor = 1.0 - rainFactor;
+  if (sunVisibility < 0.5) {
+    vlSceneIntensity = 0.0;
+    float vlMultNightModifier = 0.3 + 0.4 * rainFactor2 + 0.5 * max(0.0, uFar - lViewPos1) / uFar;
+    vlMult *= vlMultNightModifier;
+    vlColor = normalize(pow(vlColor, vec3(1.0 - max(0.0, 1.0 - 1.5 * nightFactor) + rainFactor)));
+    vlColor *= 0.0766 + 0.0766 * vsBrightness;
+  }
+
+  // Step 5 (volumetricLight.glsl:351-367): LIGHTSHAFT_SUNSET_SATURATION 0.25, all
+  // LIGHTSHAFT_*_I intensities at their default 100 (=no-op).
+  vlColor = pow(vlColor, vec3(0.5 + (0.5 + 0.25 * sunVisibility) * invNoonFactor * invRainFactor
+    + 0.3 * rainFactor));
+  vlColor *= 1.0 - (0.3 + 0.3 * noonFactor) * rainFactor - 0.5 * rainyNight
+    + sunVisibility * invNoonFactor2 * invRainFactor;
+
+  float VdotL = dot(rayDir, uLightDir);
+  float VdotU = rayDir.y;
+  float VdotLM = max((VdotL + 1.0) / 2.0, 0.0);
+  float VdotUmax0 = max(VdotU, 0.0);
+  float VdotUM = mix((1.0 - VdotUmax0) * (1.0 - VdotUmax0), 1.0, 0.5 * vlSceneIntensity);
+  VdotUM = smoothstep1(VdotUM);
+  float vdotExponent = max(min(lViewPos1 / uFar, 1.0) * (3.0 - 2.0 * vlSceneIntensity), 1e-4);
+  VdotUM = pow(VdotUM, vdotExponent);
+  float vlTime = clamp((abs(uLightDir.y) - 0.05) / 0.15, 0.0, 1.0);
+  vlMult *= mix(VdotUM * VdotLM, 1.0, 0.4 * rainyNight) * vlTime;
+  vlMult *= mix(invNoonFactor2 * 0.875 + 0.125, 1.0, max(vlSceneIntensity, rainFactor2));
+  vlMult *= 1.4 - 0.4 * rainFactor;
+
+  vlMult *= uStrength;
+
+// ============================== Step 2/3: trace ============================== //
+  float maxDistance = max(uFar * 0.98, 128.0);
+  float qualityThreshold = min(uFar, 132.0) * 0.98;
+  float activeThreshold = min(qualityThreshold, maxDistance);
+  float rayEnd = sky ? maxDistance : min(sceneDist, maxDistance);
+  float dither = hash12(floor(vUV * uResolution));
+
+  const int nearSamples = 10;
+  const int farSamples = 1;
+  vec3 accum = vec3(0.0);
+  float accumWeight = 0.0;
+  float lastDistance = 0.0;
+
+  for (int i = 0; i <= nearSamples + farSamples; i++) {
+    float nextDistance;
+    float density;
+    if (i <= nearSamples) {
+      float t = (float(i) + dither) / float(nearSamples);
+      nextDistance = pow(t, 2.0) * activeThreshold;
+      if (nextDistance >= rayEnd) break;
+      density = visibility(uCameraPos + rayDir * nextDistance);
+    } else {
+      float t = (float(i - nearSamples) + dither) / float(farSamples);
+      nextDistance = mix(activeThreshold, maxDistance, pow(t, 2.5));
+      if (nextDistance >= rayEnd) nextDistance = rayEnd;
+      density = uEyeBrightness;
+    }
+
+    // The fog curve makes the slice weights independent of the sample distribution.
+    float currentWeight = smoothstep1(pow(clamp(lastDistance / maxDistance, 0.0, 1.0), 0.9));
+    float nextWeight = smoothstep1(pow(clamp(nextDistance / maxDistance, 0.0, 1.0), 0.9));
+    float sliceWeight = nextWeight - currentWeight;
+    accum += density * sliceWeight * vlColor;
+    accumWeight += sliceWeight;
+    lastDistance = nextDistance;
+  }
+
+// ============================== Step 5: output ============================== //
+  fragColor = vec4(max(accum * vlMult, vec3(0.0)), accumWeight);
 }`;

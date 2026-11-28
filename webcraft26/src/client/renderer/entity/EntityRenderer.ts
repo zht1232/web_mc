@@ -234,7 +234,7 @@ const ANIM_CTX: AnimContext = {
   ageInTicks: 0, limbSwing: 0, limbSwingAmount: 0,
   headYaw: 0, headPitch: 0, attackTime: 0,
   isAggressive: false, isHoldingBow: false, swell: 0, flapAngle: 0, isResting: false,
-  rowingTimeLeft: 0, rowingTimeRight: 0,
+  rowingTimeLeft: 0, rowingTimeRight: 0, attackTicksRemaining: 0, offerFlowerTick: 0,
 };
 
 /** Vanilla hurt overlay colour: OverlayTexture row v=3 is 0xB2FF0000. */
@@ -371,6 +371,11 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     const rowing = e as unknown as { getRowingTime?: (side: number, partial: number) => number };
     ctx.rowingTimeLeft = typeof rowing.getRowingTime === 'function' ? rowing.getRowingTime(0, partialTick) : 0;
     ctx.rowingTimeRight = typeof rowing.getRowingTime === 'function' ? rowing.getRowingTime(1, partialTick) : 0;
+    // IronGolemRenderer.extractRenderState: attack tick counts down with the partial tick.
+    const golem = e as unknown as { attackAnimationTick?: number; offerFlowerTick?: number };
+    ctx.attackTicksRemaining = typeof golem.attackAnimationTick === 'number' && golem.attackAnimationTick > 0
+      ? golem.attackAnimationTick - partialTick : 0;
+    ctx.offerFlowerTick = typeof golem.offerFlowerTick === 'number' ? golem.offerFlowerTick : 0;
 
     const animator: ModelAnimator | null = model.animate;
     const poses = model.poses;

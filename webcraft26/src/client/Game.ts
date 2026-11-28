@@ -45,6 +45,7 @@ import { Animal } from '../vanilla/world/entity/animal/Animal.js';
 import { Wolf } from '../vanilla/world/entity/animal/Wolf.js';
 import { Cat } from '../vanilla/world/entity/animal/Cat.js';
 import { Villager } from '../vanilla/world/entity/npc/Villager.js';
+import { IronGolem } from '../vanilla/world/entity/animal/IronGolem.js';
 import { VillagerTrades } from '../vanilla/world/entity/npc/VillagerTrades.js';
 import { Minecart } from '../vanilla/world/entity/vehicle/Minecart.js';
 import { Boat } from '../vanilla/world/entity/vehicle/Boat.js';
@@ -1631,6 +1632,7 @@ export class Game {
         data.woolColor = e.woolColor;
         data.sheared = e.sheared;
       }
+      if (e instanceof IronGolem) data.playerCreated = e.playerCreated;
       return { ...base, health: e.health, data };
     }
     return null;
@@ -1720,6 +1722,9 @@ export class Game {
       if (e instanceof Sheep) {
         if (typeof data.woolColor === 'number') e.woolColor = data.woolColor;
         if (data.sheared === true || data.sheared === 1) e.sheared = true;
+      }
+      if (e instanceof IronGolem && (data.playerCreated === true || data.playerCreated === 1)) {
+        e.playerCreated = true;
       }
     } else if (e instanceof ItemEntity) {
       const stack = this.stackFromData(data.stack);
@@ -2373,6 +2378,7 @@ export class Game {
     cod: [['cod', 1, 1], ['bone_meal', 0, 1]],
     salmon: [['salmon', 1, 1], ['bone_meal', 0, 1]],
     zombified_piglin: [['rotten_flesh', 0, 1], ['gold_nugget', 0, 1]],
+    iron_golem: [['iron_ingot', 3, 5], ['poppy', 0, 2]],
   };
 
   /** On-fire meat drops use the cooked variant (LootTable smelt function). */
@@ -3062,6 +3068,16 @@ export class Game {
       this.useCooldown = 8;
       return;
     }
+    // IronGolem.mobInteract: an iron ingot repairs 25 health (no-op at full health).
+    if (entityTarget instanceof IronGolem && held.item?.name === 'iron_ingot') {
+      if (entityTarget.tryRepair('iron_ingot')) {
+        this.sounds.play('entity.iron_golem.repair', entityTarget.x, entityTarget.y, entityTarget.z, 1, 1);
+        this.player.swingHand();
+        if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+        this.useCooldown = 10;
+        return;
+      }
+    }
     // TameableAnimal.mobInteract: bones tame wolves, fish tame cats, and a later
     // click toggles sitting. The item is consumed only for a taming attempt.
     if ((entityTarget instanceof Wolf || entityTarget instanceof Cat) && held.item) {
@@ -3170,7 +3186,41 @@ export class Game {
     this.sounds.play(`${this.blockSoundBase(this.level.getBlockState(plan.x, plan.y, plan.z))}.place`, plan.x + 0.5, plan.y + 0.5, plan.z + 0.5, 1, 0.8);
     this.updateNeighbors(plan.x, plan.y, plan.z);
     for (const extra of plan.extras) this.updateNeighbors(extra.x, extra.y, extra.z);
+    // CarvedPumpkinBlock.onPlace: the four-iron-block pattern creates a golem.
+    this.trySpawnIronGolem(plan.x, plan.y, plan.z);
     if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
+  }
+
+  /**
+   * CarvedPumpkinBlock.onPlace -> trySpawnGolem (iron pattern):
+   *
+   *     ~^~      ^ carved pumpkin / jack o'lantern
+   *     ###      # iron block
+   *     ~#~      ~ air
+   *
+   * Clears the four blocks and spawns a player-created iron golem at the
+   * pumpkin's position (snapTo(x + 0.5, y + 0.05, z + 0.5)).
+   */
+  private trySpawnIronGolem(x: number, y: number, z: number): void {
+    const name = this.mc.blockOf(this.level.getBlockState(x, y, z)).name;
+    if (name !== 'carved_pumpkin' && name !== 'jack_o_lantern') return;
+    const isIron = (bx: number, by: number, bz: number): boolean =>
+      this.mc.blockOf(this.level.getBlockState(bx, by, bz)).name === 'iron_block';
+    const isAir = (bx: number, by: number, bz: number): boolean =>
+      this.level.getBlockState(bx, by, bz) === 0;
+    if (!isAir(x - 1, y, z) || !isAir(x + 1, y, z)) return;
+    if (!isAir(x - 1, y - 2, z) || !isAir(x + 1, y - 2, z)) return;
+    if (!isIron(x, y - 2, z)) return;
+    if (!isIron(x - 1, y - 1, z) || !isIron(x, y - 1, z) || !isIron(x + 1, y - 1, z)) return;
+    const cleared = [
+      [x, y, z], [x - 1, y - 1, z], [x, y - 1, z], [x + 1, y - 1, z], [x, y - 2, z],
+    ];
+    for (const [bx, by, bz] of cleared) {
+      this.level.setBlockState(bx, by, bz, 0);
+      this.updateNeighbors(bx, by, bz);
+    }
+    const golem = this.entityManager.spawn('iron_golem', x + 0.5, y + 0.05, z + 0.5);
+    if (golem instanceof IronGolem) golem.playerCreated = true;
   }
 
   /** EggItem.use: throw a ThrownEgg toward the crosshair. */

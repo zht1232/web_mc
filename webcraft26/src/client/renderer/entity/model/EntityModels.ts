@@ -990,6 +990,87 @@ export const SalmonModel: BakedModel = withAnimator(bakeModel(makeModel(32, 32, 
 });
 
 // ---------------------------------------------------------------------------
+// 26.2 iron golem + baby villager
+// ---------------------------------------------------------------------------
+
+/** Mth.triangleWave(index, period). */
+function triangleWave(index: number, period: number): number {
+  return (Math.abs(index % period - period * 0.5) - period * 0.25) / (period * 0.25);
+}
+
+/** Source: net.minecraft.client.model.animal.golem.IronGolemModel.createBodyLayer (128x128). */
+export const IronGolemModel: BakedModel = withAnimator(bakeModel(makeModel(128, 128, [
+  P('head', 0, -7, -2, [
+    B(-4, -12, -5.5, 8, 10, 8, 0, 0),
+    B(-1, -5, -7.5, 2, 4, 2, 24, 0), // nose
+  ]),
+  P('body', 0, -7, 0, [
+    B(-9, -2, -6, 18, 12, 11, 0, 40),
+    B(-4.5, 10, -3, 9, 5, 6, 0, 70, false, 0.5), // lower-body skirt
+  ]),
+  P('right_arm', 0, -7, 0, [B(-13, -2.5, -3, 4, 30, 6, 60, 21)]),
+  P('left_arm', 0, -7, 0, [B(9, -2.5, -3, 4, 30, 6, 60, 58)]),
+  P('right_leg', -4, 11, 0, [B(-3.5, -3, -3, 6, 16, 5, 37, 0)]),
+  P('left_leg', 5, 11, 0, [B(-3.5, -3, -3, 6, 16, 5, 60, 0, true)]),
+])), (model, ctx) => {
+  // Source: IronGolemModel.setupAnim (attack slam, flower offer, walking arms).
+  const rightArm = pose(model, 'right_arm');
+  const leftArm = pose(model, 'left_arm');
+  const attackTick = ctx.attackTicksRemaining;
+  if (attackTick > 0) {
+    rightArm.rx = -2 + 1.5 * triangleWave(attackTick, 10);
+    leftArm.rx = -2 + 1.5 * triangleWave(attackTick, 10);
+  } else if (ctx.offerFlowerTick > 0) {
+    rightArm.rx = -0.8 + 0.025 * triangleWave(ctx.offerFlowerTick, 70);
+    leftArm.rx = 0;
+  } else {
+    rightArm.rx = (-0.2 + 1.5 * triangleWave(ctx.limbSwing, 13)) * ctx.limbSwingAmount;
+    leftArm.rx = (-0.2 - 1.5 * triangleWave(ctx.limbSwing, 13)) * ctx.limbSwingAmount;
+  }
+  const head = pose(model, 'head');
+  head.ry = ctx.headYaw;
+  head.rx = ctx.headPitch;
+  const rightLeg = pose(model, 'right_leg');
+  const leftLeg = pose(model, 'left_leg');
+  rightLeg.rx = -1.5 * triangleWave(ctx.limbSwing, 13) * ctx.limbSwingAmount;
+  leftLeg.rx = 1.5 * triangleWave(ctx.limbSwing, 13) * ctx.limbSwingAmount;
+  rightLeg.ry = 0;
+  leftLeg.ry = 0;
+});
+
+/**
+ * Source: net.minecraft.client.model.npc.BabyVillagerModel.createBodyModel
+ * (64x64). AgeableMobRenderer renders this mesh instead of the adult model, so
+ * it is already authored at baby size and must not be halved again.
+ */
+export const BabyVillagerModel: BakedModel = withAnimator(bakeModel(makeModel(64, 64, [
+  P('arms', 0, 17.5, 0, [], {}, [
+    P('right_hand', -3, 1.4025, -0.9599, [
+      B(-1, -2.4925, -1.8401, 2, 4, 2, 36, 15),
+      B(5, -2.4925, -1.8401, 2, 4, 2, 16, 15),
+    ], { rx: -1.0472 }),
+    P('middlearm_r1', 0, 0.9024, -1.8175, [B(-2, -0.9924, -0.9825, 4, 2, 2, 24, 17)], { rx: -1.0472 }),
+  ]),
+  P('right_leg', -1, 21.5, 0, [B(-1, -0.5, -1, 2, 3, 2, 8, 23)]),
+  P('left_leg', 1, 21.5, 0, [B(-1, -0.5, -1, 2, 3, 2, 0, 23)]),
+  P('head', 0, 16, 0, [B(-4, -8, -3.5, 8, 8, 7, 0, 0)], {}, [
+    P('hat', 0, -4, 0, [B(-4, -4, -3.5, 8, 8, 7, 0, 30, false, 0.3)]),
+    P('hat_rim', 0, -4.5, 0, [B(-7, -0.5, -6, 14, 1, 12, 0, 45)]),
+    P('nose', 0, -2, -4, [B(-1, 0, -0.5, 2, 2, 1, 23, 0)]),
+  ]),
+  P('body', 0, 18.75, 0, [B(-2, -2.75, -1.5, 4, 5, 3, 0, 15)]),
+  P('bb_main', 0.5, 24, 0, [B(-2.5, -8, -1.5, 4, 6, 3, 16, 21, false, 0.2)]),
+])), (model, ctx) => {
+  // Inherits VillagerModel.setupAnim: head look and the half-speed leg swing.
+  const head = pose(model, 'head');
+  head.rx = ctx.headPitch;
+  head.ry = ctx.headYaw;
+  const ap = ctx.limbSwing, as = ctx.limbSwingAmount;
+  pose(model, 'right_leg').rx = Math.cos(ap * 0.6662) * 1.4 * as * 0.5;
+  pose(model, 'left_leg').rx = Math.cos(ap * 0.6662 + Math.PI) * 1.4 * as * 0.5;
+});
+
+// ---------------------------------------------------------------------------
 // Generic fallback models (items / projectiles), solid white texture
 // ---------------------------------------------------------------------------
 

@@ -53,7 +53,8 @@ node scripts/test-advancements.mjs            # 进度：roots/可见数/触发�
 node scripts/test-villager-trade.mjs          # 村民：职业/报价/交易/等级/补货/存档 14 项
 node scripts/test-minecart.mjs                # 矿车：轨道/弯道/坡道/动力轨/检测轨/乘坐/箱子 11 项
 node scripts/test-boat.mjs                    # 船/筏：浮力/划桨/转向/摩擦/放置/乘坐/箱船/掉落/像素差分 16 项
-node scripts/test-entity-save.mjs             # 区块实体存档：野生生物/矿车/船/掉落物/经验球 保存+重载 9 项
+node scripts/test-entity-save.mjs             # 区块实体存档：野生生物/矿车/船/掉落物/经验球 保存+重载 11 项
+node scripts/test-golem-villager.mjs          # 铁傀儡 + 村民繁殖：图案生成/裂纹/治疗/战斗/食物拾取/宝宝 22 项
 node scripts/test-icons.mjs                   # 物品图标
 node scripts/test-taa.mjs                     # TAA
 npx tsx scripts/test-mesher.mts               # 区块网格 64 项
@@ -95,11 +96,12 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | Q 丢弃物品 | ✅ | Q 丢 1 个 / Ctrl+Q 丢整组，40 tick 拾取延迟，`dropped`/`drop` 统计 |
 | 繁殖 / 喂养 / 幼年 | ✅ | 牛/猪/羊/鸡/兔/猫/豹猫/蘑菇牛：食物标签、600 tick 恋爱、6000 tick 冷却、幼年 0.5 缩放与成长、繁殖 XP、幼年无掉落；幼年专用几何体未接 |
 | 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
-| 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化；`test-villager-trade` 14 项 |
+| 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化。2026-11-28：食物点（面包 4 / 胡萝卜·马铃薯·甜菜根 1）拾取、12 点繁殖门槛、BreedGoal 配对、50/25/25 生物群系皮肤遗传、`BabyVillagerModel` + 宝宝贴图与 0.49×0.98 碰撞箱、年龄/食物点存档；`test-villager-trade` 14 项 + `test-golem-villager` |
 | 矿车 | ✅ | 2026-11-22：普通/箱子矿车实体与模型；`NewMinecartBehavior` 轨道跟随（直线/拐弯/坡道/摩擦/动力轨加速/未供能动力轨刹停）、检测铁轨占用供电、物品放置、右键乘坐与潜行下车、箱子矿车 27 格 GUI、生存破坏掉落；`test-minecart` 11 项 |
 | 船 / 筏 | ✅ | 2026-11-23：10 种木材 × 普通/箱船（含竹筏）实体与模型；`AbstractBoat` 状态扫描/浮力/划桨/转向/陆地摩擦、水面吸附、物品放置（方块面或流体表面）、右键乘坐与潜行下船、箱子船 27 格 GUI（潜行右键）、`VehicleEntity` 伤害累计 40 与掉落；`test-boat` 16 项（含受控场景像素差分） |
 | 区块实体存档 | ✅ | 2026-11-23：区块 NBT `Entities` 保存野生生物（类型/位置/速度/生命/年龄/羊毛色）、矿车与船（含箱内物品）、掉落物（物品与组件）、经验球；读档按区块激活生成，不重复跑区块初始生物生成；已保存区块卸载后从保留的 NBT 字节恢复（方块与实体一起），不再按种子重生成；区块离开保留带前写回实体；村民/已驯服宠物仍走世界级存档；`test-entity-save` 11 项 |
-| 更多 AI（铁傀儡、马） | ❌ | 实体工厂里没有这些类型 |
+| 铁傀儡 | ✅ | 2026-11-28：南瓜+4 铁块的 `CarvedPumpkinBlock` 图案生成（真实右键放置路径、清空方块、`PlayerCreated`）、100 生命/15 攻击（随机伤害+上抛）/击退抗性/1 格跨越、怪物目标选择（排除苦力怕与创造玩家）、铁锭治疗 25、裂纹层（低/中/高贴图）、铁锭/虞美人掉落；`test-golem-villager` |
+| 更多 AI（马、美西螈等） | ❌ | 实体工厂里没有这些类型 |
 
 ### GUI / 物品栏 / 容器
 | 项 | 状态 | 说明 |
@@ -162,7 +164,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；~~野生动物实体存档~~ ✅ 已完成区块级实体存档（见「区块实体持久化」）；剩余：幼年专用模型、项圈渲染、大型世界的数据库按需区块加载。
 5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；剩余：药箭、TNT 归属（owner）与爆炸掉落衰减、比较器/活塞等红石长尾。
 6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成列表界面 + 8 类触发器（含 `villager_trade` 与 Y 坐标谓词）；剩余：树状布局/连接线、完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
-7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；剩余：地图交易（需已填充地图/结构定位）、流浪商人、村民繁殖与铁傀儡、村民工作/睡眠日程。
+7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；~~村民繁殖与铁傀儡~~ ✅ 已加入食物点繁殖/宝宝模型与南瓜图案生成的铁傀儡；剩余：地图交易（需已填充地图/结构定位）、流浪商人、袭击、村民工作/睡眠日程、村庄八卦生成铁傀儡。
 8. 夜间怪物装备/掉落表与自然生成权重对齐（Looting/熟肉/装备掉落已完成）。
 
 **P2（长尾一致性）**
@@ -449,3 +451,37 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 剩余：启动时仍会把 IndexedDB 里的全部已保存区块解码进内存（`loaded.chunks`），大型
   世界应改成只载入玩家附近、其余按需从数据库读取；箭/投掷物/TNT 等瞬时实体的存档、
   实体装备/药水效果等 NBT 长尾也待补。
+
+### 铁傀儡 + 村民繁殖（2026-11-28）
+
+- 铁傀儡：新增 `IronGolem`（`animal/golem` 对应目录 `animal/IronGolem.ts`）。属性
+  100 生命 / 0.25 速度 / 15 攻击 / 1.0 击退抗性；`doHurtTarget` 用原版
+  `attackDamage / 2 + rand(attackDamage)` 随机伤害并给目标 0.4 上抛，`attackAnimationTick`
+  驱动双臂下砸；目标选择为 `HurtByTarget` + 16 格内 `MONSTER` 类别（排除苦力怕；
+  `PlayerCreated` 时不把玩家设为目标）；`mobInteract` 铁锭治疗 25；掉落 3–5 铁锭 +
+  0–2 虞美人。
+- 生成图案：`CarvedPumpkinBlock.onPlace` 的三行图案（`~^~ / ### / ~#~`）在
+  `Game.useItem` 的方块放置成功后检查；校验四周空气与南瓜/南瓜灯，清空 4 个铁块与
+  南瓜并在南瓜位置生成 `PlayerCreated` 铁傀儡。
+- 渲染：`IronGolemModel`（128x128）逐盒转录 + `setupAnim`（三角波手臂/腿、攻击、
+  献花姿势）；`IronGolemCrackinessLayer` 按生命比例绑定低/中/高三张裂纹贴图；
+  阴影半径 0.7；`AnimContext` 新增 `attackTicksRemaining` / `offerFlowerTick`。
+  `PlayerCreated` 随区块实体存档持久化。
+- 村民繁殖：食物点模型（`bread 4 / potato·carrot·beetroot 1`，上限 24），每 10 tick
+  扫描 1.5 格内的掉落食物并吸收；`canBreed()` = 12 点 + 成年；`isInLove()` 对
+  可繁殖村民返回 true，复用通用 `BreedGoal` 配对；`breedWith` 双方各消耗 12 点、
+  进入 6000 tick 冷却，按 50% 当前生物群系 / 25% 父 / 25% 母 决定皮肤，生成
+  `age = -24000` 的宝宝并播放爱心/计入 `animals_bred`。
+- 宝宝渲染：新增 `BabyVillagerModel`（64x64，原版 `createBodyModel` 逐盒转录），
+  `MobRenderer.getModel` 对幼年村民改用宝宝网格，类型叠加层同样用宝宝网格 +
+  `villager/baby/<type>` 贴图，基层 `villager/villager_baby`；村民 `setAge` 不再套用
+  通用 0.5 缩放，碰撞箱按 `BABY_DIMENSIONS` 覆盖为 0.49×0.98（眼高 0.63）。
+- 存档：`SavedVillager` 增加 `age` 与 `foodPoints`，读档恢复宝宝年龄与食物点。
+- 验证：`tsc` 0；`node scripts/test-golem-villager.mjs` **22/22**（真实右键放置触发
+  图案、清空方块、`PlayerCreated`/100 生命、20% 生命绑定 high 裂纹贴图、铁锭治疗、
+  傀儡击杀僵尸且不锁定创造玩家、面包拾取 12 点、两村民繁殖出宝宝、父母扣 12 点并
+  进入冷却、宝宝网格/贴图/0.49×0.98 尺寸、傀儡与宝宝受控场景像素差分、存档重载
+  食物点与宝宝年龄）；回归 `test-villager-trade` 14/14、`test-entity-save` 11/11、
+  `test-boat` 16/16、`smoke` 19/19、`npm run build`。
+- 剩余：铁傀儡献花层（虞美人方块层）、村庄八卦/睡眠触发自然生成铁傀儡、繁殖需要
+  空床的规则、农民收割与村民分享食物。

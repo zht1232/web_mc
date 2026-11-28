@@ -8,10 +8,10 @@
 import { EntityRenderer, type EntityLayer } from './EntityRenderer.js';
 import {
   MODEL_REGISTRY, SHEEP_WOOL_MODEL, SHEEP_WOOL_TEXTURE,
-  ARMOR_LAYER1_TEXTURE, ARMOR_LAYER2_TEXTURE, type ModelEntry,
+  ARMOR_LAYER1_TEXTURE, ARMOR_LAYER2_TEXTURE, IRON_GOLEM_CRACK_TEXTURES, type ModelEntry,
 } from './model/ModelRegistry.js';
 import {
-  ArmorHelmetModel, ArmorChestModel, ArmorLegsModel, ArmorBootsModel,
+  ArmorHelmetModel, ArmorChestModel, ArmorLegsModel, ArmorBootsModel, BabyVillagerModel,
 } from './model/EntityModels.js';
 import type { BakedModel } from './model/ModelBox.js';
 import type { Entity } from '../../../vanilla/world/entity/Entity.js';
@@ -72,6 +72,7 @@ const SHADOW_RADIUS: Readonly<Record<string, number>> = {
   glow_squid: 0.875,
   cod: 0.5,             // 0.3  * scale 0.6
   salmon: 0.5714286,    // 0.4  * scale 0.7
+  iron_golem: 0.7,      // IronGolemRenderer super(..., 0.7F)
 };
 
 const HUMAN_ARMOR_TYPES: ReadonlySet<string> = new Set([
@@ -115,7 +116,11 @@ export class MobRenderer extends EntityRenderer<Entity> {
       : null;
   }
 
-  getModel(): BakedModel { return this.entry.model; }
+  getModel(e: Entity): BakedModel {
+    // AgeableMobRenderer: babies render the dedicated baby mesh (villager).
+    if (this.typeName === 'villager' && (e as Villager).isBaby()) return BabyVillagerModel;
+    return this.entry.model;
+  }
   getTextureKey(e: Entity): string {
     if (this.typeName === 'villager' && (e as Villager).isBaby()) return 'villager/villager_baby';
     return this.entry.texture;
@@ -126,22 +131,23 @@ export class MobRenderer extends EntityRenderer<Entity> {
   private villagerProfessionLayers(e: Entity): readonly EntityLayer[] {
     const villager = e as Villager;
     const baby = villager.isBaby();
+    const model = baby ? BabyVillagerModel : this.entry.model;
     let n = 0;
     this.villagerLayers[n++] = {
-      model: this.entry.model,
+      model,
       texture: `villager/${baby ? 'baby' : 'type'}/${villager.villagerType}`,
       tint: WHITE,
     };
     if (!baby && villager.profession !== 'none') {
       this.villagerLayers[n++] = {
-        model: this.entry.model,
+        model,
         texture: `villager/profession/${villager.profession}`,
         tint: WHITE,
       };
       if (villager.profession !== 'nitwit') {
         const level = Math.max(1, Math.min(5, villager.professionLevel));
         this.villagerLayers[n++] = {
-          model: this.entry.model,
+          model,
           texture: `villager/profession_level/${VILLAGER_LEVEL_TEXTURES[level - 1]}`,
           tint: WHITE,
         };
@@ -151,9 +157,26 @@ export class MobRenderer extends EntityRenderer<Entity> {
     return this.villagerLayers;
   }
 
+  /** Source: IronGolemCrackinessLayer + Crackiness.GOLEM. */
+  private ironGolemCrackLayer(e: Entity): readonly EntityLayer[] {
+    const golem = e as unknown as { getCrackiness?: () => string };
+    const level = typeof golem.getCrackiness === 'function' ? golem.getCrackiness() : 'none';
+    if (level === 'low' || level === 'medium' || level === 'high') {
+      const index = level === 'low' ? 0 : level === 'medium' ? 1 : 2;
+      this.layerScratch[0] = {
+        model: this.entry.model,
+        texture: IRON_GOLEM_CRACK_TEXTURES[index],
+        tint: WHITE,
+      };
+      return this.layerScratch;
+    }
+    return super.getLayers(e);
+  }
+
   /** Source: SheepRenderer.render — the wool layer is skipped while sheared. */
   getLayers(e: Entity): readonly EntityLayer[] {
     if (this.typeName === 'villager') return this.villagerProfessionLayers(e);
+    if (this.typeName === 'iron_golem') return this.ironGolemCrackLayer(e);
     if (this.woolLayers) {
       const sheep = e as Sheep;
       if (sheep.sheared) return super.getLayers(e);

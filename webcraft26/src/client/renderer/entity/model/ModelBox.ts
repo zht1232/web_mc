@@ -86,6 +86,10 @@ export interface AnimContext {
   /** AbstractBoat.getRowingTime(0) / (1): paddle swing positions, radians. */
   rowingTimeLeft: number;
   rowingTimeRight: number;
+  /** IronGolem.getAttackAnimationTick(): ticks remaining of the 10-tick arm slam. */
+  attackTicksRemaining: number;
+  /** IronGolem.getOfferFlowerTick(): > 0 while holding a poppy out. */
+  offerFlowerTick: number;
 }
 
 export interface BakedPart {

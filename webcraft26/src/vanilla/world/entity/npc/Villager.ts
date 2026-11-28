@@ -7,12 +7,20 @@
 //
 // Vanilla assigns a profession when a villager claims a workstation; this port
 // does the same with a 16-block scan (the vanilla POI manager is chunk-based).
+//
+// Breeding: Villager.canBreed needs 12 food points (bread 4, carrot/potato/
+// beetroot 1) and age 0. Food comes from ItemEntities the villager picks up;
+// two breeding-ready villagers pair through the shared BreedGoal, consume 12
+// points each and spawn a baby with the vanilla biome/50-25-25 type roll. The
+// vanilla vacant-bed requirement is skipped (the port has no bed POI owner).
 
 import { Mob } from '../Mob.js';
 import { FloatGoal } from '../ai/goal/FloatGoal.js';
+import { BreedGoal } from '../ai/goal/BreedGoal.js';
 import { RandomStrollGoal } from '../ai/goal/RandomStrollGoal.js';
 import { LookAtPlayerGoal } from '../ai/goal/LookAtPlayerGoal.js';
 import { RandomLookAroundGoal } from '../ai/goal/RandomLookAroundGoal.js';
+import { ItemEntity } from '../item/ItemEntity.js';
 import { entityType } from '../EntityType.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
 import type { ItemRegistry } from '../../item/Item.js';
@@ -24,6 +32,21 @@ import { VillagerTrades } from './VillagerTrades.js';
 
 /** VillagerData.NEXT_LEVEL_XP_THRESHOLDS. */
 export const LEVEL_XP: readonly number[] = [0, 10, 70, 150, 250];
+
+/** Villager.FOOD_POINTS. */
+const FOOD_POINTS: Readonly<Record<string, number>> = {
+  bread: 4, potato: 1, carrot: 1, beetroot: 1,
+};
+
+/** Villager.BREEDING_FOOD_THRESHOLD. */
+const BREEDING_FOOD_THRESHOLD = 12;
+/** Villager.hasExcessFood threshold; also caps the port's single food counter. */
+const EXCESS_FOOD = 24;
+
+/** Villager.BABY_DIMENSIONS (scalable 0.49 x 0.98, eye height 0.63). */
+const BABY_WIDTH = 0.49;
+const BABY_HEIGHT = 0.98;
+const BABY_EYE_HEIGHT = 0.63;
 
 /** data/minecraft/tags/point_of_interest_type/acquirable_job_site + profession mapping. */
 const WORKSTATION_PROFESSION: Readonly<Record<string, string>> = {
@@ -77,6 +100,8 @@ export class Villager extends Mob implements Merchant {
   offers: MerchantOffer[] = [];
   jobSite: JobSite | null = null;
   tradingPlayer: unknown = null;
+  /** Villager.foodLevel + food points held in the (simplified) inventory. */
+  foodPoints = 0;
   lastRestockGameTime = 0;
   restocksToday = 0;
   lastRestockCheckDay = 0;
@@ -84,6 +109,7 @@ export class Villager extends Mob implements Merchant {
   private levelUpTimer = 0;
   private nextJobScan = 0;
   private nextRestockCheck = 0;
+  private nextFoodScan = 0;
   private typeFinalized = false;
 
   constructor(level: ClientLevel) {
@@ -95,9 +121,89 @@ export class Villager extends Mob implements Merchant {
 
   protected registerGoals(): void {
     this.goalSelector.addGoal(0, new FloatGoal(this));
-    this.goalSelector.addGoal(1, new RandomStrollGoal(this, 0.6));
-    this.goalSelector.addGoal(2, new LookAtPlayerGoal(this, 8));
-    this.goalSelector.addGoal(3, new RandomLookAroundGoal(this));
+    this.goalSelector.addGoal(1, new BreedGoal(this, 0.5));
+    this.goalSelector.addGoal(2, new RandomStrollGoal(this, 0.6));
+    this.goalSelector.addGoal(3, new LookAtPlayerGoal(this, 8));
+    this.goalSelector.addGoal(4, new RandomLookAroundGoal(this));
+  }
+
+  // ---- breeding (AgeableMob + Villager food gate) -------------------------
+
+  /** AgeableMob.setAge with the dedicated baby mesh, so no half-size scaling. */
+  override setAge(age: number): void {
+    super.setAge(age);
+    this.scale = 1;
+  }
+
+  override getWidth(): number { return this.isBaby() ? BABY_WIDTH : this.type.width; }
+  override getHeight(): number { return this.isBaby() ? BABY_HEIGHT : this.type.height; }
+  override getEyeHeight(): number { return this.isBaby() ? BABY_EYE_HEIGHT : this.type.height * 0.85; }
+
+  /** Villager.canBreed: 12 food points, not sleeping and fully grown. */
+  canBreed(): boolean {
+    return this.foodPoints >= BREEDING_FOOD_THRESHOLD && this.getAge() === 0;
+  }
+
+  /** Villager breeding is gated by food rather than the Animal in-love flag. */
+  override isInLove(): boolean { return super.isInLove() || this.canBreed(); }
+
+  /** Villager.eatAndDigestFood: fill the food level to 12, then digest 12. */
+  eatAndDigestFood(): void {
+    this.foodPoints = Math.max(0, this.foodPoints - BREEDING_FOOD_THRESHOLD);
+  }
+
+  /**
+   * VillagerMakeLove.breed: consume food, put both parents on the 6000-tick
+   * cooldown and spawn a baby with the vanilla 50/25/25 type roll.
+   */
+  override breedWith(partner: Mob): void {
+    if (!(partner instanceof Villager)) return;
+    this.eatAndDigestFood();
+    partner.eatAndDigestFood();
+    this.setInLove(false);
+    partner.setInLove(false);
+    this.setAge(6000);
+    partner.setAge(6000);
+    const child = new Villager(this.level);
+    const roll = this.random.nextDouble();
+    if (roll < 0.5) {
+      child.villagerType = villagerTypeForBiome(this.world?.getBiomeName?.(this.x, this.y, this.z) ?? '');
+    } else if (roll < 0.75) {
+      child.villagerType = this.villagerType;
+    } else {
+      child.villagerType = partner.villagerType;
+    }
+    child.typeFinalized = true;
+    child.profession = 'none';
+    child.setAge(-24000);
+    child.setPos(this.x, this.y, this.z);
+    this.world?.spawnEntity(child);
+    // VillagerMakeLove broadcasts the heart event on both partners and the child.
+    this.world?.onAnimalLove?.(this);
+    this.world?.onAnimalLove?.(partner);
+    this.world?.onAnimalBred?.(this);
+  }
+
+  /** VillagerPickupItem: absorb dropped bread / carrot / potato / beetroot. */
+  private tickFoodPickup(): void {
+    if (this.tickCount < this.nextFoodScan) return;
+    this.nextFoodScan = this.tickCount + 10;
+    if (this.foodPoints >= EXCESS_FOOD) return;
+    const world = this.world;
+    if (!world) return;
+    const ents = world.getEntities();
+    for (let i = 0; i < ents.length; i++) {
+      const e = ents[i];
+      if (!(e instanceof ItemEntity) || e.isRemoved()) continue;
+      if (this.distanceToSqr(e.x, e.y, e.z) > 2.25) continue;
+      const stack = e.getItem();
+      const name = stack.getItem()?.name;
+      const value = name ? FOOD_POINTS[name] : undefined;
+      if (!value) continue;
+      this.foodPoints = Math.min(EXCESS_FOOD, this.foodPoints + value * stack.getCount());
+      world.removeEntity(e);
+      if (this.foodPoints >= EXCESS_FOOD) break;
+    }
   }
 
   /** AbstractVillager: a trading villager holds still until the screen closes. */
@@ -128,6 +234,7 @@ export class Villager extends Mob implements Merchant {
     }
     this.tickJobSite();
     this.tickRestock();
+    this.tickFoodPickup();
   }
 
   // ---- job site -----------------------------------------------------------
@@ -290,12 +397,16 @@ export class Villager extends Mob implements Merchant {
       xp: this.xp,
       jobSite: this.jobSite ? { x: this.jobSite.x, y: this.jobSite.y, z: this.jobSite.z } : null,
       offers: this.offers.map((offer) => offer.toJSON()),
+      age: this.age,
+      foodPoints: this.foodPoints,
     };
   }
 
   restore(data: SavedVillager, registry: ItemRegistry): void {
     this.health = Math.max(1, Math.min(this.maxHealth, data.health));
     this.villagerType = data.villagerType || 'plains';
+    this.setAge(data.age ?? 0);
+    this.foodPoints = data.foodPoints ?? 0;
     this.profession = data.profession || 'none';
     this.professionLevel = Math.max(1, Math.min(5, data.professionLevel || 1));
     this.xp = data.xp || 0;

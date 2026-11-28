@@ -11,6 +11,7 @@ import {
   BoatModel, ChestBoatModel,
   PigModel, CowModel, SheepModel, SheepFurModel, ChickenModel, WolfModel, FoxModel, FelineModel, ParrotModel,
   RabbitModel, BatModel, SquidModel, CodModel, SalmonModel,
+  IronGolemModel, BabyVillagerModel,
   QuadrupedModel,
 } from './EntityModels.js';
 
@@ -41,6 +42,7 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   slime: { model: SlimeModel, texture: 'slime/slime' },
   witch: { model: WitchModel, texture: 'witch/witch' },
   villager: { model: VillagerModel, texture: 'villager/villager' },
+  iron_golem: { model: IronGolemModel, texture: 'iron_golem/iron_golem' },
   minecart: { model: MinecartModel, texture: 'minecart/minecart' },
   chest_minecart: { model: MinecartModel, texture: 'minecart/minecart' },
   cave_spider: { model: SpiderModel, texture: 'spider/cave_spider' },
@@ -106,6 +108,13 @@ export const TNT_SIDE_TEXTURE = 'block/tnt_side';
 export const TNT_TOP_TEXTURE = 'block/tnt_top';
 export const TNT_BOTTOM_TEXTURE = 'block/tnt_bottom';
 
+/** IronGolemCrackinessLayer textures (Crackiness.GOLEM). */
+export const IRON_GOLEM_CRACK_TEXTURES: readonly string[] = [
+  'iron_golem/iron_golem_crackiness_low',
+  'iron_golem/iron_golem_crackiness_medium',
+  'iron_golem/iron_golem_crackiness_high',
+];
+
 /** Villager base/baby, type, profession and profession-level overlay textures. */
 export const VILLAGER_TEXTURES: readonly string[] = [
   'villager/villager',
@@ -122,6 +131,7 @@ export const VILLAGER_TEXTURES: readonly string[] = [
 export const EXTRA_TEXTURE_KEYS: readonly string[] = [
   'sheep/sheep_wool',
   ...VILLAGER_TEXTURES,
+  ...IRON_GOLEM_CRACK_TEXTURES,
   ...ARMOR_MATERIALS.map(ARMOR_LAYER1_TEXTURE),
   ...ARMOR_LEGGING_MATERIALS.map(ARMOR_LAYER2_TEXTURE),
   TNT_SIDE_TEXTURE,

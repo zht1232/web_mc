@@ -29,6 +29,10 @@ export interface SavedVillager {
   xp: number;
   jobSite: { x: number; y: number; z: number } | null;
   offers: import('../../item/trading/MerchantOffer.js').MerchantOfferJSON[];
+  /** AgeableMob.age: < 0 baby, 0 adult, > 0 breeding cooldown. */
+  age?: number;
+  /** Villager.foodLevel + food points held for breeding (bread 4, carrot/potato/beetroot 1). */
+  foodPoints?: number;
 }
 
 /** Full metadata row persisted in the IndexedDB `worlds` store. */

@@ -1546,6 +1546,7 @@ export class Game {
       }
     }
     // Saved chunks already carry their light data; skip the per-chunk full relight.
+    for (const chunk of decoded) this.restoreJukeboxRecords(chunk);
     const count = this.level.addChunksBulk(decoded);
     // These chunks were generated (and their passive animals spawned) before the save;
     // mark them known so the chunk-generation spawn pass does not add a second wave.
@@ -1647,6 +1648,90 @@ export class Game {
       restoredVillagers++;
     }
     if (restoredVillagers > 0) console.log(`[save] restored ${restoredVillagers} villagers`);
+
+    // JukeboxBlockEntity: the disc's song and song position are saved per block entity, so a
+    // record that was playing before the reload starts again from the saved tick.
+    this.resumeJukeboxPlayback();
+  }
+
+  /** Writes the JukeboxBlockEntity record (disc song + ticks_since_song_started) into the chunk. */
+  private writeJukeboxRecord(x: number, y: number, z: number, song: string, ticks: number): void {
+    const chunk = this.level.getChunk(x >> 4, z >> 4);
+    if (!chunk) return;
+    chunk.addBlockEntity(x & 15, y, z & 15, { type: 'minecraft:jukebox', data: { record: song, ticks } });
+    chunk.dirtySections.add(y >> 4);
+  }
+
+  private clearJukeboxRecord(x: number, y: number, z: number): void {
+    const chunk = this.level.getChunk(x >> 4, z >> 4);
+    if (!chunk) return;
+    chunk.removeBlockEntity(x & 15, y, z & 15);
+    chunk.dirtySections.add(y >> 4);
+  }
+
+  /** Called once per save cycle: stores how far the audible record has played. */
+  private persistJukeboxProgress(): void {
+    const key = this.playingJukeboxKey;
+    if (!key) return;
+    const song = this.jukeboxSongs.get(key);
+    if (!song) return;
+    const [x, y, z] = key.split(',').map(Number);
+    const ticks = Math.max(0, Math.floor((performance.now() - this.recordStartMs) / 50));
+    this.writeJukeboxRecord(x, y, z, song, ticks);
+  }
+
+  /** Restores song/comparator state for every jukebox block entity in a decoded chunk. */
+  private restoreJukeboxRecords(chunk: LevelChunk): void {
+    for (const [packed, rec] of chunk.blockEntities) {
+      if (rec.type.replace(/^minecraft:/, '') !== 'jukebox') continue;
+      const song = (rec.data as { record?: unknown }).record;
+      if (typeof song !== 'string' || !song) continue;
+      const wx = chunk.x * 16 + (packed & 15);
+      const wz = chunk.z * 16 + ((packed >> 4) & 15);
+      const wy = ((packed >> 12) << 4) + ((packed >> 8) & 15);
+      this.jukeboxSongs.set(`${wx},${wy},${wz}`, song);
+    }
+  }
+
+  /**
+   * Resumes the nearest restored jukebox that still has playing time left (the engine keeps a
+   * single audible record handle; vanilla mixes every jukebox in range).
+   */
+  private resumeJukeboxPlayback(): void {
+    if (!this.sounds.isReady) {
+      // World restore can finish before the sound index/context: retry from the frame tick.
+      this.pendingJukeboxResume = true;
+      return;
+    }
+    this.pendingJukeboxResume = false;
+    let best: { x: number; y: number; z: number; song: string; ticks: number } | null = null;
+    let bestDist = Infinity;
+    const px = this.player.pos.x, py = this.player.pos.y, pz = this.player.pos.z;
+    for (const chunk of this.level.chunks.values()) {
+      for (const [packed, rec] of chunk.blockEntities) {
+        if (rec.type.replace(/^minecraft:/, '') !== 'jukebox') continue;
+        const data = rec.data as { record?: unknown; ticks?: unknown };
+        if (typeof data.record !== 'string' || !data.record) continue;
+        const info = this.jukeboxSongData.songs[data.record];
+        if (!info) continue;
+        const ticks = Math.max(0, Math.floor(Number(data.ticks) || 0));
+        if (ticks >= info.lengthSeconds * 20) continue;
+        const wx = chunk.x * 16 + (packed & 15);
+        const wz = chunk.z * 16 + ((packed >> 4) & 15);
+        const wy = ((packed >> 12) << 4) + ((packed >> 8) & 15);
+        const d = (wx + 0.5 - px) ** 2 + (wy + 0.5 - py) ** 2 + (wz + 0.5 - pz) ** 2;
+        if (d < bestDist) { bestDist = d; best = { x: wx, y: wy, z: wz, song: data.record, ticks }; }
+      }
+    }
+    if (!best) return;
+    const key = `${best.x},${best.y},${best.z}`;
+    this.jukeboxSongs.set(key, best.song);
+    this.recordHandle?.stop();
+    this.recordHandle = this.sounds.play(
+      `music_disc.${best.song}`, best.x + 0.5, best.y + 0.5, best.z + 0.5, 4, 1, best.ticks * 0.05,
+    );
+    this.playingJukeboxKey = key;
+    this.recordStartMs = performance.now() - best.ticks * 50;
   }
 
   /** Extra player state persisted next to the vanilla NBT fields. */
@@ -1853,6 +1938,7 @@ export class Game {
     // Refresh world-level records first: villagers/pets are not in chunk records,
     // but saving while they are unloaded must still see their last snapshot.
     this.snapshotPersistentEntities();
+    this.persistJukeboxProgress();
     const pcx = Math.floor(this.player.pos.x) >> 4;
     const pcz = Math.floor(this.player.pos.z) >> 4;
     const radius = this.options.renderDistance + CHUNK_RETAIN_MARGIN;
@@ -2550,10 +2636,12 @@ export class Game {
       const key = `${x},${y},${z}`;
       const song = this.jukeboxSongs.get(key);
       this.jukeboxSongs.delete(key);
+      this.clearJukeboxRecord(x, y, z);
       if (this.playingJukeboxKey === key) {
         this.recordHandle?.stop();
         this.recordHandle = null;
         this.playingJukeboxKey = null;
+        this.recordStartMs = 0;
       }
       if (song) {
         this.dropItem(ItemStack.fromName(this.survival.registry, `music_disc_${song}`, 1), x, y, z);
@@ -3022,7 +3110,7 @@ export class Game {
 
   /** Per-block container instances: chest/furnace contents survive closing the GUI this session. */
   private readonly blockContainers = new Map<string, AbstractContainerMenu>();
-  /** JukeboxBlockEntity song per position (session only; the block state keeps has_record). */
+  /** JukeboxBlockEntity song per position, restored from the persisted block entity records. */
   private readonly jukeboxSongs = new Map<string, string>();
   /** data/jukebox_songs.json: JukeboxSong.comparatorOutput / length / sound event per song. */
   private jukeboxSongData: {
@@ -3030,6 +3118,10 @@ export class Game {
   } = { songs: {} };
   private recordHandle: { stop(): void } | null = null;
   private playingJukeboxKey: string | null = null;
+  /** performance.now() when the audible record started (for ticks_since_song_started). */
+  private recordStartMs = 0;
+  /** A restored jukebox is waiting for the sound assets/context before it can play. */
+  private pendingJukeboxResume = false;
   /** Client-side redstone simulation (wire power, diodes, buttons, plates, mechanisms). */
   private redstone!: RedstoneSystem;
 
@@ -3120,10 +3212,12 @@ export class Game {
       if (!this.sounds.hasEvent(event)) return false;
       this.level.setBlockState(hit.x, hit.y, hit.z, this.mc.withProp(state, 'has_record', 'true'));
       this.jukeboxSongs.set(key, song);
+      this.writeJukeboxRecord(hit.x, hit.y, hit.z, song, 0);
       this.updateNeighbors(hit.x, hit.y, hit.z);
       this.recordHandle?.stop();
       this.recordHandle = this.sounds.play(event, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, 4, 1);
       this.playingJukeboxKey = key;
+      this.recordStartMs = performance.now();
       this.stats.award('custom', 'play_record');
       if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
       this.useCooldown = 8;
@@ -3131,10 +3225,12 @@ export class Game {
     }
     if (playing && held.isEmpty()) {
       this.level.setBlockState(hit.x, hit.y, hit.z, this.mc.withProp(state, 'has_record', 'false'));
+      this.clearJukeboxRecord(hit.x, hit.y, hit.z);
       this.updateNeighbors(hit.x, hit.y, hit.z);
       this.recordHandle?.stop();
       this.recordHandle = null;
       this.playingJukeboxKey = null;
+      this.recordStartMs = 0;
       const song = this.jukeboxSongs.get(key);
       this.jukeboxSongs.delete(key);
       if (song) {
@@ -4822,6 +4918,7 @@ export class Game {
       fov: this.options.fov, aspect: this.targetW / this.targetH,
     };
     this.weatherRenderer.tick(cam, this.levelLike, 1);
+    if (this.pendingJukeboxResume && this.sounds.isReady) this.resumeJukeboxPlayback();
     this.sounds.tick(cam, this.levelLike);
     this.tickAudioEvents();
     this.tickCaveAmbience();
@@ -4940,6 +5037,7 @@ export class Game {
             try {
               const chunk = ChunkSerializer.fromBytes(saved, this.mc, this.chunkCodec);
               this.level.addChunksBulk([chunk]);
+              this.restoreJukeboxRecords(chunk);
               this.level.markDirtyAround(cx << 4, this.level.minY, cz << 4);
               this.entityManager.markChunkKnown(cx, cz);
               savedLoads++;

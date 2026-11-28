@@ -197,6 +197,7 @@ export class SoundEngine {
     name: string,
     x?: number, y?: number, z?: number,
     volume = 1, pitch = 1,
+    offsetSeconds = 0,
   ): SoundHandle {
     const noop: SoundHandle = { stop() { /* nothing started */ } };
     const ctx = this.ctx;
@@ -244,7 +245,7 @@ export class SoundEngine {
         this.activeSources.delete(src);
         try { src.disconnect(); gain.disconnect(); } catch { /* already gone */ }
       };
-      src.start();
+      src.start(0, Math.min(Math.max(0, offsetSeconds), Math.max(0, buf.duration - 0.05)));
     }).catch(() => { /* missing / undecodable file: skip silently */ });
 
     return {

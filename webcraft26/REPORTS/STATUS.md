@@ -173,7 +173,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 原版音效事件 | ✅ | 959 个事件、4341 个 ogg；脚步按 SoundType |
-| 音乐/唱片 | ✅ | 26.2 music/music_disc 事件与 ogg 资源已接入（`sounds/index.json` 里 `music.game`/`music_disc.cat` 等直连文件），背景音乐按情境选曲；2026-11-28 补唱片机：`useJukebox` 插入唱片→`has_record=true`、播放 `music_disc.<song>`（音量 4）、非创造消耗唱片、`play_record` 统计；空手弹出→`has_record=false`、停止播放并掉回唱片；破坏播放中的唱片机停播并掉出唱片。`SoundEngine.play` 现返回 stop 句柄；`test-jukebox` 4 项 |
+| 音乐/唱片 | ✅ | 26.2 music/music_disc 事件与 ogg 资源已接入（`sounds/index.json` 里 `music.game`/`music_disc.cat` 等直连文件），背景音乐按情境选曲；2026-11-28 补唱片机：`useJukebox` 插入唱片→`has_record=true`、播放 `music_disc.<song>`（音量 4）、非创造消耗唱片、`play_record` 统计；空手弹出→`has_record=false`、停止播放并掉回唱片；破坏播放中的唱片机停播并掉出唱片；歌曲与播放进度写入 `minecraft:jukebox` 方块实体，重载后恢复比较器输出并从保存 tick 继续播放。`SoundEngine.play` 现返回 stop 句柄并支持 offset；`test-jukebox` 4 项 + `test-jukebox-persistence` 8 项 |
 | 多人 | ❌ | `bridge/` 未接线 |
 
 ## 5. 优先级队列
@@ -378,7 +378,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 修复：火把的强信号方向写反（`getDirectSignal` 应指向火把上方的接收者，`dir==='down'`），
   否则火把会给自己脚下的方块强充能、被自己的底座点亮又熄灭，形成 2 tick 自振荡；由 burnout 回归测试发现。
 - 仍未做：活塞 moving_piston 动画与 2 tick 移动过程、`piston_movement.rs` 的每 tick 0.51 位移上限、
-  物品展示框/讲台/唱片机的比较器模拟输出（需要对应方块实体数据）、
+  物品展示框/讲台的比较器模拟输出（唱片机已完成，见「唱片机 / 音乐资源」）、
   string 按 StringItem 语义放在点击格（当前放在相邻格）。
 
 ### 进度系统（Advancements，2026-11-22）
@@ -856,7 +856,17 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   刷新输出；`test-jukebox` 实测 cat=2 → 线 2/灯亮，弹出后回 0。
 - 验证：`tsc` 0；`node scripts/test-jukebox.mjs` **6/6**、`test-redstone`
   **28/28**（真实事件存在、插入消耗/播放、cat 比较器输出 2、弹出掉落并回 0）。
-- 未完成：世界重载后恢复正在播放的唱片/比较器（需要方块实体持久化）。
+- 方块实体持久化（2026-11-28）：插入唱片时写入
+  `minecraft:jukebox` 记录（`record` 歌曲 + `ticks_since_song_started`），
+  `beforeSave` 把当前播放进度写回；区块解码时 `restoreJukeboxRecords` 恢复
+  `jukeboxSongs`（比较器输出），`resumeJukeboxPlayback` 用
+  `AudioBufferSourceNode.start(0, offset)` 从保存的 tick 继续播放（等音频资源
+  就绪后重试）。弹出/破坏唱片机时删除记录。验证：
+  `test-jukebox-persistence` **8/8**（保存后 ticks=35、重载后 has_record/song/
+  comparator=2 全恢复、offset≈70 tick、弹出后记录清空），回归
+  `test-jukebox` 6/6、`test-entity-save` 11/11。
+- 未完成：多台唱片机同时发声（引擎当前只保留一个可听句柄，重载时恢复最近的
+  一台）。
 
 
 

@@ -421,4 +421,9 @@ export class LevelChunk {
   getBlockEntity(localX: number, y: number, localZ: number): BlockEntityRecord | undefined {
     return this.blockEntities.get(index(localX & 15, y & 15, localZ & 15) | ((y >> 4) << 12));
   }
+
+  /** Removes a block entity (e.g. the jukebox record when the disc is popped or the block breaks). */
+  removeBlockEntity(localX: number, y: number, localZ: number): void {
+    this.blockEntities.delete(index(localX & 15, y & 15, localZ & 15) | ((y >> 4) << 12));
+  }
 }

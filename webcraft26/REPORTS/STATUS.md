@@ -87,7 +87,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 26.2 光照曲线 / 昼夜 timeline / 雾 | ✅ | `EnvironmentLighting.ts` 逐 keyframe 移植，参考图对照过 |
 | 太阳阴影（PCF）| ✅ | 5x5 PCF，近/远级联；阴影贴图分辨率 1024–4096；阴影改为衰减直接光，不再叠加第二太阳 |
 | HDR/Bloom/SSAO/TAA/FXAA | ✅ | high/ultra 档；F6 总开关 |
-| 水面 | ⚠️ | 顶点波 + Fresnel + SSR；反射只对屏幕内不透明场景，无折射/真实反射探针 |
+| 水面 | ✅ | 2026-11-28：按 Complementary Reimagined r5.9.3 源码移植——30 步 SSR（6 次细化、边界/亮度衰减）、GetSky 天空反射（三段渐变+日落带+太阳眩光）、GGX 高光、深度差水雾与 Fresnel⁴ alpha；默认档平面镜面水。未含折射/焦散与云/星空反射 |
 | 体积光/体积云 | ❌ | 当前是 billboard 云与屏幕空间光轴，不是原版 26.2 体积实现 |
 | 第一人称手/手持物 | ⚠️ | display transform 已按 JSON 移植；物品略偏大/贴边，待逐项对参考图 |
 | 粒子 | ⚠️ | 方块破碎/环境粒子已有；粒子表覆盖不完整 |
@@ -692,6 +692,36 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 验证：`tsc` 0；`test-review-fixes` **9/9**、`test-video-toggles` **3/3**、
   `test-entity-save` 11/11、`test-villager-trade` 14/14、`test-wandering-trader` 15/15、
   `test-mesher` 64/64。
-- 未完成：水面已有屏幕空间反射（只反射水前的不透明场景），缺天空/云/太阳反射与平面
-  反射；Complementary Reimagined 级别的完整光影（体积光、云、景深、反射探针）仍需独立
-  批次。
+
+### Complementary Reimagined r5.9.3 水面反射 / 天空移植（2026-11-28）
+
+按用户上传的 `ComplementaryReimagined_r5.9.3.zip` 源码逐段移植（默认档
+`SHADER_STYLE 1` / `WATER_STYLE 1` / `WATER_REFLECT_QUALITY 2` / `DETAIL_QUALITY 2` /
+`RAIN_PUDDLES 0`，不再凭记忆）：
+
+- `lib/materials/materialMethods/reflections.glsl` Method 1：30 步屏幕空间光追 + 6 次
+  细化（`err*0.33333 < |vector|` 时步长回退 ×0.1 再 ×2 增长）、`rEdge` 0.6/0.55 边界、
+  `border=1-max(cdist)^50`、`edgeFactor` 八次方衰减与按亮度取幂的 `refFactor`、
+  `lViewPosRT-lViewPos+3` 的距离淡出；命中颜色直接取水前场景快照。
+- `reflectionBackground.glsl` + `lib/atmospherics/sky.glsl GetSky()`：反射光线未被深度
+  缓冲命中时，用完整天空模型求值——up/middle/down 三段渐变、日落色带、太阳眩光
+  （`glareScatter`/`visfactor`/`shadowTime`）、地面散射、Bayer64 抖动；乘
+  `GetSkyLightFactor`（`max(lmY-0.7,0)*3.3333` 平方，水面下限 1/3）。
+- `water.glsl` + `gbuffers_water.glsl`：`fresnel=clamp(1+dot(normal,nViewPos),0,1)`、
+  `fresnelM=(fresnel³*0.85+0.15)*reflectMult`；水体 alpha 先 `sqrt1(tex.a)`、按水面到
+  水下不透明面的深度差 `1-exp(d*0.075)` 做水雾不透明度、再 `mix(alpha,1,fresnel⁴)`；
+  默认档无波法线（`RAIN_PUDDLES 0`），即平面镜面水。
+- `lib/lighting/ggx.glsl`：GetNoHSquared + GGX 高光，`highlightColor`、
+  `highlightMult=(16-15*fresnel²)*(日/夜 0.85/0.425)`、`invRainFactor` 全部按 pack 取值。
+- 天空 pass（`SkyRenderer`）：用同一个 `GetSky()` 替换原版平面天穹色；白天/黄昏
+  渐变与眩光由 pack 公式给出，原先固定白色的日出扇形光晕（只用了 alpha）已删除。
+- `ComplementSky.ts` 在 TS 侧逐行翻译 `skyColors.glsl` /
+  `lightAndAmbientColors.glsl`（`sunFactor`/`sunVisibility`/`noonFactor`/`nightFactor`
+  由 `visual/sun_angle` 驱动），GLSL 侧共用同一段 `COMPLEMENT_SKY_GLSL`。
+- 验证：`tsc` 0；`node scripts/test-water-reflect.mjs` **7/7**（着色器编译、水面掩码
+  38.1%、SSR 命中 99.9%、开关光影水面像素 99% 改变 meanDiff 41.4、GL error 0、
+  黄昏路径无错）；回归 `test-review-fixes` 9/9、`test-video-toggles` 3/3。
+- 仍未完成：水面折射/焦散、天空的云与星空进入反射（pack 默认
+  `DETAIL_QUALITY>=3` 才开 `SKY_EFFECT_REFLECTION_TRANSLUCENT`）、体积光/云、
+  景深、完整 gbuffer 管线。
+

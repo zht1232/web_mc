@@ -1,6 +1,8 @@
 // GLSL for the terrain pass. The lightmap is a 16x16 texture generated on the CPU
 // from core/lightmap.fsh so day/night changes never require a remesh.
 
+import { BAYER_GLSL, COMPLEMENT_SKY_GLSL } from './environment/ComplementSky.js';
+
 export const TERRAIN_VERT = `#version 300 es
 precision highp float;
 
@@ -110,6 +112,13 @@ uniform sampler2D uSceneDepth;
 // highp to match the same uniform in TERRAIN_VERT (precision must agree on link).
 uniform highp ivec2 uWaterLayers;
 uniform mat4 uViewProj;
+uniform mat4 uInvViewProj;
+uniform vec2 uResolution;
+uniform float uWaveTime;
+
+// Complementary Reimagined r5.9.3 sky model, shared with the sky pass (see ComplementSky.ts).
+${COMPLEMENT_SKY_GLSL}
+${BAYER_GLSL}
 
 out vec4 fragColor;
 
@@ -144,6 +153,54 @@ float sampleShadow(sampler2D smap, mat4 lvp, vec3 wp, vec3 n, float ndl, float t
     }
   }
   return sum / 25.0;
+}
+
+/**
+ * lib/lighting/ggx.glsl GetNoHSquared + GGX (Horizon Zero Dawn area light approximation),
+ * transcribed from the uploaded Complementary Reimagined r5.9.3 pack.
+ */
+float getNoHSquared(float radiusTan, float NoL, float NoV, float VoL) {
+  float radiusCos = 1.0 / sqrt(1.0 + radiusTan * radiusTan);
+  float RoL = 2.0 * NoL * NoV - VoL;
+  if (RoL >= radiusCos) return 1.0;
+  float rOverLengthT = radiusCos * radiusTan / sqrt(1.0 - RoL * RoL);
+  float NoTr = rOverLengthT * (NoV - RoL * NoL);
+  float VoTr = rOverLengthT * (2.0 * NoV * NoV - 1.0 - RoL * VoL);
+  float triple = sqrt(clamp(1.0 - NoL * NoL - NoV * NoV - VoL * VoL + 2.0 * NoL * NoV * VoL, 0.0, 1.0));
+  float NoBr = rOverLengthT * triple, VoBr = rOverLengthT * (2.0 * triple * NoV);
+  float NoLVTr = NoL * radiusCos + NoV + NoTr, VoLVTr = VoL * radiusCos + 1.0 + VoTr;
+  float p = NoBr * VoLVTr, q = NoLVTr * VoLVTr, s = VoBr * NoLVTr;
+  float xNum = q * (-0.5 * p + 0.25 * VoBr * NoLVTr);
+  float xDenom = p * p + s * (s - 2.0 * p) + NoLVTr * ((NoL * radiusCos + NoV) * VoLVTr * VoLVTr
+    + q * (-0.5 * (VoLVTr + VoL * radiusCos) - 0.5));
+  float twoX1 = 2.0 * xNum / (xDenom * xDenom + xNum * xNum);
+  float sinTheta = twoX1 * xDenom;
+  float cosTheta = 1.0 - twoX1 * xNum;
+  NoTr = cosTheta * NoTr + sinTheta * NoBr;
+  VoTr = cosTheta * VoTr + sinTheta * VoBr;
+  float newNoL = NoL * radiusCos + NoTr;
+  float newVoL = VoL * radiusCos + VoTr;
+  float NoH = NoV + newNoL;
+  float HoH = 2.0 * newVoL + 2.0;
+  return clamp(NoH * NoH / HoH, 0.0, 1.0);
+}
+
+float ggx(vec3 normalM, vec3 geoNormal, vec3 nViewPos, vec3 lightVec, float NdotLmax0, float smoothnessG) {
+  smoothnessG = skySqrt1(smoothnessG * 0.9 + 0.1);
+  float roughnessP = 1.35 - smoothnessG;
+  float roughness = skyPow2(skyPow2(roughnessP));
+  vec3 halfVec = normalize(lightVec - nViewPos);
+  float dotLH = clamp(dot(halfVec, lightVec), 0.0, 1.0);
+  float dotNV = dot(normalM, -nViewPos);
+  float dotNH = getNoHSquared(0.01, NdotLmax0, dotNV, dot(-nViewPos, lightVec));
+  float denom = dotNH * roughness - dotNH + 1.0;
+  float D = roughness / (3.141592653589793 * skyPow2(denom));
+  float f0 = 0.05;
+  float F = exp2((-5.55473 * dotLH - 6.98316) * dotLH) * (1.0 - f0) + f0;
+  float NdotLmax0M = skySqrt3(NdotLmax0 * max(dot(geoNormal, lightVec), 0.0));
+  float specular = max(NdotLmax0M * D * F / skyPow2(dotLH), 0.0);
+  specular = specular / (0.125 * specular + 1.0);
+  return specular;
 }
 
 void main() {
@@ -206,9 +263,10 @@ void main() {
     }
   }
 
-  // Water: screen-space reflections against the pre-water colour/depth snapshots. Ray-marches the
-  // reflected view ray in clip space; a hit is the first step that lands behind opaque geometry.
-  // Fresnel keeps the reflection subtle head-on and strong at grazing angles, like Complementary.
+  // Water: port of Complementary Reimagined r5.9.3 (lib/materials/materialMethods/reflections.glsl,
+  // reflectionBackground.glsl, sky.glsl, water.glsl). The pack's shipped defaults are WATER_STYLE 1
+  // and WATER_REFLECT_QUALITY 2, i.e. a flat mirror normal + 30-sample ray march with 6 refinements
+  // + GetSky() for rays the depth buffer cannot resolve.
   if (uDebug == 14) {
     bool dbgWater = uTranslucent > 0.5 && uWaterLayers.x >= 0
       && (int(vLayer) == uWaterLayers.x || int(vLayer) == uWaterLayers.y);
@@ -217,47 +275,109 @@ void main() {
   }
   if (uWaterReflect == 1 && uTranslucent > 0.5 && uWaterLayers.x >= 0
       && (int(vLayer) == uWaterLayers.x || int(vLayer) == uWaterLayers.y)) {
-    vec3 n = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
-    if (n.y < 0.0) n = -n;
-    vec3 v = normalize(vWorldPos - uCameraPos);
-    vec3 r = reflect(v, n);
-    float dbgRayD = 0.0;
-    float dbgSceneD = 0.0;
-    if (r.y > 0.0) {
-      vec3 pos = vWorldPos;
-      float stepLen = 0.4;
-      vec2 hitUV = vec2(-1.0);
-      float hitFade = 0.0;
-      for (int i = 0; i < 16; i++) {
-        pos += r * stepLen;
-        stepLen *= 1.32;
-        vec4 c = uViewProj * vec4(pos, 1.0);
-        if (c.w <= 0.0) break;
-        vec2 uv = (c.xy / c.w) * 0.5 + 0.5;
-        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
-        float sceneD = texture(uSceneDepth, uv).r;
-        float rayD = c.z / c.w * 0.5 + 0.5;
-        dbgRayD = rayD;
-        dbgSceneD = sceneD;
-        if (rayD > sceneD && rayD - sceneD < 0.06) {
-          hitUV = uv;
-          hitFade = 1.0 - float(i) / 16.0;
-          break;
-        }
+    // gbuffers_water.glsl:216-220 + water.glsl Step 2: default WATER_STYLE 1 keeps the geometric
+    // normal (no normal map), so the surface is a plane mirror modulated by Fresnel.
+    vec3 geoNormal = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+    if (geoNormal.y < 0.0) geoNormal = -geoNormal;
+    vec3 nViewPos = normalize(vWorldPos - uCameraPos);
+    float VdotN = dot(nViewPos, geoNormal);
+    vec3 normalM = VdotN > 0.0 ? -geoNormal : geoNormal;
+    float fresnel = clamp(1.0 + dot(normalM, nViewPos), 0.0, 1.0);
+    float fresnel2 = skyPow2(fresnel);
+    float fresnel4 = skyPow2(fresnel2);
+    float lViewPos = length(vWorldPos - uCameraPos);
+    float dither = bayer64(gl_FragCoord.xy);
+
+    // reflections.glsl Method 1 (WORLD_SPACE_REFLECTIONS_INTERNAL == -1 -> rEdge 0.6/0.55,
+    // 30 samples, 6 refinements). Distances are world-space; the march itself is the pack's.
+    vec2 rEdge = vec2(0.6, 0.55);
+    vec3 start = vWorldPos + normalM * (lViewPos * 0.025 * (1.0 - fresnel) + 0.05);
+    vec3 vector = reflect(nViewPos, normalM) * 0.5;
+    vec3 rayPos = start + vector;
+    vec3 tvector = vector;
+    int sr = 0;
+    float err = 9999999.0;
+    float sampleDepth = 1.0;
+    vec3 refPos = vec3(0.0);
+    vec3 rfragpos = vec3(0.0);
+    for (int i = 0; i < 30; i++) {
+      vec4 clip = uViewProj * vec4(rayPos, 1.0);
+      if (clip.w <= 0.0) break;
+      refPos = clip.xyz / clip.w * 0.5 + 0.5;
+      if (abs(refPos.x - 0.5) > rEdge.x || abs(refPos.y - 0.5) > rEdge.y) break;
+
+      sampleDepth = texture(uSceneDepth, refPos.xy).r;
+      vec4 unproj = uInvViewProj * vec4(refPos.xy * 2.0 - 1.0, sampleDepth * 2.0 - 1.0, 1.0);
+      rfragpos = unproj.xyz / unproj.w;
+
+      err = length(rayPos - rfragpos);
+      if (err * 0.33333 < length(vector)) {
+        sr++;
+        if (sr >= 6) break;
+        tvector -= vector;
+        vector *= 0.1;
       }
+      vector *= 2.0;
+      tvector += vector * (0.95 + 0.1 * dither);
+      rayPos = start + tvector;
+    }
+    float lViewPosRT = length(rfragpos);
+    float reflAlpha = 0.0;
+    vec3 sceneRefl = vec3(0.0);
+    bool possibleReflection = dot(normalize(rfragpos - start), geoNormal) > 0.0;
+    if (sampleDepth < 1.0 && possibleReflection && err * (1.0 - fresnel) < 1.0 + lViewPosRT * 0.2) {
+      vec2 absPos = abs(refPos.xy - 0.5);
+      vec2 cdist = absPos / rEdge;
+      reflAlpha = clamp(1.0 - pow(max(cdist.x, cdist.y), 50.0), 0.0, 1.0);
       if (uDebug == 16) {
-        fragColor = vec4(hitUV.x >= 0.0 ? 1.0 : 0.0, dbgRayD, dbgSceneD, 1.0);
+        fragColor = vec4(reflAlpha, err, sampleDepth, 1.0);
         return;
       }
-      if (hitUV.x >= 0.0) {
-        float fres = 0.03 + 0.97 * pow(1.0 - max(dot(-v, n), 0.0), 5.0);
-        float strength = clamp(fres * 0.9, 0.0, 0.8) * hitFade;
-        color = mix(color, texture(uSceneColor, hitUV).rgb, strength);
+      if (reflAlpha > 0.001) {
+        vec2 edgeFactor = skyPow2(skyPow2(skyPow2(cdist)));
+        refPos.y += (dither - 0.5) * (0.05 * (edgeFactor.x + edgeFactor.y));
+        sceneRefl = texture(uSceneColor, refPos.xy).rgb;
+        edgeFactor.x = skyPow2(edgeFactor.x);
+        edgeFactor = vec2(1.0) - edgeFactor;
+        float lum = dot(sceneRefl, vec3(0.299, 0.587, 0.114));
+        reflAlpha *= pow(edgeFactor.x * edgeFactor.y, 2.0 + 3.0 * lum);
       }
+      reflAlpha *= clamp(lViewPosRT - lViewPos + 3.0, 0.0, 1.0);
     } else if (uDebug == 16) {
-      fragColor = vec4(0.0, 0.0, 1.0, 1.0); // reflected ray points down
+      fragColor = vec4(0.0, err, sampleDepth, 1.0);
       return;
     }
+
+    // AddBackgroundReflection: GetSky in the reflected direction * GetSkyLightFactor, plus the
+    // WATER_STYLE 1 GGX highlight (gbuffers_water.glsl Step 4 + ggx.glsl).
+    vec3 reflDir = normalize(reflect(nViewPos, normalM));
+    float lmY = min(((vLight.x + 0.5) / 16.0) * 1.07, 1.0);
+    float skyLightFactor = max(lmY - 0.7, 0.0) * 3.33333;
+    skyLightFactor *= skyLightFactor;
+    // shadowMult on water is 1.0, so the pack's max() term is a constant 0.333333.
+    skyLightFactor = max(skyLightFactor, 0.333333);
+    vec3 skyRefl = complementSky(reflDir, dither, true, true) * skyLightFactor;
+
+    float highlightMult = min(skyPow2(skyPow2(dot(tex.rgb, tex.rgb) * 0.4)), 0.5);
+    highlightMult *= (16.0 - 15.0 * fresnel2) * (uSunVisibility > 0.5 ? 0.85 : 0.425);
+    float NdotLmax0 = max(dot(normalM, uSunWorldDir), 0.0);
+    float specular = ggx(normalM, geoNormal, nViewPos, uSunWorldDir, NdotLmax0, 0.5);
+    skyRefl += specular * uHighlightColor * highlightMult * uInvRainFactor;
+
+    vec3 reflection = mix(skyRefl, sceneRefl, reflAlpha);
+    float reflectMult = 0.5 + 0.5 * max(geoNormal.y, 0.0);   // water.glsl Step 4
+    float fresnelM = (skyPow3(fresnel) * 0.85 + 0.15) * reflectMult;
+    color = mix(color, reflection, fresnelM);
+
+    // Water alpha (water.glsl Step 3 + Step 4): sqrt1 of the sprite alpha, distance-based water
+    // fog opacity, then fade to opaque at grazing angles.
+    vec2 screenUV = gl_FragCoord.xy / uResolution;
+    float depthT = texture(uSceneDepth, screenUV).r;
+    vec4 unprojT = uInvViewProj * vec4(screenUV * 2.0 - 1.0, depthT * 2.0 - 1.0, 1.0);
+    float lViewPosT = length(unprojT.xyz / unprojT.w - uCameraPos);
+    float waterFog = max(0.0, 1.0 - exp((lViewPos - lViewPosT) * 0.075));
+    alpha = skySqrt1(tex.a) * (0.25 + 0.75 * waterFog);
+    alpha = mix(alpha, 1.0, fresnel4);
   }
 
   // fog.glsl total_fog_value + apply_fog: spherical distance against the environmental range,

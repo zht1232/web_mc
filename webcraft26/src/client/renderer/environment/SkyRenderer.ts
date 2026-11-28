@@ -2,19 +2,17 @@
 // WebGL2 pass that can be composited into an offscreen (HDR) target.
 //
 // Vanilla draw order, copied from LevelRenderer#addSkyPass("sky"):
-//   1. renderSkyDisc(skyColor)                     -> top sky disc (flat colour + sky fog)
-//   2. renderSunriseAndSunset(pose, sunAngle, argb) -> 18 vertex fan glow
-//   3. renderSunMoonAndStars(...)                  -> sun, moon, stars (OVERLAY blend)
-//   4. renderDarkDisc()  (only when below the horizon height) -> black bottom disc
+//   1. top sky  -> Complementary Reimagined r5.9.3 GetSky() (up/middle/down gradient,
+//                  sunrise/sunset band and sun glare; see ComplementSky.ts)
+//   2. renderSunMoonAndStars(...) -> sun, moon, stars (OVERLAY blend)
+//   3. renderDarkDisc()  (only when below the horizon height) -> black bottom disc
 //
 // Geometry / constants are taken from SkyRenderer.java (line numbers in EnvCommon.ts):
-//   * top disc:  triangle fan, centre (0, 16, 0), ring radius 512 (buildSkyDisc L217)
+//   * top disc:  fullscreen direction basis, horizon blended into the sky fog colour
 //   * sun/moon:  a quad in the XZ plane, translate(0,100,0), scale(30|20,1,30|20),
 //                rotated by R_Y(-90) * R_X(angle) (renderSun L361 / renderMoon L388)
 //   * stars:     1500 quads built from RandomSource.createThreadLocalInstance(10842L)
 //                (buildStars L183), rotated by R_X(starAngle)
-//   * sunrise:   fan of 18 vertices, translate-free, R_X(90) * R_Z(a) with
-//                a = (sin(sunAngle) < 0 ? 180 : 0) + 90 (renderSunriseAndSunset L441)
 //
 // Colours come from SkyState (the light package's single source of truth):
 // skyColor, fogColor, sunriseColor(+alpha), cloudColor, starBrightness and the
@@ -29,10 +27,6 @@ import { GlProgram, cameraBasis, mat4Mul } from '../gl/Gl.js';
 import { LegacyRandomSource } from '../../../vanilla/core/Random.js';
 import {
   MOON_SIZE,
-  SUNRISE_CENTRE_Y,
-  SUNRISE_RING_DEPTH,
-  SUNRISE_RING_RADIUS,
-  SUNRISE_STEPS,
   SUN_SIZE,
   celestialModelMatrix,
   createFullscreenQuad,
@@ -40,27 +34,27 @@ import {
   moonPhaseOf,
   restoreDefaultState,
   setOverlayBlend,
-  setTranslucentBlend,
   skyStateFor,
   type CameraLike,
   type LevelLike,
 } from './EnvCommon.js';
 import { CelestialBodies } from './CelestialBodies.js';
 import { argbFromRgb, computeFogColor } from './FogState.js';
+import {
+  BAYER_GLSL, COMPLEMENT_SKY_GLSL, complementSkyUniforms, setComplementSkyUniforms,
+} from './ComplementSky.js';
 
 const SKY_VS = `#version 300 es
 layout(location = 0) in vec2 aPos;
 out vec2 vNdc;
 void main() { vNdc = aPos; gl_Position = vec4(aPos, 0.99999, 1.0); }`;
 
-// core/sky.fsh: fragColor = apply_fog(ColorModulator, spherical, cylindrical, SkyEnd, SkyEnd, SkyEnd)
-// with a flat ColorModulator. The vanilla geometry is a *flat disc* at y=+16 (top)
-// or y=-4 (dark bottom disc), so the fragment distance is solved analytically
-// against that plane instead of interpolating the triangle fan.
+// Complementary Reimagined r5.9.3 gbuffers_skybasic: the pack replaces vanilla's flat sky disc
+// with lib/atmospherics/sky.glsl GetSky() - a three-stop gradient (up/middle/down) with the
+// sunrise/sunset band and the sun glare. Same GLSL the water reflection uses (ComplementSky.ts).
 const SKY_FS = `#version 300 es
 precision highp float;
 in vec2 vNdc;
-uniform vec3 uSkyColor;
 uniform vec3 uFogColor;
 uniform vec3 uCamRight;
 uniform vec3 uCamUp;
@@ -69,36 +63,33 @@ uniform float uTanHalfFov;
 uniform float uAspect;
 uniform float uSkyEnd;
 uniform float uFogAlpha;
-uniform int uMode;          // 0 = top sky disc, 1 = dark bottom disc
+uniform int uMode;          // 0 = top sky, 1 = dark bottom disc
 out vec4 fragColor;
+${COMPLEMENT_SKY_GLSL}
+${BAYER_GLSL}
 
 void main() {
   vec3 dir = normalize(uCamForward
     + uCamRight * (vNdc.x * uTanHalfFov * uAspect)
     + uCamUp * (vNdc.y * uTanHalfFov));
 
-  float planeY;
-  vec3 base;
   if (uMode == 0) {
     if (dir.y <= 0.0) discard;
-    planeY = 16.0;               // SkyRenderer.buildSkyDisc(16.0F)
-    base = uSkyColor;
-  } else {
-    if (dir.y >= 0.0) discard;
-    planeY = -4.0;               // buildSkyDisc(-16.0F) + renderDarkDisc translate(0,12,0)
-    base = vec3(0.0);
+    vec3 sky = complementSky(dir, bayer64(gl_FragCoord.xy), true, true);
+    // Narrow horizon blend to the fog colour so the dome meets distant terrain without a seam.
+    float horizon = 1.0 - smoothstep(0.0, 0.06, dir.y);
+    fragColor = vec4(mix(sky, uFogColor, horizon * 0.6), 1.0);
+    return;
   }
 
-  float dist = planeY / dir.y;   // distance from the camera to the disc plane
-  // Vanilla's disc is a 512-radius fan; beyond it the fog below already clamps to 1, so the
-  // shader naturally returns uFogColor there. Discarding past 512 exposed the raw GL clear
-  // colour at the seam; the analytic plane has no such edge.
-
+  if (dir.y >= 0.0) discard;
+  float planeY = -4.0;         // buildSkyDisc(-16.0F) + renderDarkDisc translate(0,12,0)
+  float dist = planeY / dir.y;
   // core/fog.glsl: total = max(linear(spherical), linear(cylindrical))
   float spherical = dist;
   float cylindrical = max(length(dir.xz) * dist, abs(dir.y) * dist);
   float fog = max(clamp(spherical / uSkyEnd, 0.0, 1.0), clamp(cylindrical / uSkyEnd, 0.0, 1.0));
-  fragColor = vec4(mix(base, uFogColor, fog * uFogAlpha), 1.0);
+  fragColor = vec4(mix(vec3(0.0), uFogColor, fog * uFogAlpha), 1.0);
 }`;
 
 // Sun / moon billboard. The quad is built in the XZ plane (normal -Y) exactly like
@@ -157,27 +148,6 @@ uniform float uBrightness;
 out vec4 fragColor;
 void main() { fragColor = vec4(uBrightness, uBrightness, uBrightness, uBrightness); }`;
 
-// Sunrise / sunset fan: core/position_color (vertexColor * ColorModulator) with
-// TRANSLUCENT blending. Vertex colours are white with alpha 1 in the centre and
-// alpha 0 on the ring (SkyRenderer.buildSunriseFan L106-130).
-const SUNRISE_VS = `#version 300 es
-precision highp float;
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec4 aColor;
-uniform mat4 uViewProj;
-uniform vec3 uCamPos;
-out vec4 vColor;
-void main() {
-  gl_Position = uViewProj * vec4(uCamPos + aPos, 1.0);
-  vColor = aColor;
-}`;
-
-const SUNRISE_FS = `#version 300 es
-precision highp float;
-in vec4 vColor;
-out vec4 fragColor;
-void main() { fragColor = vColor; }`;
-
 const END_VS = `#version 300 es
 precision highp float;
 layout(location = 0) in vec3 aPos;
@@ -220,17 +190,13 @@ export class SkyRenderer {
   private skyProgram: GlProgram | null = null;
   private starProgram: GlProgram | null = null;
   private celestialProgram: GlProgram | null = null;
-  private sunriseProgram: GlProgram | null = null;
   private endProgram: GlProgram | null = null;
   private quadVao: WebGLVertexArrayObject | null = null;
   private starVao: WebGLVertexArrayObject | null = null;
   private celestialVao: WebGLVertexArrayObject | null = null;
-  private sunriseVao: WebGLVertexArrayObject | null = null;
-  private sunriseVbo: WebGLBuffer | null = null;
   private endVao: WebGLVertexArrayObject | null = null;
   private starVertexCount = 0;
   private endSkyTex: WebGLTexture | null = null;
-  private readonly sunriseData = new Float32Array((SUNRISE_STEPS + 2) * 7);
 
   /** Draw the end-dimension sky box instead of the overworld sky. */
   endSky: boolean;
@@ -268,12 +234,10 @@ export class SkyRenderer {
     this.skyProgram = new GlProgram(gl, SKY_VS, SKY_FS, 'env.sky');
     this.starProgram = new GlProgram(gl, STAR_VS, STAR_FS, 'env.stars');
     this.celestialProgram = new GlProgram(gl, CELESTIAL_VS, CELESTIAL_FS, 'env.celestial');
-    this.sunriseProgram = new GlProgram(gl, SUNRISE_VS, SUNRISE_FS, 'env.sunrise');
     this.endProgram = new GlProgram(gl, END_VS, END_FS, 'env.endsky');
     this.quadVao = createFullscreenQuad(gl);
     this.starVao = this.buildStars(gl);
     this.celestialVao = this.buildCelestialQuad(gl);
-    this.sunriseVao = this.buildSunriseFan(gl);
     this.endVao = this.buildEndSky(gl);
     await this.bodies.load(gl);
     this.endSkyTex = await loadEnvTexture(gl, 'environment/end_sky', gl.REPEAT, gl.LINEAR);
@@ -318,21 +282,6 @@ export class SkyRenderer {
     gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 20, 0);
     gl.enableVertexAttribArray(1);
     gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 12);
-    gl.bindVertexArray(null);
-    return vao;
-  }
-
-  /** SkyRenderer.buildSunriseFan (L106): centre (0,100,0) + 17 ring vertices. */
-  private buildSunriseFan(gl: WebGL2RenderingContext): WebGLVertexArrayObject {
-    const vao = gl.createVertexArray()!;
-    gl.bindVertexArray(vao);
-    this.sunriseVbo = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.sunriseVbo);
-    gl.bufferData(gl.ARRAY_BUFFER, this.sunriseData.byteLength, gl.DYNAMIC_DRAW);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 28, 0);
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 28, 12);
     gl.bindVertexArray(null);
     return vao;
   }
@@ -437,9 +386,8 @@ export class SkyRenderer {
       thunderLevel: 0,
     });
 
-    // ---- 1. top sky disc (flat colour, horizon = sky fog) -------------------
+    // ---- 1. top sky: Complementary GetSky() (sunset band + glare are part of the model) ----
     this.skyProgram.use();
-    this.skyProgram.set3f('uSkyColor', sky.skyColor[0], sky.skyColor[1], sky.skyColor[2]);
     this.skyProgram.set3f('uFogColor', fogRgb[0], fogRgb[1], fogRgb[2]);
     this.skyProgram.set3f('uCamRight', right[0], right[1], right[2]);
     this.skyProgram.set3f('uCamUp', up[0], up[1], up[2]);
@@ -449,27 +397,11 @@ export class SkyRenderer {
     this.skyProgram.set1f('uSkyEnd', skyFogEnd);
     this.skyProgram.set1f('uFogAlpha', 1);
     this.skyProgram.set1i('uMode', 0);
+    setComplementSkyUniforms(this.skyProgram, complementSkyUniforms(sky, rain));
     gl.bindVertexArray(this.quadVao);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-    // ---- 2. sunrise / sunset glow ------------------------------------------
-    const sunriseAlpha = ((sky.sunriseColorArgb >>> 24) & 255) / 255;
-    if (sunriseAlpha > 0.001 && this.sunriseProgram && this.sunriseVao) {
-      this.buildSunriseVertices(sky.sunAngleDeg * (Math.PI / 180), sunriseAlpha);
-      gl.enable(gl.BLEND);
-      setTranslucentBlend(gl);
-      this.sunriseProgram.use();
-      this.sunriseProgram.setMat4('uViewProj', this.viewProj);
-      this.sunriseProgram.set3f('uCamPos', camera.x, camera.y, camera.z);
-      gl.bindVertexArray(this.sunriseVao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.sunriseVbo);
-      gl.bufferData(gl.ARRAY_BUFFER, this.sunriseData, gl.DYNAMIC_DRAW);
-      gl.drawArrays(gl.TRIANGLE_FAN, 0, SUNRISE_STEPS + 2);
-      gl.bindVertexArray(null);
-      gl.disable(gl.BLEND);
-    }
-
-    // ---- 3. sun, moon, stars (OVERLAY blend) --------------------------------
+    // ---- 2. sun, moon, stars (OVERLAY blend) --------------------------------
     gl.enable(gl.BLEND);
     setOverlayBlend(gl);
 
@@ -500,7 +432,6 @@ export class SkyRenderer {
     // ---- 4. dark bottom disc (only below the horizon height) ---------------
     if (camera.y < horizonHeight) {
       this.skyProgram.use();
-      this.skyProgram.set3f('uSkyColor', 0, 0, 0);
       this.skyProgram.set3f('uFogColor', fogRgb[0], fogRgb[1], fogRgb[2]);
       this.skyProgram.set3f('uCamRight', right[0], right[1], right[2]);
       this.skyProgram.set3f('uCamUp', up[0], up[1], up[2]);
@@ -516,36 +447,6 @@ export class SkyRenderer {
 
     gl.bindVertexArray(null);
     restoreDefaultState(gl);
-  }
-
-  /**
-   * SkyRenderer.renderSunriseAndSunset (L441-470):
-   *   pose = R_X(90) * R_Z((sin(sunAngle) < 0 ? 180 : 0) + 90), scale(1, 1, alpha)
-   * applied to centre (0,100,0) and the ring (120 sin, 120 cos, -40 cos).
-   */
-  private buildSunriseVertices(sunAngleRad: number, alpha: number): void {
-    const a = (Math.sin(sunAngleRad) < 0 ? Math.PI : 0) + Math.PI / 2;
-    const cosA = Math.cos(a), sinA = Math.sin(a);
-    const data = this.sunriseData;
-    // centre (0,100,0) -> (-100 sin a, 0, 100 cos a)
-    data[0] = -SUNRISE_CENTRE_Y * sinA;
-    data[1] = 0;
-    data[2] = SUNRISE_CENTRE_Y * cosA;
-    data[3] = 1; data[4] = 1; data[5] = 1; data[6] = 1;
-    for (let i = 0; i <= SUNRISE_STEPS; i++) {
-      const theta = (i * Math.PI * 2) / SUNRISE_STEPS;
-      const localX = SUNRISE_RING_RADIUS * Math.sin(theta);
-      const localY = SUNRISE_RING_RADIUS * Math.cos(theta);
-      const localZ = -SUNRISE_RING_DEPTH * Math.cos(theta) * alpha;
-      // R_Z(a) then R_X(90)
-      const rx = localX * cosA - localY * sinA;
-      const ry = localX * sinA + localY * cosA;
-      const o = 7 + i * 7;
-      data[o] = rx;
-      data[o + 1] = -localZ;
-      data[o + 2] = ry;
-      data[o + 3] = 1; data[o + 4] = 1; data[o + 5] = 1; data[o + 6] = 0;
-    }
   }
 
   private drawCelestial(
@@ -572,10 +473,9 @@ export class SkyRenderer {
 
   dispose(): void {
     const gl = this.gl;
-    for (const v of [this.quadVao, this.starVao, this.celestialVao, this.sunriseVao, this.endVao]) {
+    for (const v of [this.quadVao, this.starVao, this.celestialVao, this.endVao]) {
       if (v) gl.deleteVertexArray(v);
     }
-    if (this.sunriseVbo) gl.deleteBuffer(this.sunriseVbo);
     if (this.endSkyTex) gl.deleteTexture(this.endSkyTex);
     this.bodies.dispose(gl);
   }

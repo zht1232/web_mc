@@ -17,6 +17,7 @@ import { chunkKey } from '../../vanilla/core/Geometry.js';
 import { PostProcessor } from './post/PostProcessor.js';
 import { ShadowMap } from './post/ShadowMap.js';
 import { argbFromRgb, computeFog } from './environment/FogState.js';
+import { complementSkyUniforms, setComplementSkyUniforms } from './environment/ComplementSky.js';
 
 export interface Camera {
   x: number; y: number; z: number;
@@ -1064,6 +1065,7 @@ export class LevelRenderer {
 
     // Sun/moon shadow map. Off when shaders are off (the shader path must equal vanilla then).
     const rainLevel = typeof level.getRainLevel === 'function' ? level.getRainLevel() : 0;
+    const skyUniforms = complementSkyUniforms(sky, rainLevel);
     this.updateSunLight(sky, rainLevel);
     this.shadowsActive = this.post.enabled && this.post.shadowsEnabled && this.post.shadowSize > 0;
     if (this.shadowsActive) {
@@ -1206,7 +1208,11 @@ export class LevelRenderer {
     this.terrain.set2i('uWaterLayers', waves ? waterStill : -1, waves ? waterFlow : -1);
     this.terrain.set1f('uWaveTime', performance.now() / 1000);
     this.terrain.set1f('uSwayTime', this.swayEnabled ? performance.now() / 1000 : 0);
-    // Water reflections need a real snapshot; the low tier and the shaders-off path skip them.
+    // Complementary Reimagined sky constants (ComplementSky.ts): the water reflection evaluates
+    // the pack's GetSky() for rays the depth buffer cannot resolve.
+    setComplementSkyUniforms(this.terrain, skyUniforms);
+    this.terrain.setMat4('uInvViewProj', this.invViewProj);
+    this.terrain.set2f('uResolution', gl.drawingBufferWidth || 1, gl.drawingBufferHeight || 1);
     const waterReflect = this.post.enabled && this.post.quality !== 'low'
       && this.post.waterColor !== null;
     this.terrain.set1i('uWaterReflect', waterReflect ? 1 : 0);

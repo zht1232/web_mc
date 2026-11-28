@@ -74,7 +74,7 @@ export class VideoSettingsScreen extends OptionsSubScreen {
       (v) => setOption(deps, 'viewBobbing', v));
 
     this.addCycle(col0, this.gridRowY(5), w, this.t('options.framerateLimit'), FPS_LIMITS,
-      (FPS_LIMITS as readonly number[]).includes(getOptionNumber(deps, 'maxFps', 60)) ? getOptionNumber(deps, 'maxFps', 60) : 60,
+      (FPS_LIMITS as readonly number[]).includes(getOptionNumber(deps, 'maxFps', 120)) ? getOptionNumber(deps, 'maxFps', 120) : 120,
       (v) => `${v}`, (v) => setOption(deps, 'maxFps', v));
   }
 }

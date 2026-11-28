@@ -115,6 +115,8 @@ export interface GameOptions {
   shaders: boolean;
   /** off / low / medium / high / ultra (TASK-render Phase A.3). */
   shaderQuality: string;
+  /** Vanilla Options.FRAMERATE_LIMIT: upper bound for rendered frames per second. */
+  maxFps: number;
   language: string;
   seed?: number;
   /** worker pool size override (defaults to min(hardwareConcurrency, 4)) */
@@ -141,6 +143,9 @@ const DEFAULT_OPTIONS: GameOptions = {
   gamemode: 'creative',
   shaders: true,
   shaderQuality: 'high',
+  // Options.java framerate limit default is 120; without this the browser renders
+  // at the full refresh rate (165+ fps), which overheats laptops for no visible gain.
+  maxFps: 120,
   language: 'zh_cn',
   seed: 0x2602c0de,
 };
@@ -226,6 +231,9 @@ export class Game {
 
   private running = false;
   private lastFrame = 0;
+  /** Time accumulated since the last rendered frame (Options.FRAMERATE_LIMIT). */
+  private renderAccum = 0;
+  private lastRenderAt = 0;
   private accum = 0;
   private frames = 0;
   /** Recent chat/system lines, newest last (vanilla keeps 100). */
@@ -4032,8 +4040,21 @@ export class Game {
     const dt = Math.min(100, now - this.lastFrame);
     this.lastFrame = now;
     this.lastDt = dt;
+
+    // Vanilla Options.FRAMERATE_LIMIT: only run the expensive render pass when a
+    // frame is due. Input, ticks and chunk streaming still advance every rAF, so
+    // capping the frame rate never slows the 20 Hz simulation.
+    this.renderAccum += dt;
+    const maxFps = Math.max(1, Number(this.options.maxFps) || 120);
+    const frameInterval = 1000 / maxFps;
+    const renderDue = this.renderAccum >= frameInterval - 1;
+    const renderDt = this.lastRenderAt > 0 ? now - this.lastRenderAt : dt;
+
     const frameStart = performance.now();
-    this.perfLog?.beginFrame(dt);
+    if (renderDue) {
+      this.lastRenderAt = now;
+      this.perfLog?.beginFrame(renderDt);
+    }
     // OpusMC FramePacer: budget this frame's chunk/mesh work from the measured cost of the
     // previous frame instead of a constant. This is the single biggest lever on movement
     // smoothness (a hard-coded 6 ms budget could push a busy frame past the 16.7 ms deadline).
@@ -4041,12 +4062,14 @@ export class Game {
     this.frameChunkBudget = chunkBudget;
     this.frameChunkMs = 0;
 
-    this.frames++;
-    this.fpsTimer += dt;
-    if (this.fpsTimer >= 500) {
-      this.fps = Math.round((this.frames * 1000) / this.fpsTimer);
-      this.frames = 0;
-      this.fpsTimer = 0;
+    if (renderDue) {
+      this.frames++;
+      this.fpsTimer += renderDt;
+      if (this.fpsTimer >= 500) {
+        this.fps = Math.round((this.frames * 1000) / this.fpsTimer);
+        this.frames = 0;
+        this.fpsTimer = 0;
+      }
     }
 
     // Vanilla MouseHandler accumulates movementX/Y and MouseHandler#turnPlayer applies it
@@ -4075,11 +4098,16 @@ export class Game {
     }
 
     this.syncTouchUi();
-    this.render(worldTicking ? this.accum / TICK_MS : 1);
+    if (renderDue) this.render(worldTicking ? this.accum / TICK_MS : 1);
     const cpuMs = performance.now() - frameStart;
     this.pacer.endFrame(cpuMs, this.frameChunkMs);
-    this.perfLog?.endFrame(cpuMs);
-    this.adaptRenderScale(cpuMs, dt);
+    if (renderDue) {
+      // Keep the fractional remainder so the average matches maxFps even when the
+      // display refresh is not a multiple of it (e.g. 120 fps on a 165 Hz panel).
+      this.renderAccum = Math.min(frameInterval, Math.max(0, this.renderAccum - frameInterval));
+      this.perfLog?.endFrame(cpuMs);
+      this.adaptRenderScale(cpuMs, renderDt);
+    }
     requestAnimationFrame(this.frame);
   };
 

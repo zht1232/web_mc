@@ -60,6 +60,7 @@ node scripts/test-villager-sleep.mjs          # 村民睡眠/昼夜作息 + 村�
 node scripts/test-village-schedule.mjs        # 村民日程：工作站点聚集/钟声会议/农民工作时段 9 项
 node scripts/test-wandering-trader.mjs        # 流浪商人：生成周期/9 条报价/交易界面/羊驼跟随与消失 15 项
 node scripts/test-tipped-arrow.mjs            # 药箭：imbue 合成/弓发射/1/8 时长药效/制箭师随机药箭交易 10 项
+node scripts/test-fps-limit.mjs               # 帧率上限：30/120/240 档实测渲染帧率 + tick 不降频 7 项
 node scripts/test-mob-equipment.mjs           # 怪物装备与稀有掉落：护甲分布/武器/骷髅头/铜锭 13 项
 node scripts/test-explosion.mjs               # 爆炸：射线弹坑/抗性/掉落衰减/TNT 归属 6 项
 node scripts/test-icons.mjs                   # 物品图标
@@ -90,6 +91,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 菜单/设置页帧率 | ✅ | 2026-11-21 修：菜单打开时不再绘制被立即擦掉的 HUD；菜单泥土背景改为一次缓存 + 单次 `drawImage`；HUD 改为脏标记重绘。1600x900@1.5 下暂停页 10→56 fps、视频设置 12→60 fps，`screens` 59.5→1.0 ms/帧 |
 | HUD 空转重绘 | ✅ | 同一份 HudState 不再每帧重画；静止时 0 次 `hud.render`（`test-hud-dirty`）。聊天/Toast/受伤/切槽/缩放会立即触发一次 |
 | 物品图标降级路径 | ✅ | `createImageBitmap` 不可用时不再从 3200² 图集直接 `drawImage`（真实环境曾 90 ms/9 个图标），改为按物品缓存小画布 |
+| 帧率上限 | ✅ | 2026-11-28：视频设置「最大帧率」此前是死 UI（一直按刷新率跑满，165Hz 屏约 165fps）。现按 `Options.FRAMERATE_LIMIT` 跳帧，只跳过渲染，20Hz tick/输入/区块流式照常；默认 120，`test-fps-limit` 7 项 |
 
 ### 实体
 | 项 | 状态 | 说明 |
@@ -630,3 +632,15 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   `test-village-schedule` 9/9、`test-mobs-render` 20 项全过、`smoke` 19/19。
 - 剩余：夜间隐身/白天喝牛奶现身、拴绳渲染与物理、商人羊驼吐口水/箱子/骑乘、袭击与
   不祥之兆。
+
+### 帧率上限真正生效（2026-11-28）
+
+- 视频设置的「最大帧率」此前只是 UI，实际一直按显示器刷新率无上限渲染（165Hz 屏约
+  165fps）。现在按 `Options.FRAMERATE_LIMIT` 在主循环里用累计时间跳帧：只有到期的帧才
+  执行完整 `render()`，输入、20Hz tick 与区块流式仍每个 rAF 推进。
+- 默认值改为原版 120；30/60/120/144/240 档位现在都会真实生效；显示器刷新率仍是无上限
+  帧率的天花板（rAF + vsync）。
+- 性能采样器的卡顿看门狗阈值随帧率上限缩放，避免用户主动设 30fps 时误报「卡顿采样」；
+  报告头会记录当前帧率上限。
+- 验证：`tsc` 0；`node scripts/test-fps-limit.mjs` **7/7**（60Hz headless 下 30 档实测
+  29.9fps、tick 仍 61/3s；120/240 档被 60Hz 屏幕限制在 59-60fps；HUD fps 显示同步）。

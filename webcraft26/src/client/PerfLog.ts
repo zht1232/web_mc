@@ -46,7 +46,7 @@ interface PerfGame {
   readonly screens: { render: (...a: never[]) => void };
   readonly level: { chunks: Map<number, unknown> };
   readonly survival: { gamemode: string };
-  readonly options: { shaders: boolean; shaderQuality: string; renderDistance: number; fov: number };
+  readonly options: { shaders: boolean; shaderQuality: string; renderDistance: number; fov: number; maxFps?: number };
   readonly pacer: { stats: () => { budget: number; rest: number; backoff: number; refresh: number } };
   readonly entityManager: { getEntities: () => readonly unknown[] };
   readonly touchDevice: boolean;
@@ -268,7 +268,8 @@ export class PerfLog {
     this.env.heap = mem ? `${(mem.usedJSHeapSize / 1048576).toFixed(0)}MB` : 'n/a';
     this.env.touch = g.touchDevice;
     this.env.workers = g.chunkProvider.workerCount;
-    this.env.settings = `光影 ${g.options.shaders ? '开' : '关'} / 画质 ${g.options.shaderQuality} / 视距 ${g.options.renderDistance}`;
+    this.env.settings = `光影 ${g.options.shaders ? '开' : '关'} / 画质 ${g.options.shaderQuality}`
+      + ` / 视距 ${g.options.renderDistance} / 帧率上限 ${Number(g.options.maxFps ?? 120)}`;
     this.env.mode = g.survival.gamemode;
   }
 
@@ -314,7 +315,11 @@ export class PerfLog {
       // 卡顿看门狗：进世界后如果连续 ~3 秒都低于 ~42fps（例如打开背包时的 35fps 掉帧），
       // 自动采一次并上传，省得用户还得手动复现。每次加载只触发一次。
       if (this.stallArmed && this.game.worldActive && !this.game.titleMode) {
-        if (dt > 24) {
+        // A user-chosen cap below 42 fps is intentional, not a stall: scale the
+        // watchdog threshold with Options.FRAMERATE_LIMIT.
+        const cap = Math.max(1, Number(this.game.options?.maxFps ?? 120));
+        const stallMs = Math.max(24, 1500 / cap);
+        if (dt > stallMs) {
           this.stallFrames++;
           if (this.stallFrames >= 90) {
             this.stallArmed = false;

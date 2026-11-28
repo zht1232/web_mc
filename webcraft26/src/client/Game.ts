@@ -2512,14 +2512,17 @@ export class Game {
       this.redstone.onBlocksChanged(destroyed);
     }
 
-    // Explosion.finalizeExplosion: knockback + damage for every living entity inside radius*2.
+    // ServerExplosion.hurtEntities: distance from the entity position, exposure from
+    // the vanilla 16^3 AABB samples; blocks between the entity and the centre reduce
+    // both damage and knockback.
     for (const e of this.entityManager.getEntities()) {
       if (e.isRemoved() || !(e instanceof LivingEntity) || !e.isAlive()) continue;
-      const ey = e.y + e.getHeight() / 2;
-      const d = Math.hypot(e.x - x, ey - y, e.z - z);
-      if (d >= damageRange) continue;
-      const q = 1 - d / damageRange;
-      const nx = e.x - x, ny = ey - y, nz = e.z - z;
+      const dist = Math.hypot(e.x - x, e.y - y, e.z - z) / damageRange;
+      if (dist > 1) continue;
+      const exposure = this.explosionSeenPercent(x, y, z, e.getBoundingBox());
+      const q = (1 - dist) * exposure;
+      const eyeY = e.getEyeY();
+      const nx = e.x - x, ny = eyeY - y, nz = e.z - z;
       const len = Math.hypot(nx, ny, nz) || 1;
       e.push((nx / len) * q, (ny / len) * q, (nz / len) * q);
       e.hurt(((q * q + q) / 2) * 7 * damageRange + 1, owner);
@@ -2527,12 +2530,14 @@ export class Game {
 
     // Player damage: creative players are invulnerable (spectator is not a supported mode yet).
     if (this.options.gamemode !== 'creative') {
-      const px = this.player.pos.x, py = this.player.pos.y + 0.9, pz = this.player.pos.z;
-      const d = Math.hypot(px - x, py - y, pz - z);
-      if (d < damageRange) {
-        const q = 1 - d / damageRange;
+      const px = this.player.pos.x, py = this.player.pos.y, pz = this.player.pos.z;
+      const dist = Math.hypot(px - x, py - y, pz - z) / damageRange;
+      if (dist <= 1) {
+        const exposure = this.explosionSeenPercent(x, y, z, this.player.boundingBox());
+        const q = (1 - dist) * exposure;
         this.survival.damage(((q * q + q) / 2) * 7 * damageRange + 1, 'explosion');
-        const nx = px - x, ny = py - y, nz = pz - z;
+        const eyeY = this.player.eyeY;
+        const nx = px - x, ny = eyeY - y, nz = pz - z;
         const len = Math.hypot(nx, ny, nz) || 1;
         this.player.vel = new Vec3(
           this.player.vel.x + (nx / len) * q,
@@ -2541,6 +2546,74 @@ export class Game {
         );
       }
     }
+  }
+
+  /**
+   * ServerExplosion.getSeenPercent: sample the entity AABB on the vanilla grid and
+   * count the samples whose segment to the explosion centre is not blocked by a
+   * collidable block. The fraction scales damage and knockback.
+   */
+  private explosionSeenPercent(x: number, y: number, z: number,
+    box: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }): number {
+    const xs = 1 / ((box.maxX - box.minX) * 2 + 1);
+    const ys = 1 / ((box.maxY - box.minY) * 2 + 1);
+    const zs = 1 / ((box.maxZ - box.minZ) * 2 + 1);
+    const xOffset = (1 - Math.floor(1 / xs) * xs) / 2;
+    const zOffset = (1 - Math.floor(1 / zs) * zs) / 2;
+    let hits = 0;
+    let count = 0;
+    for (let xx = 0; xx <= 1; xx += xs) {
+      for (let yy = 0; yy <= 1; yy += ys) {
+        for (let zz = 0; zz <= 1; zz += zs) {
+          count++;
+          const sx = box.minX + (box.maxX - box.minX) * xx + xOffset;
+          const sy = box.minY + (box.maxY - box.minY) * yy;
+          const sz = box.minZ + (box.maxZ - box.minZ) * zz + zOffset;
+          if (!this.segmentBlocked(sx, sy, sz, x, y, z)) hits++;
+        }
+      }
+    }
+    return count > 0 ? hits / count : 0;
+  }
+
+  /** ClipContext.Block.COLLIDER equivalent: does any collision shape cross the segment? */
+  private segmentBlocked(fx: number, fy: number, fz: number, tx: number, ty: number, tz: number): boolean {
+    const dx = tx - fx, dy = ty - fy, dz = tz - fz;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-6) return false;
+    const nx = dx / len, ny = dy / len, nz = dz / len;
+    const from = new Vec3(fx, fy, fz);
+    const to = new Vec3(tx, ty, tz);
+    let bx = Math.floor(fx), by = Math.floor(fy), bz = Math.floor(fz);
+    const stepX = Math.sign(nx), stepY = Math.sign(ny), stepZ = Math.sign(nz);
+    const tDeltaX = stepX !== 0 ? Math.abs(1 / nx) : Infinity;
+    const tDeltaY = stepY !== 0 ? Math.abs(1 / ny) : Infinity;
+    const tDeltaZ = stepZ !== 0 ? Math.abs(1 / nz) : Infinity;
+    let tMaxX = stepX > 0 ? (Math.floor(fx) + 1 - fx) * tDeltaX
+      : stepX < 0 ? (fx - Math.floor(fx)) * tDeltaX : Infinity;
+    let tMaxY = stepY > 0 ? (Math.floor(fy) + 1 - fy) * tDeltaY
+      : stepY < 0 ? (fy - Math.floor(fy)) * tDeltaY : Infinity;
+    let tMaxZ = stepZ > 0 ? (Math.floor(fz) + 1 - fz) * tDeltaZ
+      : stepZ < 0 ? (fz - Math.floor(fz)) * tDeltaZ : Infinity;
+    for (let i = 0; i < 128; i++) {
+      const state = this.level.getBlockState(bx, by, bz);
+      if (state !== 0) {
+        for (const shape of this.mc.collision(state)) {
+          if (shape.move(bx, by, bz).clip(from, to)) return true;
+        }
+      }
+      if (tMaxX < tMaxY && tMaxX < tMaxZ) {
+        if (tMaxX > len) break;
+        bx += stepX; tMaxX += tDeltaX;
+      } else if (tMaxY < tMaxZ) {
+        if (tMaxY > len) break;
+        by += stepY; tMaxY += tDeltaY;
+      } else {
+        if (tMaxZ > len) break;
+        bz += stepZ; tMaxZ += tDeltaZ;
+      }
+    }
+    return false;
   }
 
   /**

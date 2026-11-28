@@ -6,7 +6,9 @@
 //   * ApplyExplosionDecay (default gamerules): only a fraction of dropped items
 //     survives (chance 1/radius);
 //   * PrimedTnt owner: a player-lit TNT credits the player, so mobs hurt by the
-//     blast remember the player as the attacker.
+//     blast remember the player as the attacker;
+//   * ServerExplosion.getSeenPercent: a wall between the blast and an entity
+//     blocks the 16^3 exposure samples, cutting both damage and knockback.
 //
 //   node scripts/test-explosion.mjs [--url http://127.0.0.1:5174]
 import { chromium } from 'playwright';
@@ -165,6 +167,83 @@ try {
   check('the blast damages a nearby mob', !!owned && owned.health < owner.health, { before: owner, after: owned });
   check('a player-lit TNT credits the player as the attacker',
     !!owned && owned.ownerIsPlayer === true, owned);
+
+  // -------------------------------------------------------------------------
+  // 4. Exposure: a stone wall between the blast and an entity blocks the
+  //    getSeenPercent samples, so only the exposed target takes real damage.
+  // -------------------------------------------------------------------------
+  const exposure = await ev(([x, y, z]) => {
+    const m = window.__mc;
+    const stone = m.mc.stateOf('stone');
+    for (let dx = -6; dx <= 8; dx++) {
+      for (let dz = -4; dz <= 4; dz++) {
+        m.level.setBlockState(x + dx, y - 1, z + dz, stone);
+        for (let dy = 0; dy <= 4; dy++) m.level.setBlockState(x + dx, y + dy, z + dz, 0);
+      }
+    }
+    // 5x4 stone wall at x+2, between the blast and the covered zombie.
+    for (let dz = -2; dz <= 2; dz++) {
+      for (let dy = 0; dy <= 3; dy++) m.level.setBlockState(x + 2, y + dy, z + dz, stone);
+    }
+    const covered = m.entityManager.spawn('zombie', x + 4.5, y, z + 0.5);
+    const open = m.entityManager.spawn('zombie', x - 3.5, y, z + 0.5);
+    for (const e of [covered, open]) {
+      e.equipment.fill(null);
+      e.health = 20;
+    }
+    const cx = x + 0.5, cy = y + 1, cz = z + 0.5;
+    const seenCovered = m.explosionSeenPercent(cx, cy, cz, covered.getBoundingBox());
+    const seenOpen = m.explosionSeenPercent(cx, cy, cz, open.getBoundingBox());
+    m.mobGriefing = false;
+    m.explode(cx, cy, cz, 3, 'mob', null);
+    const out = {
+      seenCovered, seenOpen,
+      coveredHealth: covered.health,
+      openHealth: open.health,
+      wallIntact: m.level.getBlockState(x + 2, y + 1, z) !== 0,
+    };
+    covered.remove();
+    open.remove();
+    return out;
+  }, [bx + 60, floorY, bz]);
+  check('a wall blocks the explosion exposure samples',
+    exposure.seenCovered <= 0.05 && exposure.seenOpen >= 0.9 && exposure.wallIntact, exposure);
+  check('cover sharply reduces blast damage on a mob',
+    exposure.coveredHealth >= 18 && exposure.openHealth <= 14, exposure);
+
+  // -------------------------------------------------------------------------
+  // 5. The local player uses the same exposure rule.
+  // -------------------------------------------------------------------------
+  const playerCovered = await ev(([x, y, z]) => {
+    const m = window.__mc;
+    m.options.gamemode = 'survival';
+    m.survival.gamemode = 'survival';
+    const p = m.player;
+    p.pos.x = x + 4.5; p.pos.y = y; p.pos.z = z + 0.5;
+    p.prevPos.x = p.pos.x; p.prevPos.y = p.pos.y; p.prevPos.z = p.pos.z;
+    p.vel.x = p.vel.y = p.vel.z = 0;
+    p.flying = false;
+    m.survival.hp = 20;
+    m.explode(x + 0.5, y + 1, z + 0.5, 3, 'mob', null);
+    return { hp: m.survival.hp };
+  }, [bx + 60, floorY, bz]);
+  check('a player behind cover takes minimal blast damage',
+    playerCovered.hp >= 18, playerCovered);
+
+  await waitTicks(page, 12);
+  const playerOpen = await ev(([x, y, z]) => {
+    const m = window.__mc;
+    const p = m.player;
+    p.pos.x = x - 3.5; p.pos.y = y; p.pos.z = z + 0.5;
+    p.prevPos.x = p.pos.x; p.prevPos.y = p.pos.y; p.prevPos.z = p.pos.z;
+    p.vel.x = p.vel.y = p.vel.z = 0;
+    p.flying = false;
+    m.survival.hp = 20;
+    m.explode(x + 0.5, y + 1, z + 0.5, 3, 'mob', null);
+    return { hp: m.survival.hp };
+  }, [bx + 60, floorY, bz]);
+  check('an exposed player takes the full blast damage',
+    playerOpen.hp <= 14, playerOpen);
 
   await page.screenshot({ path: 'shots/diag/explosion.png' });
 } catch (err) {

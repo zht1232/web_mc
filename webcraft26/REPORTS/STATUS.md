@@ -189,9 +189,14 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 
 **光影 / 视觉清单（Complementary Reimagined r5.9.3 源码为真值，逐项打勾）**
 - [x] 水 SSR（30 步、6 次细化、边界/亮度衰减）、GetSky 天空反射、GGX 高光、水雾/菲涅尔 alpha
-- [ ] 水折射：`lib/materials/materialMethods/refraction.glsl` 的 `DoRefraction`
-      （colortex6 材质掩码 + `noisetex` 偏移、深度差/掩码二次校验）。当前是 forward
-      水着色器，需把已渲染场景色按折射偏移采样；没有 noise 纹理时先用项目现有噪声/抖动
+- [x] 水折射：`lib/materials/materialMethods/refraction.glsl` 的 `DoRefraction`
+      已按 `DETAIL_QUALITY>=3` 接到 high/ultra 档（默认 medium 档保持无折射，与原包默认一致）。
+      forward 水着色器用 `uSceneColor` 的折射采样替换水下背景、再以水色按 alpha 合成；
+      噪声偏移 = `noisetex.rb-0.5 * intensity * gbufferProjection[1][1] / (3+lViewPos) * 0.015
+      * clamp(approx(depth1)-approx(depth0))`。包内 `noise.png` 不随仓库分发，
+      用同尺寸（256²、REPEAT、LINEAR）的确定性 RG 噪声生成等效场。
+      验证：`test-water-refraction` 4/4（high 档开关噪声差 32573 px，medium 档 0 px，
+      截图 `shots/diag/water-refraction.png` 可见水下棋盘扭曲）
 - [ ] 水下焦散（caustics.glsl 对应效果；当前只做了 `BRIGHT_CAVE_WATER` 颜色补偿）
 - [ ] 体积光 / 体积云：当前是 billboard 云 + 屏幕空间光轴，不是 26.2 体积实现
 - [ ] 景深（DOF，`program/deferred*/final` 中的手部/近景模糊）
@@ -749,7 +754,12 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 验证：`tsc` 0；`node scripts/test-water-reflect.mjs` **7/7**（着色器编译、水面掩码
   38.1%、SSR 命中 99.9%、开关光影水面像素 99% 改变 meanDiff 41.4、GL error 0、
   黄昏路径无错）；回归 `test-review-fixes` 9/9、`test-video-toggles` 3/3。
-- 仍未完成：水面折射/焦散、天空的云与星空进入反射（pack 默认
+- 2026-11-28 补：水折射（refraction.glsl `DoRefraction`，仅 high/ultra 档，
+  对应 `DETAIL_QUALITY>=3`）——`uSceneColor` 折射采样替换水下背景再按 alpha
+  合成，噪声/深度差公式逐行照抄；`test-water-refraction` **4/4**
+  （high 档噪声开关差 32573 px、medium 档 0 px）。`LevelRenderer.waveTimeOverride`
+  是探针用的水波时钟冻结钩子（默认 null = 实时）。
+- 仍未完成：水下焦散、天空的云与星空进入反射（pack 默认
   `DETAIL_QUALITY>=3` 才开 `SKY_EFFECT_REFLECTION_TRANSLUCENT`）、体积光/云、
   景深、完整 gbuffer 管线。
 

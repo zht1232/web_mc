@@ -113,6 +113,13 @@ function rebase(verts: Uint8Array, ox: number, oy: number, oz: number): Uint8Arr
 }
 
 const EMPTY_BYTES = new Uint8Array(0);
+
+/** Camera projection planes (GameRenderer.getProjectionMatrix uses the vanilla defaults). */
+const CAMERA_NEAR = 0.05;
+const CAMERA_FAR = 1024;
+
+/** Companion of the refraction uniforms: build refraction.glsl's GetApproxDistance. */
+const WATER_REFRACTION_INTENSITY = 2.0; // common.glsl default [0..3]
 const EMPTY_U32 = new Uint32Array(0);
 
 function regionKey(rx: number, rz: number): string { return `${rx},${rz}`; }
@@ -201,6 +208,8 @@ export class LevelRenderer {
   private lineBuffer: WebGLBuffer | null = null;
 
   renderDistance = 8;
+  /** Probe hook: freeze the water wave clock so two captures isolate shader changes. */
+  waveTimeOverride: number | null = null;
   debugMode = 0;
   private readonly regionStates = new Uint16Array(5832);
   private readonly regionSky = new Uint8Array(5832);
@@ -721,7 +730,7 @@ export class LevelRenderer {
   private prevCameraForJitter: Camera | null = null;
 
   private updateMatrices(camera: Camera): void {
-    mat4Perspective((camera.fov * Math.PI) / 180, camera.aspect, 0.05, 1024, this.proj);
+    mat4Perspective((camera.fov * Math.PI) / 180, camera.aspect, CAMERA_NEAR, CAMERA_FAR, this.proj);
     // TAA: sub-pixel projection jitter ([0,0] when disabled, keeping the Off path pixel identical).
     // Freeze the jitter while the view is still so thin edges and shadow boundaries do not crawl.
     const prev = this.prevCameraForJitter;
@@ -1127,7 +1136,7 @@ export class LevelRenderer {
     const waterFlow = this.textures.blockTextureLayer('block/water_flow');
     const waves = this.post.enabled && waterStill >= 0;
     this.terrain.set2i('uWaterLayers', waves ? waterStill : -1, waves ? waterFlow : -1);
-    this.terrain.set1f('uWaveTime', performance.now() / 1000);
+    this.terrain.set1f('uWaveTime', this.waveTimeOverride ?? performance.now() / 1000);
     this.terrain.set1f('uSwayTime', this.swayEnabled ? performance.now() / 1000 : 0);
     // Direct sun / moon term is only enabled when a shadow map was rendered this frame; with
     // uUseShadows = 0 the fragment shader keeps the exact vanilla lightmap result.
@@ -1149,6 +1158,10 @@ export class LevelRenderer {
     gl.activeTexture(gl.TEXTURE6);
     gl.bindTexture(gl.TEXTURE_2D, this.post.waterDepth ?? this.post.blackTexture);
     this.terrain.set1i('uSceneDepth', 6);
+    this.terrain.set1i('uRefraction', 0);
+    gl.activeTexture(gl.TEXTURE7);
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.noise ?? this.post.blackTexture);
+    this.terrain.set1i('uNoise', 7);
     gl.activeTexture(gl.TEXTURE0);
 
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
@@ -1206,7 +1219,7 @@ export class LevelRenderer {
     this.terrain.set1f('uShadowTexel', this.shadow.cascadeTexel(0));
     this.terrain.set1f('uShadowDay', this.shadowDay);
     this.terrain.set2i('uWaterLayers', waves ? waterStill : -1, waves ? waterFlow : -1);
-    this.terrain.set1f('uWaveTime', performance.now() / 1000);
+    this.terrain.set1f('uWaveTime', this.waveTimeOverride ?? performance.now() / 1000);
     this.terrain.set1f('uSwayTime', this.swayEnabled ? performance.now() / 1000 : 0);
     // Complementary Reimagined sky constants (ComplementSky.ts): the water reflection evaluates
     // the pack's GetSky() for rays the depth buffer cannot resolve.
@@ -1222,6 +1235,17 @@ export class LevelRenderer {
     gl.activeTexture(gl.TEXTURE6);
     gl.bindTexture(gl.TEXTURE_2D, this.post.waterDepth ?? this.post.blackTexture);
     this.terrain.set1i('uSceneDepth', 6);
+    // Refraction is the pack's DETAIL_QUALITY >= 3 feature: high/ultra quality only.
+    const waterRefraction = this.post.enabled && this.post.quality !== 'low'
+      && this.post.quality !== 'medium' && this.textures.noise !== null;
+    this.terrain.set1i('uRefraction', waterRefraction ? 1 : 0);
+    this.terrain.set1f('uNear', CAMERA_NEAR);
+    this.terrain.set1f('uFar', CAMERA_FAR);
+    this.terrain.set1f('uProjScale', this.proj[5]);
+    this.terrain.set1f('uRefractionIntensity', WATER_REFRACTION_INTENSITY);
+    gl.activeTexture(gl.TEXTURE7);
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.noise ?? this.post.blackTexture);
+    this.terrain.set1i('uNoise', 7);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
     this.terrain.set1i('uAtlas', 0);

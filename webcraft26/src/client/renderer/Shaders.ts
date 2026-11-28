@@ -116,6 +116,17 @@ uniform mat4 uInvViewProj;
 uniform vec2 uResolution;
 uniform float uWaveTime;
 
+// Water refraction (Complementary Reimagined lib/materials/materialMethods/refraction.glsl,
+// only compiled at DETAIL_QUALITY >= 3 = our high/ultra shader quality):
+//   DoRefraction distorts the opaque scene behind water with a noise offset scaled by the
+//   view distance and the water/opaque depth difference, then composites the water over it.
+uniform int uRefraction;
+uniform sampler2D uNoise;
+uniform float uNear;
+uniform float uFar;
+uniform float uProjScale;          // gbufferProjection[1][1] = 1 / tan(fovY / 2)
+uniform float uRefractionIntensity;
+
 // Complementary Reimagined r5.9.3 sky model, shared with the sky pass (see ComplementSky.ts).
 ${COMPLEMENT_SKY_GLSL}
 ${BAYER_GLSL}
@@ -378,6 +389,28 @@ void main() {
     float waterFog = max(0.0, 1.0 - exp((lViewPos - lViewPosT) * 0.075));
     alpha = skySqrt1(tex.a) * (0.25 + 0.75 * waterFog);
     alpha = mix(alpha, 1.0, fresnel4);
+
+    // Refraction (refraction.glsl DoRefraction, DETAIL_QUALITY >= 3). The pack runs this in
+    // composite with the opaque colortex behind the water; the forward pass reproduces the
+    // same result by replacing the background under the water with the refracted sample and
+    // compositing the water colour over it as an opaque pixel.
+    if (uRefraction == 1) {
+      float depth1 = texture(uSceneDepth, screenUV).r;
+      if (depth1 < 1.0) {
+        // GetApproxDistance(depth) = near * far / (far - depth * far)
+        float approx0 = uNear * uFar / (uFar - gl_FragCoord.z * uFar);
+        float approx1 = uNear * uFar / (uFar - depth1 * uFar);
+        float depthDif = clamp(approx1 - approx0, 0.0, 1.0);
+        vec2 worldPosRM = vWorldPos.xz * 0.02 + vWorldPos.y * 0.01 + 0.01 * uWaveTime;
+        vec2 refractNoise = texture(uNoise, worldPosRM).rb - vec2(0.5);
+        refractNoise *= uRefractionIntensity * uProjScale / (3.0 + lViewPos);
+        refractNoise *= 0.015;               // WATER_STYLE < 3
+        refractNoise *= depthDif;
+        vec3 refracted = texture(uSceneColor, screenUV + refractNoise).rgb;
+        color = mix(refracted, color, alpha);
+        alpha = 1.0;
+      }
+    }
   }
 
   // fog.glsl total_fog_value + apply_fog: spherical distance against the environmental range,

@@ -118,6 +118,8 @@ export class EntityManager implements MobWorld {
   animalBredHandler?: (e: Entity) => void;
   /** Set by Game: spawn an egg item when a chicken lays one. */
   chickenEggHandler?: (e: Entity) => void;
+  /** Set by Game: play the crop break / plant sound for a farmer villager. */
+  villagerFarmHandler?: (action: 'break' | 'plant', x: number, y: number, z: number) => void;
   /** Set by Game: apply the splash potion's area effects. */
   potionSplashHandler?: (x: number, y: number, z: number, potionId: string, age: number, lingering: boolean) => void;
   /** Set by Game: detector rail occupancy changes. */
@@ -151,6 +153,9 @@ export class EntityManager implements MobWorld {
   onAnimalLove(e: Entity): void { this.animalLoveHandler?.(e); }
   onAnimalBred(e: Entity): void { this.animalBredHandler?.(e); }
   onChickenLayEgg(e: Entity): void { this.chickenEggHandler?.(e); }
+  onVillagerFarm(action: 'break' | 'plant', x: number, y: number, z: number): void {
+    this.villagerFarmHandler?.(action, x, y, z);
+  }
   onPotionSplash(x: number, y: number, z: number, potionId: string, age: number, lingering: boolean): void {
     this.potionSplashHandler?.(x, y, z, potionId, age, lingering);
   }

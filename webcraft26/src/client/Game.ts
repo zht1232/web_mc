@@ -662,6 +662,16 @@ export class Game {
       if (item) this.dropItem(new ItemStack(item, 1), e.x, e.y + 0.2, e.z);
       this.sounds.play('entity.chicken.egg', e.x, e.y, e.z, 1, 1);
     };
+    // HarvestFarmland: crop break particles/sound, then the replant sound.
+    this.entityManager.villagerFarmHandler = (action, x, y, z) => {
+      if (action === 'break') {
+        const state = this.level.getBlockState(x, y, z);
+        if (state !== 0) this.breakEffects(state, x, y, z);
+        this.sounds.play('block.crop.break', x + 0.5, y + 0.5, z + 0.5, 1, 0.8 + Math.random() * 0.4);
+      } else {
+        this.sounds.play('entity.villager.work_farmer', x + 0.5, y + 0.5, z + 0.5, 0.4, 0.9);
+      }
+    };
     this.entityManager.potionSplashHandler = (x, y, z, potionId, age, lingering) => {
       if (lingering) this.spawnPotionCloud(x, y, z, potionId);
       else this.applyPotionSplash(x, y, z, potionId, age);

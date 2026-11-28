@@ -114,6 +114,7 @@ node scripts/test-minecart.mjs        # rails, curves, slopes, powered/detector 
 node scripts/test-boat.mjs            # boats/rafts: buoyancy, paddling, placement, chest boat, pixel diff (browser)
 node scripts/test-entity-save.mjs     # chunk entities: animals, carts, boats, drops and XP survive a reload (browser)
 node scripts/test-golem-villager.mjs  # iron golem pattern/combat/cracks + villager food, breeding and baby model (browser)
+node scripts/test-village-life.mjs    # farmer harvesting/replanting, bread baking and villager food sharing (browser)
 node scripts/test-containers.mjs      # container click rules
 node scripts/test-menu.mjs            # title/world select screens
 node scripts/test-hud-dirty.mjs       # HUD redraw policy

@@ -33,6 +33,9 @@ export interface SavedVillager {
   age?: number;
   /** Villager.foodLevel + food points held for breeding (bread 4, carrot/potato/beetroot 1). */
   foodPoints?: number;
+  /** Farmer wheat / wheat-seed stock (HarvestFarmland + WorkAtComposter). */
+  wheat?: number;
+  seeds?: number;
 }
 
 /** Full metadata row persisted in the IndexedDB `worlds` store. */

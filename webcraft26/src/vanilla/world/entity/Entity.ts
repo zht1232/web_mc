@@ -47,6 +47,8 @@ export interface MobWorld {
   onAnimalBred?(e: Entity): void;
   /** An adult chicken laid an egg (Chicken.eggTime). */
   onChickenLayEgg?(e: Entity): void;
+  /** A villager harvested ('break') or replanted ('plant') a crop at (x,y,z). */
+  onVillagerFarm?(action: 'break' | 'plant', x: number, y: number, z: number): void;
   /** A thrown splash/lingering potion broke at (x,y,z); Game applies the area effects. */
   onPotionSplash?(x: number, y: number, z: number, potionId: string, age: number, lingering: boolean): void;
   getEntities(): readonly Entity[];

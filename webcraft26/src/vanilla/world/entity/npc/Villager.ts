@@ -20,6 +20,7 @@ import { BreedGoal } from '../ai/goal/BreedGoal.js';
 import { RandomStrollGoal } from '../ai/goal/RandomStrollGoal.js';
 import { LookAtPlayerGoal } from '../ai/goal/LookAtPlayerGoal.js';
 import { RandomLookAroundGoal } from '../ai/goal/RandomLookAroundGoal.js';
+import { FarmerHarvestGoal } from '../ai/goal/FarmerHarvestGoal.js';
 import { ItemEntity } from '../item/ItemEntity.js';
 import { entityType } from '../EntityType.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
@@ -47,6 +48,13 @@ const EXCESS_FOOD = 24;
 const BABY_WIDTH = 0.49;
 const BABY_HEIGHT = 0.98;
 const BABY_EYE_HEIGHT = 0.63;
+
+/** CropBlock.isMaxAge ages (wheat/carrots/potatoes 0..7, beetroots 0..3). */
+const CROP_MAX_AGE: Readonly<Record<string, number>> = {
+  wheat: 7, carrots: 7, potatoes: 7, beetroots: 3,
+};
+/** HarvestFarmland WORK_DURATION-ish cadence for the bread/sharing pass. */
+const FARM_TICK_INTERVAL = 20;
 
 /** data/minecraft/tags/point_of_interest_type/acquirable_job_site + profession mapping. */
 const WORKSTATION_PROFESSION: Readonly<Record<string, string>> = {
@@ -102,6 +110,10 @@ export class Villager extends Mob implements Merchant {
   tradingPlayer: unknown = null;
   /** Villager.foodLevel + food points held in the (simplified) inventory. */
   foodPoints = 0;
+  /** Wheat held by a farmer, baked into bread 3:1 (WorkAtComposter). */
+  wheat = 0;
+  /** Wheat seeds held for replanting (HarvestFarmland hasFarmSeeds). */
+  seeds = 0;
   lastRestockGameTime = 0;
   restocksToday = 0;
   lastRestockCheckDay = 0;
@@ -110,6 +122,7 @@ export class Villager extends Mob implements Merchant {
   private nextJobScan = 0;
   private nextRestockCheck = 0;
   private nextFoodScan = 0;
+  private nextFarmTick = 0;
   private typeFinalized = false;
 
   constructor(level: ClientLevel) {
@@ -122,9 +135,10 @@ export class Villager extends Mob implements Merchant {
   protected registerGoals(): void {
     this.goalSelector.addGoal(0, new FloatGoal(this));
     this.goalSelector.addGoal(1, new BreedGoal(this, 0.5));
-    this.goalSelector.addGoal(2, new RandomStrollGoal(this, 0.6));
-    this.goalSelector.addGoal(3, new LookAtPlayerGoal(this, 8));
-    this.goalSelector.addGoal(4, new RandomLookAroundGoal(this));
+    this.goalSelector.addGoal(2, new FarmerHarvestGoal(this, 0.5));
+    this.goalSelector.addGoal(3, new RandomStrollGoal(this, 0.6));
+    this.goalSelector.addGoal(4, new LookAtPlayerGoal(this, 8));
+    this.goalSelector.addGoal(5, new RandomLookAroundGoal(this));
   }
 
   // ---- breeding (AgeableMob + Villager food gate) -------------------------
@@ -184,6 +198,99 @@ export class Villager extends Mob implements Merchant {
     this.world?.onAnimalBred?.(this);
   }
 
+  /** Finds the nearest mature crop within `radius` blocks (HarvestFarmland.validPos). */
+  findHarvestableCrop(radius: number): { x: number; y: number; z: number } | null {
+    const mc = this.level.mc;
+    const ox = Math.floor(this.x), oy = Math.floor(this.y), oz = Math.floor(this.z);
+    let best: { x: number; y: number; z: number } | null = null;
+    let bestD = Infinity;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const x = ox + dx, y = oy + dy, z = oz + dz;
+          const state = this.level.getBlockState(x, y, z);
+          if (state === 0) continue;
+          const name = mc.blockOf(state).name;
+          const max = CROP_MAX_AGE[name];
+          if (max === undefined) continue;
+          if (Number(mc.getProp(state, 'age')) !== max) continue;
+          const d = this.distanceToSqr(x + 0.5, y + 0.5, z + 0.5);
+          if (d < bestD) { bestD = d; best = { x, y, z }; }
+        }
+      }
+    }
+    return best;
+  }
+
+  /**
+   * HarvestFarmland.tick: destroy a mature crop, collect its drops into the
+   * food/wheat stock and replant the same crop when a seed is available.
+   */
+  harvestCrop(x: number, y: number, z: number): void {
+    const mc = this.level.mc;
+    const state = this.level.getBlockState(x, y, z);
+    if (state === 0) return;
+    const name = mc.blockOf(state).name;
+    const max = CROP_MAX_AGE[name];
+    if (max === undefined || Number(mc.getProp(state, 'age')) !== max) return;
+    this.level.setBlockState(x, y, z, 0);
+    this.world?.onVillagerFarm?.('break', x, y, z);
+
+    let foodGain = 0;
+    let replant = false;
+    if (name === 'wheat') {
+      this.wheat += 1;
+      this.seeds += this.random.nextInt(4); // wheat seeds drop 0..3
+      if (this.seeds > 0) { this.seeds--; replant = true; }
+    } else {
+      const count = 1 + this.random.nextInt(name === 'beetroots' ? 3 : 4);
+      foodGain = count;
+      if (count > 1) { foodGain -= 1; replant = true; } // one item becomes the seed
+    }
+    if (replant) {
+      this.level.setBlockState(x, y, z, mc.stateOf(name, { age: '0' }));
+      this.world?.onVillagerFarm?.('plant', x, y, z);
+    }
+    if (foodGain > 0) this.foodPoints = Math.min(EXCESS_FOOD, this.foodPoints + foodGain);
+    this.bakeBread();
+  }
+
+  /** WorkAtComposter: 3 wheat bake into 1 bread (4 food points). */
+  private bakeBread(): void {
+    while (this.wheat >= 3) {
+      this.wheat -= 3;
+      this.foodPoints = Math.min(EXCESS_FOOD, this.foodPoints + 4);
+    }
+  }
+
+  /** TradeWithVillager food sharing: excess food moves to a nearby hungry villager. */
+  private shareFood(): void {
+    if (this.foodPoints < EXCESS_FOOD) return;
+    const world = this.world;
+    if (!world) return;
+    for (const e of world.getEntities()) {
+      if (!(e instanceof Villager) || e === this || e.isRemoved() || e.dead) continue;
+      if (e.foodPoints >= BREEDING_FOOD_THRESHOLD) continue;
+      if (this.distanceToSqr(e.x, e.y, e.z) > 16) continue;
+      const units = Math.min(
+        Math.floor((this.foodPoints - BREEDING_FOOD_THRESHOLD) / 4),
+        Math.ceil((BREEDING_FOOD_THRESHOLD - e.foodPoints) / 4),
+      );
+      if (units <= 0) continue;
+      const amount = units * 4;
+      this.foodPoints -= amount;
+      e.foodPoints = Math.min(EXCESS_FOOD, e.foodPoints + amount);
+      break;
+    }
+  }
+
+  private tickFarmLife(): void {
+    if (this.tickCount < this.nextFarmTick) return;
+    this.nextFarmTick = this.tickCount + FARM_TICK_INTERVAL;
+    this.bakeBread();
+    this.shareFood();
+  }
+
   /** VillagerPickupItem: absorb dropped bread / carrot / potato / beetroot. */
   private tickFoodPickup(): void {
     if (this.tickCount < this.nextFoodScan) return;
@@ -235,6 +342,7 @@ export class Villager extends Mob implements Merchant {
     this.tickJobSite();
     this.tickRestock();
     this.tickFoodPickup();
+    this.tickFarmLife();
   }
 
   // ---- job site -----------------------------------------------------------
@@ -399,6 +507,8 @@ export class Villager extends Mob implements Merchant {
       offers: this.offers.map((offer) => offer.toJSON()),
       age: this.age,
       foodPoints: this.foodPoints,
+      wheat: this.wheat,
+      seeds: this.seeds,
     };
   }
 
@@ -407,6 +517,8 @@ export class Villager extends Mob implements Merchant {
     this.villagerType = data.villagerType || 'plains';
     this.setAge(data.age ?? 0);
     this.foodPoints = data.foodPoints ?? 0;
+    this.wheat = data.wheat ?? 0;
+    this.seeds = data.seeds ?? 0;
     this.profession = data.profession || 'none';
     this.professionLevel = Math.max(1, Math.min(5, data.professionLevel || 1));
     this.xp = data.xp || 0;

@@ -50,7 +50,7 @@ function advancementData(): Plugin {
   return {
     name: 'advancement-data',
     generateBundle() {
-      for (const name of ['advancements.json', 'tags.json', 'villager_trades.json', 'wandering_trader_trades.json']) {
+      for (const name of ['advancements.json', 'tags.json', 'villager_trades.json', 'wandering_trader_trades.json', 'jukebox_songs.json']) {
         const file = path.resolve(process.cwd(), 'data', name);
         if (!fs.existsSync(file)) continue;
         this.emitFile({ type: 'asset', fileName: `data/${name}`, source: fs.readFileSync(file) });

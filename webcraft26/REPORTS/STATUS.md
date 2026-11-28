@@ -791,9 +791,16 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   `music_disc.<song>`（音量 4，RECORDS 分类）、非创造消耗唱片、`play_record`
   统计；空手右键播放中的唱片机 → `has_record=false`、停播并掉回唱片；
   破坏播放中的唱片机停播并掉出唱片。`SoundEngine.play` 返回可 `stop()` 的句柄。
-- 验证：`tsc` 0；`node scripts/test-jukebox.mjs` **4/4**（真实事件存在、插入
-  消耗/播放、弹出掉落、无页面错误）。
-- 未完成：唱片机比较器模拟输出（需要方块实体数据）、世界重载后恢复正在播放的唱片。
+- 比较器输出（2026-11-28）：`JukeboxBlockEntity.getComparatorOutput` =
+  `JukeboxSong.comparatorOutput`，数据从 26.2 的
+  `data/minecraft/jukebox_song/*.json` 逐条读入 `data/jukebox_songs.json`
+  （22 首，含 length/sound event）。`RedstoneHooks.jukeboxSignal` 按
+  `has_record` + 该位置歌曲返回值；空唱片机按原版返回 0（`hasAnalogOutputSignal`
+  恒为 true）。插入/弹出唱片已调用 `updateNeighbors`，比较器按 2 tick 计划
+  刷新输出；`test-jukebox` 实测 cat=2 → 线 2/灯亮，弹出后回 0。
+- 验证：`tsc` 0；`node scripts/test-jukebox.mjs` **6/6**、`test-redstone`
+  **28/28**（真实事件存在、插入消耗/播放、cat 比较器输出 2、弹出掉落并回 0）。
+- 未完成：世界重载后恢复正在播放的唱片/比较器（需要方块实体持久化）。
 
 
 

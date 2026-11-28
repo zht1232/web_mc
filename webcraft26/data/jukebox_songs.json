@@ -1,0 +1,28 @@
+{
+  "source": "src-vanilla/data/minecraft/jukebox_song/*.json",
+  "note": "JukeboxSong fields: comparatorOutput (JukeboxBlockEntity.getComparatorOutput), lengthSeconds, soundEvent (namespaced).",
+  "songs": {
+    "11": { "comparatorOutput": 11, "lengthSeconds": 71, "soundEvent": "minecraft:music_disc.11" },
+    "13": { "comparatorOutput": 1, "lengthSeconds": 178, "soundEvent": "minecraft:music_disc.13" },
+    "5": { "comparatorOutput": 15, "lengthSeconds": 178, "soundEvent": "minecraft:music_disc.5" },
+    "blocks": { "comparatorOutput": 3, "lengthSeconds": 345, "soundEvent": "minecraft:music_disc.blocks" },
+    "bounce": { "comparatorOutput": 8, "lengthSeconds": 234, "soundEvent": "minecraft:music_disc.bounce" },
+    "cat": { "comparatorOutput": 2, "lengthSeconds": 185, "soundEvent": "minecraft:music_disc.cat" },
+    "chirp": { "comparatorOutput": 4, "lengthSeconds": 185, "soundEvent": "minecraft:music_disc.chirp" },
+    "creator": { "comparatorOutput": 12, "lengthSeconds": 176, "soundEvent": "minecraft:music_disc.creator" },
+    "creator_music_box": { "comparatorOutput": 11, "lengthSeconds": 73, "soundEvent": "minecraft:music_disc.creator_music_box" },
+    "far": { "comparatorOutput": 5, "lengthSeconds": 174, "soundEvent": "minecraft:music_disc.far" },
+    "lava_chicken": { "comparatorOutput": 9, "lengthSeconds": 134, "soundEvent": "minecraft:music_disc.lava_chicken" },
+    "mall": { "comparatorOutput": 6, "lengthSeconds": 197, "soundEvent": "minecraft:music_disc.mall" },
+    "mellohi": { "comparatorOutput": 7, "lengthSeconds": 96, "soundEvent": "minecraft:music_disc.mellohi" },
+    "otherside": { "comparatorOutput": 14, "lengthSeconds": 195, "soundEvent": "minecraft:music_disc.otherside" },
+    "pigstep": { "comparatorOutput": 13, "lengthSeconds": 149, "soundEvent": "minecraft:music_disc.pigstep" },
+    "precipice": { "comparatorOutput": 13, "lengthSeconds": 299, "soundEvent": "minecraft:music_disc.precipice" },
+    "relic": { "comparatorOutput": 14, "lengthSeconds": 218, "soundEvent": "minecraft:music_disc.relic" },
+    "stal": { "comparatorOutput": 8, "lengthSeconds": 150, "soundEvent": "minecraft:music_disc.stal" },
+    "strad": { "comparatorOutput": 9, "lengthSeconds": 188, "soundEvent": "minecraft:music_disc.strad" },
+    "tears": { "comparatorOutput": 10, "lengthSeconds": 175, "soundEvent": "minecraft:music_disc.tears" },
+    "wait": { "comparatorOutput": 12, "lengthSeconds": 238, "soundEvent": "minecraft:music_disc.wait" },
+    "ward": { "comparatorOutput": 10, "lengthSeconds": 251, "soundEvent": "minecraft:music_disc.ward" }
+  }
+}

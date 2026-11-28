@@ -69,6 +69,32 @@ try {
     insert.used === true && insert.hasRecord === 'true' && insert.statDelta === 1
     && insert.held === 0 && insert.handle === true && insert.song === 'cat', insert);
 
+  // JukeboxBlockEntity.getComparatorOutput = JukeboxSong.comparatorOutput (cat = 2).
+  // Comparator FACING points at its input (rear), so it powers the opposite side.
+  const comparator = await ev((s) => {
+    const m = window.__mc;
+    const x = s.x + 2, y = s.floorY, z = s.z;
+    m.level.setBlockState(x - 1, y, z, m.mc.stateOf('comparator', { facing: 'east', mode: 'compare', powered: 'false' }));
+    m.level.setBlockState(x - 2, y, z, m.mc.stateOf('redstone_wire'));
+    m.level.setBlockState(x - 3, y, z, m.mc.stateOf('redstone_lamp'));
+    m.updateNeighbors(x - 1, y, z);
+    return true;
+  }, stage);
+  await waitTicks(page, 3);
+  const signal = await ev((s) => {
+    const m = window.__mc;
+    const x = s.x + 2, y = s.floorY, z = s.z;
+    return {
+      output: m.redstone.comparatorOutputAt(x - 1, y, z),
+      powered: m.mc.getProp(m.level.getBlockState(x - 1, y, z), 'powered'),
+      wire: m.mc.getProp(m.level.getBlockState(x - 2, y, z), 'power'),
+      lamp: m.mc.getProp(m.level.getBlockState(x - 3, y, z), 'lit'),
+    };
+  }, stage);
+  check('a playing jukebox feeds its song comparator output (cat = 2)',
+    comparator === true && signal.output === 2 && signal.powered === 'true'
+    && signal.wire === '2' && signal.lamp === 'true', signal);
+
   const eject = await ev(async (s) => {
     const m = window.__mc;
     const x = s.x + 2, y = s.floorY, z = s.z;
@@ -92,6 +118,19 @@ try {
   check('popping the record restores has_record=false and drops the disc',
     eject.used === true && eject.hasRecord === 'false' && eject.handle === true
     && eject.song === null && dropped?.name === 'music_disc_cat', { eject, dropped });
+
+  // ComparatorBlock.update: refreshOutputState runs on the 2-tick scheduled tick.
+  await waitTicks(page, 3);
+  const signalOff = await ev((s) => {
+    const m = window.__mc;
+    const x = s.x + 2, y = s.floorY, z = s.z;
+    return {
+      output: m.redstone.comparatorOutputAt(x - 1, y, z),
+      wire: m.mc.getProp(m.level.getBlockState(x - 2, y, z), 'power'),
+    };
+  }, stage);
+  check('an empty jukebox drops the comparator back to 0',
+    signalOff.output === 0 && signalOff.wire === '0', signalOff);
 
   check('no page errors', errors.length === 0, errors.slice(0, 2));
 } finally {

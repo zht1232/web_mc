@@ -441,17 +441,21 @@ export class Game {
     // independent fetches + parses. Loaded one after another they cost ~900 ms of the cold boot;
     // in one Promise.all the wall time is the slowest single load (~300 ms).
     this.onStatus?.('Loading client assets', 0.15);
-    const [modelsRes, worldgen, worldData, advancements] = await Promise.all([
+    const [modelsRes, worldgen, worldData, advancements, , , jukeboxSongs] = await Promise.all([
       ModelSource.load('/mc'),
       loadWorldgenData('/mc'),
       loadWorldData('/mc'),
       AdvancementManager.load('/data'),
       VillagerTrades.load('/data'),
       WanderingTraderTrades.load('/data'),
+      // JukeboxBlockEntity.getComparatorOutput reads JukeboxSong.comparatorOutput.
+      fetch('/data/jukebox_songs.json').then((r) => (r.ok ? r.json() : { songs: {} }))
+        .catch(() => ({ songs: {} })),
       this.textures.load('/mc'),
       this.font.load('/mc'),
       this.guiTextures.preload([...HUD_SPRITES, ...MOB_EFFECT_TEXTURES]),
     ]);
+    this.jukeboxSongData = jukeboxSongs;
     this.advancements = advancements;
     this.advancements.onComplete = (adv) => {
       if (!adv.toast || !this.screens) return;
@@ -672,6 +676,13 @@ export class Game {
         }
         fraction /= slots;
         return Math.floor(fraction * 14) + (filled > 0 ? 1 : 0);
+      },
+      // JukeboxBlockEntity.getComparatorOutput: JukeboxSong.fromStack(...).comparatorOutput.
+      jukeboxSignal: (x, y, z) => {
+        const state = this.level.getBlockState(x, y, z);
+        if (this.mc.getProp(state, 'has_record') !== 'true') return 0;
+        const song = this.jukeboxSongs.get(`${x},${y},${z}`);
+        return song ? (this.jukeboxSongData.songs[song]?.comparatorOutput ?? 0) : 0;
       },
     });
     // Detector rails are powered by a minecart standing on them (Minecart.tickDetectorRail).
@@ -2964,6 +2975,10 @@ export class Game {
   private readonly blockContainers = new Map<string, AbstractContainerMenu>();
   /** JukeboxBlockEntity song per position (session only; the block state keeps has_record). */
   private readonly jukeboxSongs = new Map<string, string>();
+  /** data/jukebox_songs.json: JukeboxSong.comparatorOutput / length / sound event per song. */
+  private jukeboxSongData: {
+    songs: Record<string, { comparatorOutput: number; lengthSeconds: number; soundEvent: string }>;
+  } = { songs: {} };
   private recordHandle: { stop(): void } | null = null;
   private playingJukeboxKey: string | null = null;
   /** Client-side redstone simulation (wire power, diodes, buttons, plates, mechanisms). */

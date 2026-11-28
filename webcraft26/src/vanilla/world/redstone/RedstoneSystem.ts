@@ -99,6 +99,8 @@ export interface RedstoneHooks {
     sticky: boolean, slime: boolean): void;
   /** Container.getRedstoneSignalFromContainer for the cached block container at the position. */
   containerSignal(name: string, x: number, y: number, z: number): number;
+  /** JukeboxBlockEntity.getComparatorOutput for the record currently in the jukebox. */
+  jukeboxSignal(x: number, y: number, z: number): number;
 }
 
 interface BoxPos { x: number; y: number; z: number; }
@@ -608,6 +610,7 @@ export class RedstoneSystem {
       return this.hooks.containerSignal(name, x, y, z);
     }
     if (name === 'cake') return (7 - Number(this.prop(state, 'bites') ?? 0)) * 2;
+    if (name === 'jukebox') return this.hooks.jukeboxSignal(x, y, z);
     if (name === 'composter') return Number(this.prop(state, 'level') ?? 0);
     if (name === 'water_cauldron' || name === 'lava_cauldron'
       || name === 'powder_snow_cauldron') return Number(this.prop(state, 'level') ?? 0);

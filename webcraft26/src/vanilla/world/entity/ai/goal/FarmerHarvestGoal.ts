@@ -20,6 +20,8 @@ export class FarmerHarvestGoal extends Goal {
 
   canUse(): boolean {
     if (this.villager.profession !== 'farmer') return false;
+    // HarvestFarmland runs in the vanilla WORK activity only.
+    if (!this.villager.isWorkTime()) return false;
     if (this.cooldown > 0) { this.cooldown--; return false; }
     const crop = this.villager.findHarvestableCrop(8);
     if (!crop) return false;

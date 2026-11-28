@@ -32,7 +32,7 @@ try {
   await sleep(1500);
 
   const stage = await prepareStage(page, {
-    radius: 12, floor: 'stone',
+    radius: 12, floor: 'stone', time: 1000,
     camera: { yaw: 180, pitch: 25 },
   });
   const { x: bx, z: bz, floorY } = stage;

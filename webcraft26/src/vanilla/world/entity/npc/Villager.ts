@@ -28,6 +28,8 @@ import { LookAtPlayerGoal } from '../ai/goal/LookAtPlayerGoal.js';
 import { RandomLookAroundGoal } from '../ai/goal/RandomLookAroundGoal.js';
 import { FarmerHarvestGoal } from '../ai/goal/FarmerHarvestGoal.js';
 import { VillagerSleepGoal } from '../ai/goal/VillagerSleepGoal.js';
+import { VillagerWorkGoal } from '../ai/goal/VillagerWorkGoal.js';
+import { VillagerMeetGoal } from '../ai/goal/VillagerMeetGoal.js';
 import { ItemEntity } from '../item/ItemEntity.js';
 import { entityType } from '../EntityType.js';
 import type { Targetable } from '../Entity.js';
@@ -63,6 +65,19 @@ const CROP_MAX_AGE: Readonly<Record<string, number>> = {
 };
 /** HarvestFarmland WORK_DURATION-ish cadence for the bread/sharing pass. */
 const FARM_TICK_INTERVAL = 20;
+
+/**
+ * VillagerSchedules.VILLAGER_DEFAULT clock windows (day time):
+ *   wake 0-10, work 10-3000, meet 3000-6000, idle 6000-9000,
+ *   work 9000-12000, sleep 12000-24000.
+ */
+const WAKE_END = 10;
+const MEET_START = 3000;
+const IDLE_START = 6000;
+const WORK_START = 9000;
+const SLEEP_START = 12000;
+
+export type VillagerSchedulePhase = 'wake' | 'work' | 'meet' | 'idle' | 'sleep';
 
 /** data/minecraft/tags/point_of_interest_type/acquirable_job_site + profession mapping. */
 const WORKSTATION_PROFESSION: Readonly<Record<string, string>> = {
@@ -172,9 +187,11 @@ export class Villager extends Mob implements Merchant {
     this.goalSelector.addGoal(0, new FloatGoal(this));
     this.goalSelector.addGoal(1, new BreedGoal(this, 0.5));
     this.goalSelector.addGoal(2, new FarmerHarvestGoal(this, 0.5));
-    this.goalSelector.addGoal(3, new RandomStrollGoal(this, 0.6));
-    this.goalSelector.addGoal(4, new LookAtPlayerGoal(this, 8));
-    this.goalSelector.addGoal(5, new RandomLookAroundGoal(this));
+    this.goalSelector.addGoal(3, new VillagerWorkGoal(this));
+    this.goalSelector.addGoal(3, new VillagerMeetGoal(this));
+    this.goalSelector.addGoal(4, new RandomStrollGoal(this, 0.6));
+    this.goalSelector.addGoal(5, new LookAtPlayerGoal(this, 8));
+    this.goalSelector.addGoal(6, new RandomLookAroundGoal(this));
   }
 
   // ---- breeding (AgeableMob + Villager food gate) -------------------------
@@ -234,12 +251,24 @@ export class Villager extends Mob implements Merchant {
     this.world?.onAnimalBred?.(this);
   }
 
-  // ---- sleep schedule (Villager brain Sleep activity) ---------------------
+  // ---- sleep schedule (brain Sleep activity) -------------------------------
+
+  /** Vanilla VillagerSchedules.VILLAGER_DEFAULT activity for the current time. */
+  getSchedulePhase(): VillagerSchedulePhase {
+    const t = ((this.level.time % 24000) + 24000) % 24000;
+    if (t < WAKE_END) return 'wake';
+    if (t < MEET_START) return 'work';
+    if (t < IDLE_START) return 'meet';
+    if (t < WORK_START) return 'idle';
+    if (t < SLEEP_START) return 'work';
+    return 'sleep';
+  }
+
+  isWorkTime(): boolean { return this.getSchedulePhase() === 'work'; }
 
   /** Sleep activity window: lie down at sunset (12000) and wake at sunrise (0). */
   isNight(): boolean {
-    const t = ((this.level.time % 24000) + 24000) % 24000;
-    return t >= 12000;
+    return this.getSchedulePhase() === 'sleep';
   }
 
   /** True while the claimed bed still exists (head or foot half). */

@@ -29,6 +29,12 @@ const NATURAL_GROUND = new Set([
 /** A village's pieces reach at most this many chunks from the origin chunk. */
 const PIECE_REACH = 4;
 
+/** Job site blocks placed in village houses (data/minecraft/tags/point_of_interest_type/acquirable_job_site). */
+const HOUSE_STATIONS = [
+  'composter', 'lectern', 'barrel', 'blast_furnace', 'smoker', 'cartography_table',
+  'fletching_table', 'cauldron', 'grindstone', 'loom', 'smithing_table', 'stonecutter',
+] as const;
+
 interface ChunkBounds { minBX: number; minBZ: number; minY: number; maxY: number }
 
 interface VillageLayout {
@@ -38,10 +44,11 @@ interface VillageLayout {
 
 type Piece =
   | { kind: 'well'; x0: number; z0: number; x1: number; z1: number; y: number }
-  | { kind: 'house'; x0: number; z0: number; x1: number; z1: number; y: number; facing: number }
+  | { kind: 'house'; x0: number; z0: number; x1: number; z1: number; y: number; facing: number; station: string }
   | { kind: 'farm'; x0: number; z0: number; x1: number; z1: number; y: number }
   | { kind: 'pen'; x0: number; z0: number; x1: number; z1: number; y: number }
   | { kind: 'lamp'; x: number; z: number; y: number }
+  | { kind: 'bell'; x: number; z: number; y: number }
   | { kind: 'path'; x0: number; z0: number; x1: number; z1: number; y: number };
 
 export class VillageGenerator {
@@ -50,6 +57,9 @@ export class VillageGenerator {
     stair: Record<string, number>; slab: number; pane: number; doorLower: Record<string, number>;
     doorUpper: Record<string, number>; fence: number; farmland: number; wheat: number;
     water: number; path: number; torch: number; lantern: number; hay: number; air: number;
+    bell: number;
+    bedFoot: Record<string, number>; bedHead: Record<string, number>;
+    station: Record<string, number>;
   };
   private readonly seaLevel: number;
   private readonly minY: number;
@@ -61,11 +71,17 @@ export class VillageGenerator {
     const stair: Record<string, number> = {};
     const doorLower: Record<string, number> = {};
     const doorUpper: Record<string, number> = {};
+    const bedFoot: Record<string, number> = {};
+    const bedHead: Record<string, number> = {};
     for (const f of FACING) {
       stair[f] = s('oak_stairs', { facing: f, half: 'bottom' });
       doorLower[f] = s('oak_door', { facing: f, half: 'lower' });
       doorUpper[f] = s('oak_door', { facing: f, half: 'upper' });
+      bedFoot[f] = s('red_bed', { facing: f, part: 'foot' });
+      bedHead[f] = s('red_bed', { facing: f, part: 'head' });
     }
+    const station: Record<string, number> = {};
+    for (const name of HOUSE_STATIONS) station[name] = s(name);
     this.st = {
       planks: s('oak_planks'),
       cobble: s('cobblestone'),
@@ -85,6 +101,10 @@ export class VillageGenerator {
       lantern: s('lantern'),
       hay: s('hay_block'),
       air: s('air'),
+      bell: s('bell'),
+      bedFoot,
+      bedHead,
+      station,
     };
     this.seaLevel = seaLevel;
     this.minY = minY;
@@ -166,7 +186,12 @@ export class VillageGenerator {
 
     for (let i = 0; i < houseCount; i++) {
       const p = tryPlot(6, 5);
-      if (p) pieces.push({ kind: 'house', x0: p.x - 2, z0: p.z - 2, x1: p.x + 3, z1: p.z + 2, y: 0, facing: p.dir });
+      if (p) {
+        pieces.push({
+          kind: 'house', x0: p.x - 2, z0: p.z - 2, x1: p.x + 3, z1: p.z + 2, y: 0, facing: p.dir,
+          station: HOUSE_STATIONS[random.nextInt(HOUSE_STATIONS.length)],
+        });
+      }
     }
     for (let i = 0; i < farmCount; i++) {
       const p = tryPlot(7, 9);
@@ -180,7 +205,7 @@ export class VillageGenerator {
     // Anchor every piece to its own ground height, reject pieces that fall into water.
     const settled: Piece[] = [];
     for (const piece of pieces) {
-      if (piece.kind === 'lamp') continue;
+      if (piece.kind === 'lamp' || piece.kind === 'bell') continue;
       const px = Math.floor((piece.x0 + piece.x1) / 2);
       const pz = Math.floor((piece.z0 + piece.z1) / 2);
       const y = heightOf(px, pz);
@@ -200,9 +225,16 @@ export class VillageGenerator {
       settled.push({ kind: 'lamp', x: lx, z: lz, y: 0 });
     }
 
+    // Meeting point: a bell on a cobble base beside the well (the village POI
+    // the Meet schedule gathers around).
+    const bellX = centerX + 3;
+    const bellZ = centerZ;
+    const bellY = heightOf(bellX, bellZ);
+    if (bellY > this.seaLevel) settled.push({ kind: 'bell', x: bellX, z: bellZ, y: bellY });
+
     // Paths from the well edge toward each piece, 1 wide, following the ground.
     for (const piece of settled) {
-      if (piece.kind === 'well' || piece.kind === 'path' || piece.kind === 'lamp') continue;
+      if (piece.kind === 'well' || piece.kind === 'path' || piece.kind === 'lamp' || piece.kind === 'bell') continue;
       const px = Math.floor((piece.x0 + piece.x1) / 2);
       const pz = Math.floor((piece.z0 + piece.z1) / 2);
       const steps = Math.max(Math.abs(px - centerX), Math.abs(pz - centerZ));
@@ -277,8 +309,16 @@ export class VillageGenerator {
       case 'farm': return this.placeFarm(piece, bounds, access);
       case 'pen': return this.placePen(piece, bounds, access);
       case 'lamp': return this.placeLamp(piece, bounds, access, heightAt);
+      case 'bell': return this.placeBell(piece, bounds, access);
       case 'path': return this.placePath(piece, bounds, access);
     }
+  }
+
+  /** Meeting-point bell: a cobble base with a floor-attached bell on top. */
+  private placeBell(p: { x: number; z: number; y: number }, bounds: ChunkBounds, access: ChunkBlockAccess): boolean {
+    this.set(bounds, access, p.x, p.y, p.z, this.st.cobble);
+    this.set(bounds, access, p.x, p.y + 1, p.z, this.st.bell);
+    return true;
   }
 
   private placeWell(p: { x0: number; z0: number; x1: number; z1: number; y: number }, bounds: ChunkBounds, access: ChunkBlockAccess): boolean {
@@ -307,7 +347,7 @@ export class VillageGenerator {
     return true;
   }
 
-  private placeHouse(p: { x0: number; z0: number; x1: number; z1: number; y: number; facing: number }, bounds: ChunkBounds, access: ChunkBlockAccess, heightAt?: (x: number, z: number) => number): boolean {
+  private placeHouse(p: { x0: number; z0: number; x1: number; z1: number; y: number; facing: number; station: string }, bounds: ChunkBounds, access: ChunkBlockAccess, heightAt?: (x: number, z: number) => number): boolean {
     void heightAt;
     const { st } = this;
     const w = p.x1 - p.x0 + 1;
@@ -367,6 +407,38 @@ export class VillageGenerator {
     }
     // torch inside
     this.set(bounds, access, Math.floor((p.x0 + p.x1) / 2), p.y + 3, Math.floor((p.z0 + p.z1) / 2), st.torch);
+    // Village POIs: a bed against the wall opposite the door and one job site
+    // block, so generated villages support sleeping and professions.
+    const xMid = Math.floor((p.x0 + p.x1) / 2);
+    const zMid = Math.floor((p.z0 + p.z1) / 2);
+    let bedFacing: string;
+    let footX: number, footZ: number, headX: number, headZ: number;
+    let stationX: number, stationZ: number;
+    switch (p.facing) {
+      case 0: // door north
+        bedFacing = 'south';
+        footX = xMid; footZ = p.z1 - 2; headX = xMid; headZ = p.z1 - 1;
+        stationX = p.x0 + 1; stationZ = zMid;
+        break;
+      case 1: // door south
+        bedFacing = 'north';
+        footX = xMid; footZ = p.z0 + 2; headX = xMid; headZ = p.z0 + 1;
+        stationX = p.x0 + 1; stationZ = zMid;
+        break;
+      case 2: // door west
+        bedFacing = 'east';
+        footX = p.x1 - 2; footZ = zMid; headX = p.x1 - 1; headZ = zMid;
+        stationX = xMid; stationZ = p.z0 + 1;
+        break;
+      default: // door east
+        bedFacing = 'west';
+        footX = p.x0 + 2; footZ = zMid; headX = p.x0 + 1; headZ = zMid;
+        stationX = xMid; stationZ = p.z0 + 1;
+        break;
+    }
+    this.set(bounds, access, footX, p.y + 1, footZ, st.bedFoot[bedFacing]);
+    this.set(bounds, access, headX, p.y + 1, headZ, st.bedHead[bedFacing]);
+    this.set(bounds, access, stationX, p.y + 1, stationZ, st.station[p.station]);
     return true;
   }
 
@@ -434,9 +506,10 @@ export class VillageGenerator {
 }
 
 function intersects(piece: Piece, b: ChunkBounds): boolean {
-  const x0 = piece.kind === 'lamp' ? piece.x : piece.x0;
-  const z0 = piece.kind === 'lamp' ? piece.z : piece.z0;
-  const x1 = piece.kind === 'lamp' ? piece.x : piece.x1;
-  const z1 = piece.kind === 'lamp' ? piece.z : piece.z1;
+  const point = piece.kind === 'lamp' || piece.kind === 'bell';
+  const x0 = point ? piece.x : piece.x0;
+  const z0 = point ? piece.z : piece.z0;
+  const x1 = point ? piece.x : piece.x1;
+  const z1 = point ? piece.z : piece.z1;
   return x1 >= b.minBX && x0 < b.minBX + 16 && z1 >= b.minBZ && z0 < b.minBZ + 16;
 }

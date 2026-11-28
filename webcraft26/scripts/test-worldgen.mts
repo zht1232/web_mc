@@ -20,6 +20,10 @@ import {
   NoiseChunkGenerator,
   type WorldgenData,
 } from '../src/vanilla/world/level/levelgen/NoiseChunkGenerator.ts';
+import {
+  VILLAGE_PLACEMENT,
+  structureRandom,
+} from '../src/vanilla/world/level/levelgen/structure/RandomSpreadPlacement.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -357,6 +361,59 @@ check('8. the top block of a plains column is grass_block', () => {
     console.log(`PASS  9. ms/chunk within the pathological bound (${normalised.toFixed(2)} normalised <= ${HARD_BUDGET})`);
   }
 }
+
+// ------------------------------------------------------------------ 10. village POIs
+
+check('10. village houses contain beds/job sites and the well plaza has a bell', () => {
+  const STATIONS = new Set([
+    'composter', 'lectern', 'barrel', 'blast_furnace', 'smoker', 'cartography_table',
+    'fletching_table', 'cauldron', 'grindstone', 'loom', 'smithing_table', 'stonecutter',
+  ]);
+  const counts = { bell: 0, beds: 0, stations: 0 };
+  const countChunk = (chunk: LevelChunk): void => {
+    for (let x = 0; x < 16; x++) {
+      for (let z = 0; z < 16; z++) {
+        for (let y = 50; y <= 140; y++) {
+          const state = chunk.getBlockState(x, y, z);
+          if (state === 0) continue;
+          const name = nameOf(state);
+          if (name === 'bell') counts.bell++;
+          else if (name.endsWith('_bed')) counts.beds++;
+          else if (STATIONS.has(name)) counts.stations++;
+        }
+      }
+    }
+  };
+  const random = structureRandom();
+  const limit = VILLAGE_PLACEMENT.spacing - VILLAGE_PLACEMENT.separation;
+  for (let gx = -4; gx <= 4; gx++) {
+    for (let gz = -4; gz <= 4; gz++) {
+      random.setLargeFeatureWithSalt(SEED, gx, gz, VILLAGE_PLACEMENT.salt);
+      const cx = gx * VILLAGE_PLACEMENT.spacing + random.nextInt(limit);
+      const cz = gz * VILLAGE_PLACEMENT.spacing + random.nextInt(limit);
+      const centerX = cx * 16 + 8, centerZ = cz * 16 + 8;
+      if (!gen.biomeName(gen.getBiome(centerX, 80, centerZ)).includes('plains')) continue;
+      const origin = new LevelChunk(cx, cz, MIN_Y, HEIGHT, mc);
+      gen.generateChunk(origin);
+      counts.bell = 0; counts.beds = 0; counts.stations = 0;
+      countChunk(origin);
+      if (counts.bell === 0) continue; // village rejected at this candidate
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oz = -1; oz <= 1; oz++) {
+          if (ox === 0 && oz === 0) continue;
+          const chunk = new LevelChunk(cx + ox, cz + oz, MIN_Y, HEIGHT, mc);
+          gen.generateChunk(chunk);
+          countChunk(chunk);
+        }
+      }
+      console.log(`      village chunk ${cx},${cz}: bells=${counts.bell} beds=${counts.beds} stations=${counts.stations}`);
+      if (counts.beds < 2) return `only ${counts.beds} bed blocks in the village`;
+      if (counts.stations < 1) return 'no job site block in the village';
+      return true;
+    }
+  }
+  return 'no plains village found within 4 spacing cells';
+});
 
 // ------------------------------------------------------------------ result
 

@@ -210,6 +210,8 @@ export class LevelRenderer {
   renderDistance = 8;
   /** Probe hook: freeze the water wave clock so two captures isolate shader changes. */
   waveTimeOverride: number | null = null;
+  /** SKY_EFFECT_REFLECTION_TRANSLUCENT probe/quality hook (high/ultra only). */
+  skyReflectionEffects = true;
   debugMode = 0;
   private readonly regionStates = new Uint16Array(5832);
   private readonly regionSky = new Uint8Array(5832);
@@ -1198,6 +1200,10 @@ export class LevelRenderer {
     gl.activeTexture(gl.TEXTURE7);
     gl.bindTexture(gl.TEXTURE_2D, this.textures.noise ?? this.post.blackTexture);
     this.terrain.set1i('uNoise', 7);
+    gl.activeTexture(gl.TEXTURE8);
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.cloudNoise ?? this.post.blackTexture);
+    this.terrain.set1i('uCloudNoise', 8);
+    this.terrain.set1i('uSkyReflectEffects', 0);
     gl.activeTexture(gl.TEXTURE0);
 
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
@@ -1275,6 +1281,10 @@ export class LevelRenderer {
     const waterRefraction = this.post.enabled && this.post.quality !== 'low'
       && this.post.quality !== 'medium' && this.textures.noise !== null;
     this.terrain.set1i('uRefraction', waterRefraction ? 1 : 0);
+    // SKY_EFFECT_REFLECTION_TRANSLUCENT is the pack's DETAIL_QUALITY >= 3 feature.
+    const skyReflectEffects = this.skyReflectionEffects && this.post.enabled
+      && (this.post.quality === 'high' || this.post.quality === 'ultra');
+    this.terrain.set1i('uSkyReflectEffects', skyReflectEffects ? 1 : 0);
     this.terrain.set1f('uNear', CAMERA_NEAR);
     this.terrain.set1f('uFar', CAMERA_FAR);
     this.terrain.set1f('uProjScale', this.proj[5]);
@@ -1282,6 +1292,9 @@ export class LevelRenderer {
     gl.activeTexture(gl.TEXTURE7);
     gl.bindTexture(gl.TEXTURE_2D, this.textures.noise ?? this.post.blackTexture);
     this.terrain.set1i('uNoise', 7);
+    gl.activeTexture(gl.TEXTURE8);
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.cloudNoise ?? this.post.blackTexture);
+    this.terrain.set1i('uCloudNoise', 8);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.textures.block.texture);
     this.terrain.set1i('uAtlas', 0);

@@ -171,6 +171,11 @@ export class ItemIconAtlas {
     gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
     this.program.set1i('uNoise', 7);
     this.program.set1i('uRefraction', 0);
+    // Sky-reflection cloud sampler (TERRAIN_FRAG, high/ultra only); icons never reflect.
+    gl.activeTexture(gl.TEXTURE8);
+    gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
+    this.program.set1i('uCloudNoise', 8);
+    this.program.set1i('uSkyReflectEffects', 0);
     this.program.set1i('uWaterReflect', 0);
     this.program.set2i('uWaterLayers', -1, -1);
     gl.activeTexture(gl.TEXTURE0);

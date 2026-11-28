@@ -127,11 +127,90 @@ uniform float uFar;
 uniform float uProjScale;          // gbufferProjection[1][1] = 1 / tan(fovY / 2)
 uniform float uRefractionIntensity;
 
+// SKY_EFFECT_REFLECTION_TRANSLUCENT (pack: only defined at DETAIL_QUALITY >= 3 = our
+// high/ultra): stars and the cloud deck are part of the reflected sky, not just the gradient.
+// The coverage field is the same generated 256^2 texture the volumetric cloud pass samples.
+uniform int uSkyReflectEffects;
+uniform sampler2D uCloudNoise;
+uniform vec3 uCloudAmbientColor;
+uniform vec3 uCloudLightColor;
+
 // Complementary Reimagined r5.9.3 sky model, shared with the sky pass (see ComplementSky.ts).
 ${COMPLEMENT_SKY_GLSL}
 ${BAYER_GLSL}
 
 out vec4 fragColor;
+
+// stars.glsl GetStars with NIGHT_STAR_AMOUNT 2. The reflection direction is world space, so
+// no view-matrix conversion is needed (the pack goes through gbufferModelViewInverse).
+float starNoise(vec2 pos) {
+  return fract(sin(dot(pos, vec2(12.9898, 4.1414))) * 43758.54953);
+}
+
+vec3 getStars(vec2 starCoord, float VdotU, float VdotS) {
+  if (VdotU < 0.0) return vec3(0.0);
+  starCoord *= 0.2;
+  float starFactor = 1024.0;
+  starCoord = floor(starCoord * starFactor) / starFactor;
+  float star = 1.0;
+  star *= starNoise(starCoord.xy);
+  star *= starNoise(starCoord.xy + 0.1);
+  star *= starNoise(starCoord.xy + 0.23);
+  star -= 0.7;
+  star = max(star, 0.0);
+  star *= star;
+  star *= min(VdotU * 3.0, 1.0) * max(0.0, 1.0 - pow(abs(VdotS) * 1.002, 100.0));
+  float invNoonFactor = 1.0 - uNoonFactor;
+  float invNoonFactor2 = invNoonFactor * invNoonFactor;
+  star *= uInvRainFactor * pow(invNoonFactor2, 4.0) * (1.0 - 0.5 * uSunVisibility);
+  return 40.0 * star * vec3(0.38, 0.4, 0.5);
+}
+
+// cloudCoord.glsl GetRoundedCloudCoord (same grid as the volumetric cloud pass).
+vec2 reflCloudCoord(vec2 pos, float roundness) {
+  vec2 coord = pos.yx + 0.5;
+  vec2 signCoord = sign(coord);
+  coord = abs(coord) + 1.0;
+  vec2 i = floor(coord);
+  vec2 f = coord - i;
+  f = smoothstep(vec2(0.5 - roundness), vec2(0.5 + roundness), f);
+  coord = i + f;
+  return (coord - 0.5) * signCoord / 256.0;
+}
+
+/**
+ * DoSkyEffectReflection (reflectionBackground.glsl): stars first, then the cloud deck
+ * composited over them. The deck is a single coverage sample at the 192-block plane shaded
+ * with the CPU cloud colours - the reflection ray does not run the full slab march.
+ */
+vec3 skyReflectionEffects(vec3 dir, float dither) {
+  vec3 effect = vec3(0.0);
+  float VdotU = dir.y;
+  float VdotS = dot(dir, uSunWorldDir);
+  if (VdotU > 0.0) {
+    vec2 starCoord = dir.xz / (dir.y + length(dir.xz) * 0.5);
+    starCoord.x += 0.006 * uWaveTime;
+    effect += getStars(starCoord, VdotU, VdotS);
+  }
+
+  const float CLOUD_ALT = 192.33;
+  if (abs(dir.y) > 1e-4) {
+    float t = (CLOUD_ALT - uCameraPos.y) / dir.y;
+    if (t > 0.0 && t < 4000.0) {
+      vec3 p = uCameraPos + dir * t;
+      p.z -= uWaveTime;
+      p.x += CLOUD_ALT * 64.0;
+      p.xz *= 0.07;
+      vec3 cloudColor = uCloudAmbientColor * 0.62 + uCloudLightColor * 0.54;
+      if (texture(uCloudNoise, reflCloudCoord(p.xz, 0.125)).b > 0.25) {
+        float ratio = (4000.0 - t) / 4000.0;
+        float alpha = sqrt(clamp(ratio, 0.0, 0.75) * 1.33333);
+        effect = mix(effect, cloudColor, alpha);
+      }
+    }
+  }
+  return effect;
+}
 
 /**
  * Manual depth compare with 5x5 PCF. The old 3x3 at 1.5 texel spacing left visible stair-steps
@@ -367,7 +446,10 @@ void main() {
     skyLightFactor *= skyLightFactor;
     // shadowMult on water is 1.0, so the pack's max() term is a constant 0.333333.
     skyLightFactor = max(skyLightFactor, 0.333333);
-    vec3 skyRefl = complementSky(reflDir, dither, true, true) * skyLightFactor;
+    vec3 skyBase = complementSky(reflDir, dither, true, true);
+    if (uSkyReflectEffects == 1) skyBase += skyReflectionEffects(reflDir, dither);
+    vec3 skyRefl = skyBase * skyLightFactor;
+    if (uDebug == 20) { fragColor = vec4(skyBase.r, skyRefl.r, 0.0, 1.0); return; }
 
     float highlightMult = min(skyPow2(skyPow2(dot(tex.rgb, tex.rgb) * 0.4)), 0.5);
     highlightMult *= (16.0 - 15.0 * fresnel2) * (uSunVisibility > 0.5 ? 0.85 : 0.425);

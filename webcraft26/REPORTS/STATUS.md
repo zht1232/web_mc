@@ -89,7 +89,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 26.2 光照曲线 / 昼夜 timeline / 雾 | ✅ | `EnvironmentLighting.ts` 逐 keyframe 移植，参考图对照过 |
 | 太阳阴影（PCF）| ✅ | 5x5 PCF，近/远级联；阴影贴图分辨率 1024–4096；阴影改为衰减直接光，不再叠加第二太阳 |
 | HDR/Bloom/SSAO/TAA/FXAA | ✅ | high/ultra 档；F6 总开关 |
-| 水面 | ✅ | 2026-11-28：按 Complementary Reimagined r5.9.3 源码移植——30 步 SSR（6 次细化、边界/亮度衰减）、GetSky 天空反射（三段渐变+日落带+太阳眩光）、GGX 高光、深度差水雾与 Fresnel⁴ alpha；默认档平面镜面水。未含折射/焦散与云/星空反射 |
+| 水面 | ✅ | 2026-11-28：按 Complementary Reimagined r5.9.3 源码移植——30 步 SSR（6 次细化、边界/亮度衰减）、GetSky 天空反射（三段渐变+日落带+太阳眩光）、GGX 高光、深度差水雾与 Fresnel⁴ alpha；high/ultra 追加星空与云层反射（SKY_EFFECT_REFLECTION_TRANSLUCENT）；默认档平面镜面水。未含折射/焦散 |
 | 体积光（god rays） | ✅ | 2026-11-28：按 `lib/atmospherics/volumetricLight/volumetricLight.glsl` 移植——半分辨率 10 near + 1 far 采样、fogCurve 0.9/distribution 2.0、双级联阴影遮蔽、COMPOSITE1 的 lightColor 与 Step1/Step5 系数；medium/high/ultra 启用，`test-volumetric-light` 6/6 |
 | 体积云 | ✅ | 2026-11-28：按 `lib/atmospherics/clouds/reimaginedClouds.glsl`（CLOUD_STYLE 1 / CLOUD_QUALITY 2）移植——192±4.2 云层 slab 半分辨率射线行进（最多 48 步）、GetRoundedCloudCoord 等值面、双采样朝阳着色、地形深度遮挡与级联阴影；覆盖率噪声场由 256² 可平铺 fBm 按 pack 纹理的 24% 二值分布生成（`TextureManager.cloudNoise`）。shader 云启用时跳过原版 26.2 体素云层，`test-volumetric-clouds` 5/5 |
 | 第一人称手/手持物 | ⚠️ | display transform 已按 JSON 移植；物品略偏大/贴边，待逐项对参考图 |
@@ -218,8 +218,13 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
       日落与 GL error 0），截图 `shots/diag/clouds-on/off-vanilla.png`、
       `clouds-below-on/off-vanilla.png`、`clouds-sunset.png`
 - [ ] 景深（DOF，`program/deferred*/final` 中的手部/近景模糊）
-- [ ] 云/星空进入水面反射：zip 的 `SKY_EFFECT_REFLECTION_TRANSLUCENT` 仅在
-      DETAIL_QUALITY>=3 定义，当前按默认档 2 关闭；高画质档需要补
+- [x] 云/星空进入水面反射：按 `SKY_EFFECT_REFLECTION_TRANSLUCENT`（DETAIL_QUALITY>=3，
+      仅 high/ultra）在 TERRAIN_FRAG 的水面 GetSky 上叠加 `stars.glsl` 星空
+      （NIGHT_STAR_AMOUNT 2）与 192 格云层覆盖采样（cloudAmbient/Light 着色，与体积云同一
+      覆盖率纹理，绑定 unit 8；ItemIconAtlas 同步绑定占位）。水波时钟驱动风与星位。
+      验证：`test-water-sky-reflect` **6/6**（反射缓冲 24103 像素变化、水面 36.1% 像素
+      改变 meanDiff 22.1、夜晚星空 13321 像素、GL error 0），截图
+      `shots/diag/water-sky-reflect-on/off.png`、`water-sky-reflect-night-on.png`
 - [ ] 阴影/水面远景灰面（见 P0 #3）
 - [ ] 与 BetterMC（Iris+Complementary 综合包）并排观感对照：草地/树叶色彩、云层体积感、日/月/星空
 
@@ -778,8 +783,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   合成，噪声/深度差公式逐行照抄；`test-water-refraction` **4/4**
   （high 档噪声开关差 32573 px、medium 档 0 px）。`LevelRenderer.waveTimeOverride`
   是探针用的水波时钟冻结钩子（默认 null = 实时）。
-- 仍未完成：水下焦散、天空的云与星空进入反射（pack 默认
-  `DETAIL_QUALITY>=3` 才开 `SKY_EFFECT_REFLECTION_TRANSLUCENT`）、景深、
+- 仍未完成：水下焦散、景深（pack 默认 WORLD_BLUR 0，实际不需要）、
   完整 gbuffer 管线。
 
 ### 创造背包 / 玩家预览 / 创造飞行 / 粒子染色（2026-11-28）

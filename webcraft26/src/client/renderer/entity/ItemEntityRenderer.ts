@@ -41,10 +41,23 @@ export class ItemEntityRenderer extends EntityRenderer<Entity> {
   private atlas: ItemIconSource | null = null;
   /** cell rect key -> baked sprite model (atlas rebuilds produce new keys). */
   private readonly sprites = new Map<string, BakedModel>();
+  /** Block items draw their real 3D model in the world item pass (WorldItemRenderer). */
+  private blockItemPredicate: ((itemId: number) => boolean) | null = null;
 
   setIconAtlas(atlas: ItemIconSource): void {
     this.atlas = atlas;
     this.sprites.clear();
+  }
+
+  setBlockItemPredicate(fn: (itemId: number) => boolean): void {
+    this.blockItemPredicate = fn;
+  }
+
+  /** True for drops whose stack is a baked block model (ItemEntityRenderer GROUND 3D path). */
+  private isBlockModelEntity(e: Entity): boolean {
+    if (e.getTypeName() !== 'item' || !this.blockItemPredicate) return false;
+    const itemId = this.itemIdOf(e);
+    return itemId >= 0 && this.blockItemPredicate(itemId);
   }
 
   /**
@@ -82,6 +95,9 @@ export class ItemEntityRenderer extends EntityRenderer<Entity> {
   /** Source: ItemEntityRenderer / ExperienceOrbRenderer shadowRadius. */
   getShadowRadius(): number { return 0.15; }
 
+  /** Source: ItemEntityRenderer / ExperienceOrbRenderer constructor shadowStrength. */
+  getShadowStrength(): number { return 0.75; }
+
   getTint(e: Entity): readonly [number, number, number] {
     return e.getTypeName() === 'experience_orb' ? XP_GREEN : WHITE;
   }
@@ -106,6 +122,10 @@ export class ItemEntityRenderer extends EntityRenderer<Entity> {
       super.append(e, batch, texId, partialTick);
       return;
     }
+    // Block stacks are drawn by WorldItemRenderer with the real 3D block model
+    // (ItemEntityRenderer.submit -> ItemStackRenderState GROUND), so the icon
+    // sprite must not draw a second, flat copy on top of it.
+    if (this.isBlockModelEntity(e)) return;
     const stack = (e as ItemEntity).getItem();
     const amount = renderedItemAmount(stack?.getCount() ?? 1);
     const model = this.getModel(e);

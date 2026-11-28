@@ -99,8 +99,9 @@ function rgbOfArgb(argb: number): Rgb {
 /**
  * Static colour of one item tint source (ItemTintSource): `constant` is the stored ARGB value; `grass` is
  * GrassColor.get(0.5, 1.0), the same 0x91BD59 build-itemmodels bakes into the flat layers.
+ * Shared with the world-space dropped-block pass.
  */
-function tintOfSource(src: { type: string; value?: number } | undefined): Rgb | undefined {
+export function tintOfSource(src: { type: string; value?: number } | undefined): Rgb | undefined {
   if (!src) return undefined;
   if (src.type === 'constant' && typeof src.value === 'number') return rgbOfArgb(src.value | 0);
   if (src.type === 'grass') return rgbOfArgb(0x91bd59);

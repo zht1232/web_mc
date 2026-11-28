@@ -101,6 +101,95 @@ void main() {
 }`;
 
 // ---------------------------------------------------------------------------
+// Dropped block items (ItemEntityRenderer GROUND 3D models)
+//
+// ItemEntityRenderer.submit -> ItemStackRenderState.submit (GROUND) draws the
+// real baked block model with the model's ground display transform. Vertex
+// layout matches the hand pass (pos3 uv2 layer1 normal3) because the same
+// buildBlockMesh geometry is reused; lighting is Lighting.Entry.LEVEL
+// (shaders/include/light.glsl), the lightmap sample and fog match the entity
+// pass above.
+// ---------------------------------------------------------------------------
+
+export const WORLD_ITEM_VERT = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec2 aUV;
+layout(location = 2) in float aLayer;
+layout(location = 3) in vec3 aNormal;
+
+uniform mat4 uViewProj;
+uniform mat4 uModel;
+uniform mat3 uNormalMat;
+uniform vec3 uLight0;
+uniform vec3 uLight1;
+
+out vec2 vUV;
+flat out float vLayer;
+out float vShade;
+out vec3 vWorldPos;
+
+void main() {
+  vec4 world = uModel * vec4(aPos, 1.0);
+  gl_Position = uViewProj * world;
+  vUV = aUV;
+  vLayer = aLayer;
+  vWorldPos = world.xyz;
+  vec3 n = normalize(uNormalMat * aNormal);
+  vec2 l = max(vec2(0.0), vec2(dot(uLight0, n), dot(uLight1, n)));
+  vShade = min(1.0, (l.x + l.y) * 0.6 + 0.4);
+}`;
+
+export const WORLD_ITEM_FRAG = `#version 300 es
+precision highp float;
+precision highp sampler2DArray;
+
+in vec2 vUV;
+flat in float vLayer;
+in float vShade;
+in vec3 vWorldPos;
+
+uniform sampler2DArray uAtlas;
+uniform sampler2D uLightmap;
+uniform vec2 uLightLevel;   // (sky, block) 0..15, sampled as (block, sky)
+uniform vec3 uColor;
+uniform float uAlphaTest;
+uniform vec3 uFogColor;
+uniform float uFogEnvStart;
+uniform float uFogEnvEnd;
+uniform float uFogRenderStart;
+uniform float uFogRenderEnd;
+uniform vec3 uCameraPos;
+
+out vec4 fragColor;
+
+float linear_fog_value(float dist, float start, float end) {
+  if (dist <= start) return 0.0;
+  if (dist >= end) return 1.0;
+  return (dist - start) / (end - start);
+}
+
+void main() {
+  vec4 tex = texture(uAtlas, vec3(vUV, vLayer));
+  if (tex.a < uAlphaTest) discard;
+
+  vec3 color = tex.rgb * vShade * uColor;
+  color *= texture(uLightmap, (uLightLevel.yx + 0.5) / 16.0).rgb;
+
+  vec3 d = vWorldPos - uCameraPos;
+  float sphericalDistance = length(d);
+  float cylindricalDistance = max(length(d.xz), abs(d.y));
+  float fogValue = max(
+    linear_fog_value(sphericalDistance, uFogEnvStart, uFogEnvEnd),
+    linear_fog_value(cylindricalDistance, uFogRenderStart, uFogRenderEnd)
+  );
+  color = mix(color, uFogColor, fogValue);
+
+  fragColor = vec4(color, tex.a);
+}`;
+
+// ---------------------------------------------------------------------------
 // Entity shadows (net.minecraft.client.renderer.feature.ShadowFeatureRenderer,
 // textures/misc/shadow.png). One flat textured quad per block under the entity.
 // ---------------------------------------------------------------------------

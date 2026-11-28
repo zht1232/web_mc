@@ -37,6 +37,7 @@ import { ALL_TEXTURE_KEYS, WHITE_TEXTURE, ITEM_ICON_TEXTURE, MODEL_REGISTRY } fr
 import { computeFog, argbFromRgb } from '../environment/FogState.js';
 import type { SkyState } from '../../EnvironmentLighting.js';
 import type { Entity } from '../../../vanilla/world/entity/Entity.js';
+import type { WorldItemRenderer, WorldItemFog } from './WorldItemRenderer.js';
 
 export interface EntityCamera { x: number; y: number; z: number; }
 
@@ -80,6 +81,12 @@ export class EntityRenderDispatcher {
   private fogRenderStart = 128;
   private fogRenderEnd = 192;
   private fogKey = '';
+
+  /** Dropped block items drawn with their 3D block models (set by Game after init). */
+  private worldItems: WorldItemRenderer | null = null;
+  private readonly worldItemFog: WorldItemFog = {
+    color: [1, 1, 1], envStart: 0, envEnd: 1024, renderStart: 128, renderEnd: 192,
+  };
 
   /** Entities farther than this (blocks) are culled. */
   renderDistance = 96;
@@ -182,6 +189,15 @@ export class EntityRenderDispatcher {
     this.itemEntityRenderer.setIconAtlas(atlas);
   }
 
+  /**
+   * Wires the world-space block item pass. Block stacks stop using the icon
+   * sprite and draw their baked 3D model with the GROUND display transform.
+   */
+  setWorldItems(items: WorldItemRenderer): void {
+    this.worldItems = items;
+    this.itemEntityRenderer.setBlockItemPredicate((itemId) => items.isBlockItem(itemId));
+  }
+
   /** Uploads/refreshes the atlas texture only when ItemIconAtlas produced a new canvas. */
   private syncItemIconTexture(): void {
     const atlas = this.itemIconAtlas;
@@ -235,6 +251,11 @@ export class EntityRenderDispatcher {
     this.fogEnvEnd = fog.environmentalEnd;
     this.fogRenderStart = fog.renderDistanceStart;
     this.fogRenderEnd = fog.renderDistanceEnd;
+    this.worldItemFog.color = this.fogColor;
+    this.worldItemFog.envStart = this.fogEnvStart;
+    this.worldItemFog.envEnd = this.fogEnvEnd;
+    this.worldItemFog.renderStart = this.fogRenderStart;
+    this.worldItemFog.renderEnd = this.fogRenderEnd;
   }
 
   private async loadTextures(base: string): Promise<void> {
@@ -437,50 +458,58 @@ export class EntityRenderDispatcher {
     // total float count
     let total = 0;
     for (let t = 0; t < this.n; t++) total += this.batch.lengths[t];
-    if (total === 0) return;
-    this.ensureCombined(total);
 
-    // concatenate buckets into one buffer (manual loop, no subarray allocation)
-    this.starts.fill(0);
-    this.counts.fill(0);
-    let off = 0;
-    for (let t = 0; t < this.n; t++) {
-      const len = this.batch.lengths[t];
-      if (len === 0) continue;
-      const src = this.batch.buckets[t];
-      for (let k = 0; k < len; k++) this.combined[off + k] = src[k];
-      this.starts[t] = off / FLOATS_PER_VERTEX;
-      this.counts[t] = len / FLOATS_PER_VERTEX;
-      off += len;
+    // A frame whose only entities are block-item drops has an empty batch (their
+    // sprites are skipped), so the 3D item pass and the shadows still have to run.
+    if (total > 0) {
+      this.ensureCombined(total);
+
+      // concatenate buckets into one buffer (manual loop, no subarray allocation)
+      this.starts.fill(0);
+      this.counts.fill(0);
+      let off = 0;
+      for (let t = 0; t < this.n; t++) {
+        const len = this.batch.lengths[t];
+        if (len === 0) continue;
+        const src = this.batch.buckets[t];
+        for (let k = 0; k < len; k++) this.combined[off + k] = src[k];
+        this.starts[t] = off / FLOATS_PER_VERTEX;
+        this.counts[t] = len / FLOATS_PER_VERTEX;
+        off += len;
+      }
+
+      this.program.use();
+      this.program.setMat4('uViewProj', viewProj);
+      this.program.set1i('uTex', 0);
+      this.program.set1i('uLightmap', 1);
+      this.program.set3f('uFogColor', this.fogColor[0], this.fogColor[1], this.fogColor[2]);
+      this.program.set1f('uFogEnvStart', this.fogEnvStart);
+      this.program.set1f('uFogEnvEnd', this.fogEnvEnd);
+      this.program.set1f('uFogRenderStart', this.fogRenderStart);
+      this.program.set1f('uFogRenderEnd', this.fogRenderEnd);
+      this.program.set3f('uCameraPos', camera.x, camera.y, camera.z);
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.lightmap);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindVertexArray(this.vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, total * 4, gl.DYNAMIC_DRAW);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.combined, 0, total);
+
+      gl.disable(gl.CULL_FACE); // mixed winding after mirror/models
+      gl.enable(gl.DEPTH_TEST);
+      for (let t = 0; t < this.n; t++) {
+        if (this.counts[t] === 0) continue;
+        gl.bindTexture(gl.TEXTURE_2D, this.textures[t]!);
+        gl.drawArrays(gl.TRIANGLES, this.starts[t], this.counts[t]);
+      }
+      gl.bindVertexArray(null);
     }
 
-    this.program.use();
-    this.program.setMat4('uViewProj', viewProj);
-    this.program.set1i('uTex', 0);
-    this.program.set1i('uLightmap', 1);
-    this.program.set3f('uFogColor', this.fogColor[0], this.fogColor[1], this.fogColor[2]);
-    this.program.set1f('uFogEnvStart', this.fogEnvStart);
-    this.program.set1f('uFogEnvEnd', this.fogEnvEnd);
-    this.program.set1f('uFogRenderStart', this.fogRenderStart);
-    this.program.set1f('uFogRenderEnd', this.fogRenderEnd);
-    this.program.set3f('uCameraPos', camera.x, camera.y, camera.z);
-
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.lightmap);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindVertexArray(this.vao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
-    gl.bufferData(gl.ARRAY_BUFFER, total * 4, gl.DYNAMIC_DRAW);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.combined, 0, total);
-
-    gl.disable(gl.CULL_FACE); // mixed winding after mirror/models
-    gl.enable(gl.DEPTH_TEST);
-    for (let t = 0; t < this.n; t++) {
-      if (this.counts[t] === 0) continue;
-      gl.bindTexture(gl.TEXTURE_2D, this.textures[t]!);
-      gl.drawArrays(gl.TRIANGLES, this.starts[t], this.counts[t]);
-    }
-    gl.bindVertexArray(null);
+    // Dropped block items: real 3D models in the same world space, right after the
+    // batched entity pass (vanilla submit order: entity models, then shadows).
+    this.worldItems?.render(entities, viewProj, camera, partialTick, this.worldItemFog, this.renderDistance);
 
     // vanilla draws entity shadows right after the models (ShadowFeatureRenderer)
     this.renderShadows(entities, viewProj, camera);

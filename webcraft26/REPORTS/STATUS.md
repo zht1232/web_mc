@@ -108,7 +108,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 亡灵日照燃烧 | ✅ | 2026-11-28 修：`Mob.tick` 覆盖 `LivingEntity.tick` 后漏调 `tickDamageOverTime()`，僵尸/骷髅等会着火但永远不掉血（白天越积越多）。现在火焰/岩浆伤害对 mob 生效，`test-review-fixes` 实测 100 tick 掉 2 血并持续燃烧 |
 | 剪羊毛 | ✅ | 2026-11-21：剪刀右键羊 → `sheared`、掉落 1–3 个对应颜色羊毛、播放 `entity.sheep.shear`；重复点击不再掉落 |
 | 鸡下蛋 / 投蛋 | ✅ | 成年鸡 6000–12000 tick 下蛋（幼鸡不下蛋）；投掷蛋落地/命中生物后 1/8 概率孵化幼鸡 |
-| Q 丢弃物品 | ✅ | Q 丢 1 个 / Ctrl+Q 丢整组，40 tick 拾取延迟，`dropped`/`drop` 统计 |
+| Q 丢弃物品 | ✅ | Q 丢 1 个 / Ctrl+Q 丢整组，40 tick 拾取延迟，`dropped`/`drop` 统计；方块掉落物用真实 3D 方块模型（GROUND 展示变换、5 份堆叠），扁平物品仍用图标 sprite，`test-item-entity` 12/12 |
 | 繁殖 / 喂养 / 幼年 | ✅ | 牛/猪/羊/鸡/兔/猫/豹猫/蘑菇牛：食物标签、600 tick 恋爱、6000 tick 冷却、幼年 0.5 缩放与成长、繁殖 XP、幼年无掉落；幼年专用几何体未接 |
 | 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
 | 村民 / 宠物离线存档 | ✅ | 2026-11-28：世界级快照按实体 id 维护，区块卸载前由 `persistentCullHandler` 记录，玩家回到该区块时自动重生；保存时合并在线记录与离线快照，已死亡（加载范围内无实体）的条目清除；`test-review-fixes` 覆盖 |
@@ -761,10 +761,26 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   扁平模型沿局部 Z 以 0.09375 排开，后续份再叠加 ±0.075 的随机 X/Y
   （`RandomSource.setSeed(itemId + damage)`；`EntityRenderer.appendModel`
   增加世界偏移参数）。
-- 验证：`tsc` 0；`node scripts/test-item-entity.mjs` **6/6**
-  （64 堆叠每帧 5 份模型、单物品 1 份、spin/bob 与 Java 公式逐值一致、
-  两帧截图 7813 像素变化）；回归 `test-entity-save` 11/11。
-- 未完成：块状物品掉落实体仍用图标 sprite，未用 3D 方块模型。
+- 验证：`tsc` 0；`node scripts/test-item-entity.mjs` **13/13**
+  （block/flat 分流、地面展示变换、5 份/1 份、床 composite 双层、紧裁切截图可见 + 旋转）。
+- 块状掉落物 3D 模型（2026-11-28）：`WorldItemRenderer` 世界空间 pass，用
+  `models.bin` 烘焙方块几何 + 方块纹理数组绘制，姿势逐项对
+  `ItemEntityRenderer.submit`/`ItemStackRenderState.LayerRenderState.applyTransform`：
+  `T(0, bob + (-bounds.minY + 0.0625), 0) * RY(getSpin)`，随后
+  `ItemTransform.apply(GROUND)`（`block/block` = 平移 3/16、缩放 0.25；
+  `item/generated` = 2/16、0.5）与床 composite 的逐层 `transformation`
+  （`T * Rleft * S * Rright`）；包围盒按变换后的模型顶点计算，`zSize > 1/16`
+  走 ±0.15 随机 XYZ 的 3D 堆叠分支、更薄的模型走局部 Z 排开分支。
+  图标 sprite 路径对 block 物品跳过（不再画第二份平面图标）。
+  展示变换由 `scripts/build-display.mjs` 从 26.2 模型 JSON 的父链烘焙
+  （`public/mc/hand/display.json` 的 `grounds`，1366 条）。
+  物品/经验球阴影强度按原版补 0.75。
+  验证：`tsc` 0；`test-item-entity` **13/13**（grass_block zSize 0.25 /
+  minY 0.0625 / ground 0.25,3/16；64 堆叠 5 份 3D；sprite 0 份；
+  白床 composite 两层 + foot transformation；紧裁切 260x240 截图改动 2854 px、
+  10 tick 后 3360 px 全部落在物品 bbox 内）。
+  截图：`shots/diag/item-entity-block.png`（草地上可见立体草方块）。
+- 未完成：个别方块模型仍走图标 sprite（chest 等 `special` 条目）；
 
 ### 唱片机 / 音乐资源（2026-11-28）
 

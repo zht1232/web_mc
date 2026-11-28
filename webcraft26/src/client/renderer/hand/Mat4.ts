@@ -92,6 +92,37 @@ export function rotateXYZ(out: Mat4, rx: number, ry: number, rz: number): Mat4 {
   return out;
 }
 
+/**
+ * M = M * R(q) for a JOML Quaternionf (x, y, z, w).
+ * Source: com/mojang/math/Transformation.compose -> Matrix4f.rotate(Quaternionfc),
+ * used for the per-layer `transformation` of composite item models (beds).
+ */
+export function rotateQuat(out: Mat4, x: number, y: number, z: number, w: number): Mat4 {
+  const xx = x * x, yy = y * y, zz = z * z;
+  const xy = x * y, xz = x * z, yz = y * z;
+  const wx = w * x, wy = w * y, wz = w * z;
+  // column-major 3x3 rotation of a unit quaternion
+  const r00 = 1 - 2 * (yy + zz), r01 = 2 * (xy - wz), r02 = 2 * (xz + wy);
+  const r10 = 2 * (xy + wz), r11 = 1 - 2 * (xx + zz), r12 = 2 * (yz - wx);
+  const r20 = 2 * (xz - wy), r21 = 2 * (yz + wx), r22 = 1 - 2 * (xx + yy);
+  const m0 = out[0], m1 = out[1], m2 = out[2], m3 = out[3];
+  const m4 = out[4], m5 = out[5], m6 = out[6], m7 = out[7];
+  const m8 = out[8], m9 = out[9], m10 = out[10], m11 = out[11];
+  out[0] = m0 * r00 + m4 * r01 + m8 * r02;
+  out[1] = m1 * r00 + m5 * r01 + m9 * r02;
+  out[2] = m2 * r00 + m6 * r01 + m10 * r02;
+  out[3] = m3 * r00 + m7 * r01 + m11 * r02;
+  out[4] = m0 * r10 + m4 * r11 + m8 * r12;
+  out[5] = m1 * r10 + m5 * r11 + m9 * r12;
+  out[6] = m2 * r10 + m6 * r11 + m10 * r12;
+  out[7] = m3 * r10 + m7 * r11 + m11 * r12;
+  out[8] = m0 * r20 + m4 * r21 + m8 * r22;
+  out[9] = m1 * r20 + m5 * r21 + m9 * r22;
+  out[10] = m2 * r20 + m6 * r21 + m10 * r22;
+  out[11] = m3 * r20 + m7 * r21 + m11 * r22;
+  return out;
+}
+
 /** Normal matrix = inverse-transpose of the upper-left 3x3, column-major mat3. */
 export function normalMatrix(out: Float32Array, m: Mat4): Float32Array {
   const a00 = m[0], a01 = m[4], a02 = m[8];

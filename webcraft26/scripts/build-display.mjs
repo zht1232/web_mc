@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * build-display.mjs — bake the first-person item display transform for every item model.
+ * build-display.mjs — bake the item display transforms used by the 3D item passes.
  *
  *   input : public/mc/itemmodels.json            (item -> model location, built by build-itemmodels.mjs)
  *           <vanilla>/assets/minecraft/models/**  (model JSON, parent chains + "display")
- *   output: public/mc/hand/display.json          (model location -> firstperson_righthand transform)
+ *   output: public/mc/hand/display.json          (model location -> firstperson_righthand + ground)
  *
  * Run: node scripts/build-display.mjs
  * Idempotent, Node built-ins only, never writes outside public/mc/hand.
@@ -59,15 +59,15 @@ function load(loc) {
   return json;
 }
 
-/** ResolvedModel.findTopTransform for FIRST_PERSON_RIGHT_HAND. */
-function firstPersonRightHand(loc) {
+/** ResolvedModel.findTopTransform for one display context. */
+function findTopTransform(loc, context) {
   const seen = new Set();
   let cur = loc;
   while (cur && !seen.has(cur)) {
     seen.add(cur);
     const json = load(cur);
     if (!json) return null;
-    const t = json.display && json.display.firstperson_righthand;
+    const t = json.display && json.display[context];
     if (t) {
       return {
         rotation: Array.isArray(t.rotation) ? t.rotation : [0, 0, 0],
@@ -84,14 +84,24 @@ function firstPersonRightHand(loc) {
   return null;
 }
 
+const firstPersonRightHand = (loc) => findTopTransform(loc, 'firstperson_righthand');
+const groundTransform = (loc) => findTopTransform(loc, 'ground');
+
 const out = {};
+const grounds = {};
 let missing = 0;
 let inherited = 0;
 for (const loc of [...wanted].sort()) {
   const t = firstPersonRightHand(loc);
-  if (!t) { missing++; continue; }
-  if (t.from !== loc) inherited++;
-  out[loc] = { rotation: t.rotation, translation: t.translation, scale: t.scale };
+  if (!t) { missing++; } else {
+    if (t.from !== loc) inherited++;
+    out[loc] = { rotation: t.rotation, translation: t.translation, scale: t.scale };
+  }
+  // GROUND context: ItemEntityRenderer / EntityRenderDispatcher.drawItem uses it for drops.
+  // Models with no ground transform in the chain fall back to ItemTransform.NO_TRANSFORM,
+  // which the renderer applies as the bare translate(-0.5, -0.5, -0.5).
+  const g = groundTransform(loc);
+  if (g) grounds[loc] = { rotation: g.rotation, translation: g.translation, scale: g.scale };
 }
 
 // build-itemmodels.mjs substitutes unbaked "<block>_inventory" item models with a blockstate
@@ -121,8 +131,11 @@ const doc = {
   note: 'translation is the raw JSON value, in 1/16 block units (ItemTransform.Deserializer * 0.0625)',
   count: Object.keys(out).length,
   transforms: out,
+  groundCount: Object.keys(grounds).length,
+  grounds,
 };
 await fs.writeFile(OUT, JSON.stringify(doc, null, 1) + '\n');
 
 console.log(`model locations: ${wanted.size}  resolved: ${Object.keys(out).length}  from parent: ${inherited}  none: ${missing}`);
+console.log(`ground transforms: ${Object.keys(grounds).length}`);
 console.log(`wrote ${path.relative(ROOT, OUT)} (${(await fs.stat(OUT)).size} bytes)`);

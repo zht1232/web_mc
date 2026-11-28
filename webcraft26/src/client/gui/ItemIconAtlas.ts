@@ -166,6 +166,11 @@ export class ItemIconAtlas {
     gl.activeTexture(gl.TEXTURE6);
     gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
     this.program.set1i('uSceneDepth', 6);
+    // Water-refraction sampler (TERRAIN_FRAG): same rule, icons never refract.
+    gl.activeTexture(gl.TEXTURE7);
+    gl.bindTexture(gl.TEXTURE_2D, this.whiteLightmap);
+    this.program.set1i('uNoise', 7);
+    this.program.set1i('uRefraction', 0);
     this.program.set1i('uWaterReflect', 0);
     this.program.set2i('uWaterLayers', -1, -1);
     gl.activeTexture(gl.TEXTURE0);

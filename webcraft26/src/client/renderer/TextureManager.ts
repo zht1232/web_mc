@@ -33,7 +33,23 @@ export class TextureManager {
 
   readonly images = new Map<string, HTMLImageElement>();
 
-  constructor(private readonly gl: WebGL2RenderingContext) {}
+  constructor(private readonly gl: WebGL2RenderingContext) {
+    // Refraction noise: deterministic RG noise on the pack's 256² repeat sampling. The shader
+    // pack ships lib/textures/noise.png; generating an equivalent field here keeps the same
+    // distortion character without redistributing the pack's assets. Created in the
+    // constructor so the terrain program never samples an unbound unit during boot.
+    const N = 256;
+    const noise = new Uint8Array(N * N * 4);
+    let seed = 0x9e3779b9;
+    for (let i = 0; i < N * N; i++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      noise[i * 4] = seed >>> 24;
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      noise[i * 4 + 1] = seed >>> 24;
+      noise[i * 4 + 3] = 255;
+    }
+    this.noise = createTexture2D(gl, N, N, noise, gl.LINEAR, gl.REPEAT);
+  }
 
   async load(base = '/mc'): Promise<void> {
     const gl = this.gl;
@@ -70,21 +86,6 @@ export class TextureManager {
     // interpolated per-vertex light back to 16 hard steps, which is what made the
     // "shader lighting not smooth" banding visible on large flat faces.
     this.lightmap = createTexture2D(gl, 16, 16, this.lightmapData, gl.LINEAR);
-
-    // Refraction noise: deterministic RG noise on the pack's 256² repeat sampling. The shader
-    // pack ships lib/textures/noise.png; generating an equivalent field here keeps the same
-    // distortion character without redistributing the pack's assets.
-    const N = 256;
-    const noise = new Uint8Array(N * N * 4);
-    let seed = 0x9e3779b9;
-    for (let i = 0; i < N * N; i++) {
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-      noise[i * 4] = seed >>> 24;
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-      noise[i * 4 + 1] = seed >>> 24;
-      noise[i * 4 + 3] = 255;
-    }
-    this.noise = createTexture2D(gl, N, N, noise, gl.LINEAR, gl.REPEAT);
   }
 
   /** Loads a loose PNG once (celestial bodies, clouds, GUI). */

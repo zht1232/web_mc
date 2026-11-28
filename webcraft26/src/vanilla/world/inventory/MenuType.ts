@@ -17,6 +17,7 @@ export const MenuType = {
   GENERIC_9x5: 'minecraft:generic_9x5',
   GENERIC_9x6: 'minecraft:generic_9x6',
   CREATIVE: 'minecraft:creative',
+  HOPPER: 'minecraft:hopper',
   ENCHANTING: 'minecraft:enchanting_table',
   BREWING: 'minecraft:brewing_stand',
   MERCHANT: 'minecraft:merchant',

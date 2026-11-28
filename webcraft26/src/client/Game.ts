@@ -74,7 +74,7 @@ import { ItemEntity } from '../vanilla/world/entity/item/ItemEntity.js';
 import { PrimedTnt } from '../vanilla/world/entity/item/PrimedTnt.js';
 import { ContainerInput } from '../vanilla/world/inventory/ClickAction.js';
 import type { AbstractContainerMenu } from '../vanilla/world/inventory/AbstractContainerMenu.js';
-import type { Container } from '../vanilla/world/inventory/Container.js';
+import { SimpleContainer, type Container } from '../vanilla/world/inventory/Container.js';
 import { AbstractCraftingMenu } from '../vanilla/world/inventory/AbstractCraftingMenu.js';
 import { AbstractFurnaceMenu } from '../vanilla/world/inventory/AbstractFurnaceMenu.js';
 import { EnchantingMenu } from '../vanilla/world/inventory/EnchantingMenu.js';
@@ -665,10 +665,12 @@ export class Game {
       // Container.getRedstoneSignalFromContainer: full slots raise the signal, each stack's
       // fill fraction adds up to 14, and any item at all adds the final point.
       containerSignal: (name, x, y, z) => {
+        const hopper = this.hoppers.get(`${x},${y},${z}`);
         const menu = this.blockContainers.get(`${name}@${x},${y},${z}`) as
           { container?: Container } | undefined;
         // Without a live menu (fresh reload) the persisted block entity is the source.
-        const container = menu?.container ?? this.containerViewFromRecord(name, x, y, z);
+        const container = hopper?.container ?? menu?.container
+          ?? this.containerViewFromRecord(name, x, y, z);
         if (!container) return 0;
         const slots = container.getContainerSize();
         if (slots <= 0) return 0;
@@ -1548,7 +1550,10 @@ export class Game {
       }
     }
     // Saved chunks already carry their light data; skip the per-chunk full relight.
-    for (const chunk of decoded) this.restoreJukeboxRecords(chunk);
+    for (const chunk of decoded) {
+      this.restoreJukeboxRecords(chunk);
+      this.restoreHopperStates(chunk);
+    }
     const count = this.level.addChunksBulk(decoded);
     // These chunks were generated (and their passive animals spawned) before the save;
     // mark them known so the chunk-generation spawn pass does not add a second wave.
@@ -1942,6 +1947,7 @@ export class Game {
     this.snapshotPersistentEntities();
     this.persistJukeboxProgress();
     this.persistBlockContainers();
+    this.persistHoppers();
     const pcx = Math.floor(this.player.pos.x) >> 4;
     const pcz = Math.floor(this.player.pos.z) >> 4;
     const radius = this.options.renderDistance + CHUNK_RETAIN_MARGIN;
@@ -3186,6 +3192,14 @@ export class Game {
       this.openScreen('crafting');
       return;
     }
+    if (blockName === 'hopper') {
+      // HopperBlockEntity: five slots bound to the live hopper state (Game.tickHoppers).
+      this.stats.award('custom', 'inspect_hopper');
+      const state = this.ensureHopperState(x, y, z);
+      this.survival.openHopper(state.container);
+      this.openScreen('hopper');
+      return;
+    }
     const isFurnace = blockName === 'furnace';
     if (isFurnace) this.stats.award('custom', 'interact_with_furnace');
     else this.stats.award('custom', 'open_chest');
@@ -3220,6 +3234,9 @@ export class Game {
 
   /** Menu -> the two chest block positions of a double chest (first half = slots 0..26). */
   private readonly doubleChests = new Map<AbstractContainerMenu, [{ x: number; y: number; z: number }, { x: number; y: number; z: number }]>();
+
+  /** Live hopper block entities: five slots plus the vanilla transfer cooldown, per position. */
+  private readonly hoppers = new Map<string, { container: SimpleContainer; cooldown: number }>();
 
   private isChestBlock(name: string): boolean {
     return name === 'chest' || name === 'trapped_chest';
@@ -3384,7 +3401,8 @@ export class Game {
     if (!rec || rec.type.replace(/^minecraft:/, '') !== name) return null;
     const items = Array.isArray((rec.data as { items?: unknown }).items)
       ? (rec.data as { items: unknown[] }).items : [];
-    const size = name === 'brewing_stand' ? 5
+    const size = name === 'hopper' ? 5
+      : name === 'brewing_stand' ? 5
       : name === 'furnace' || name === 'blast_furnace' || name === 'smoker' ? 3 : 27;
     return {
       getContainerSize: () => size,
@@ -3401,6 +3419,24 @@ export class Game {
   /** Breaking a container drops every stored stack and clears its record. */
   private dropBlockContainer(name: string, x: number, y: number, z: number): void {
     const key = `${name}@${x},${y},${z}`;
+    // Hoppers keep their contents in the live state map, not in a cached menu.
+    const hopper = this.hoppers.get(`${x},${y},${z}`);
+    if (hopper) {
+      for (let i = 0; i < hopper.container.getContainerSize(); i++) {
+        const stack = hopper.container.getItem(i);
+        if (stack.isEmpty()) continue;
+        this.dropItem(stack.copy(), x, y, z);
+        hopper.container.setItem(i, ItemStack.EMPTY);
+      }
+      this.hoppers.delete(`${x},${y},${z}`);
+      this.blockContainers.delete(key);
+      const chunk = this.level.getChunk(x >> 4, z >> 4);
+      if (chunk) {
+        chunk.removeBlockEntity(x & 15, y, z & 15);
+        chunk.dirtySections.add(y >> 4);
+      }
+      return;
+    }
     const menu = this.blockContainers.get(key);
     const dropped: ItemStack[] = [];
     const targets: { x: number; y: number; z: number }[] = [{ x, y, z }];
@@ -3445,6 +3481,239 @@ export class Game {
       chunk.dirtySections.add(p.y >> 4);
     }
     for (const stack of dropped) this.dropItem(stack, x, y, z);
+  }
+
+  // ------------------------------------------------------------ hopper transfer
+
+  /** HopperBlockEntity storage per position; the GUI menu shares this very container. */
+  private ensureHopperState(x: number, y: number, z: number): { container: SimpleContainer; cooldown: number } {
+    const key = `${x},${y},${z}`;
+    let state = this.hoppers.get(key);
+    if (!state) {
+      const container = new SimpleContainer(HOPPER_SIZE);
+      this.restoreBlockContainer('hopper', x, y, z, container);
+      state = { container, cooldown: 0 };
+      this.hoppers.set(key, state);
+    }
+    return state;
+  }
+
+  /**
+   * HopperBlockEntity.pushItemsTick: every tick while enabled, try to move one item into
+   * the container the spout points at and one item in from the container above. A move
+   * resets the 8 tick cooldown (vanilla tryMoveItems; push and pull may both run per tick).
+   */
+  private tickHoppers(): void {
+    for (const [key, state] of this.hoppers) {
+      const [x, y, z] = key.split(',').map(Number);
+      if (!this.level.hasChunk(x >> 4, z >> 4)) {
+        this.writeBlockContainer('hopper', x, y, z, state.container);
+        this.hoppers.delete(key);
+        continue;
+      }
+      const blockState = this.level.getBlockState(x, y, z);
+      if (this.mc.blockOf(blockState).name !== 'hopper') {
+        this.hoppers.delete(key);
+        continue;
+      }
+      // HopperBlock.neighborChanged: ENABLED mirrors the inverse of the redstone signal.
+      const powered = this.redstone.isPoweredAt(x, y, z);
+      const enabled = this.mc.getProp(blockState, 'enabled') ?? 'true';
+      const wanted = powered ? 'false' : 'true';
+      if (enabled !== wanted) {
+        this.level.setBlockState(x, y, z, this.mc.withProp(blockState, 'enabled', wanted));
+      }
+      // HopperBlockEntity.tick decrements first, so the next move happens 8 ticks later.
+      if (state.cooldown > 0) {
+        state.cooldown--;
+        if (state.cooldown > 0) continue;
+      }
+      if (powered) continue;
+      let moved = false;
+      const target = this.pushFromHopper(x, y, z, state.container);
+      if (target) {
+        moved = true;
+        this.updateNeighbors(target.x, target.y, target.z);
+      }
+      if (!this.isContainerFull(state.container) && this.pullIntoHopper(x, y, z, state.container)) {
+        moved = true;
+      }
+      if (moved) {
+        state.cooldown = 8;
+        this.writeBlockContainer('hopper', x, y, z, state.container);
+        this.updateNeighbors(x, y, z);
+      }
+    }
+  }
+
+  /** HopperBlockEntity.ejectItems: one item into the block the hopper's spout faces. */
+  private pushFromHopper(
+    hx: number, hy: number, hz: number, hopper: Container,
+  ): { x: number; y: number; z: number } | null {
+    const state = this.level.getBlockState(hx, hy, hz);
+    const facing = this.mc.getProp(state, 'facing') ?? 'down';
+    const tx = hx + (facing === 'east' ? 1 : facing === 'west' ? -1 : 0);
+    const ty = hy + (facing === 'up' ? 1 : facing === 'down' ? -1 : 0);
+    const tz = hz + (facing === 'south' ? 1 : facing === 'north' ? -1 : 0);
+    const targetName = this.mc.blockOf(this.level.getBlockState(tx, ty, tz)).name;
+    if (!this.isContainerBlock(targetName)) return null;
+    // The target sees the item entering from the hopper's side of the block.
+    const face = facing === 'down' ? 'up' : facing === 'up' ? 'down' : facing;
+    const moved = this.useContainerAt(targetName, tx, ty, tz,
+      (container) => this.insertOneFrom(hopper, container, targetName, face));
+    return moved ? { x: tx, y: ty, z: tz } : null;
+  }
+
+  /** HopperBlockEntity.suckInItems: one item from the container directly above. */
+  private pullIntoHopper(hx: number, hy: number, hz: number, hopper: Container): boolean {
+    const sy = hy + 1;
+    const sourceName = this.mc.blockOf(this.level.getBlockState(hx, sy, hz)).name;
+    if (!this.isContainerBlock(sourceName)) return false;
+    return this.useContainerAt(sourceName, hx, sy, hz, (source) => {
+      for (let i = 0; i < source.getContainerSize(); i++) {
+        if (!this.canExtractFromSlot(sourceName, i)) continue;
+        const stack = source.getItem(i);
+        if (stack.isEmpty()) continue;
+        if (!this.insertIntoContainer(hopper, stack.copyWithCount(1), 'hopper', 'up')) continue;
+        stack.shrink(1);
+        if (stack.isEmpty()) source.setItem(i, ItemStack.EMPTY);
+        return true;
+      }
+      return false;
+    });
+  }
+
+  /**
+   * Runs fn against the live container for a block (open menu / hopper state) or a temporary
+   * copy seeded from its block entity record; a record-backed copy is written back on success.
+   */
+  private useContainerAt(
+    name: string, x: number, y: number, z: number, fn: (container: Container) => boolean,
+  ): boolean {
+    const menu = this.blockContainers.get(`${name}@${x},${y},${z}`) as { container?: Container } | undefined;
+    if (menu?.container) return fn(menu.container);
+    if (name === 'hopper') return fn(this.ensureHopperState(x, y, z).container);
+    const partner = this.isChestBlock(name) ? this.chestPartner(name, x, y, z) : null;
+    if (partner) {
+      // Double chests write back through their two 27-slot halves (same shape as the save).
+      const pair = this.canonicalChestPair({ x, y, z }, partner);
+      const temp = new SimpleContainer(54);
+      this.restoreDoubleChest(name, pair, temp);
+      if (!fn(temp)) return false;
+      this.writeChestHalf(name, pair[0], temp, 0);
+      this.writeChestHalf(name, pair[1], temp, 27);
+      return true;
+    }
+    const temp = new SimpleContainer(this.containerSizeOf(name));
+    this.restoreBlockContainer(name, x, y, z, temp);
+    if (!fn(temp)) return false;
+    this.writeBlockContainer(name, x, y, z, temp);
+    return true;
+  }
+
+  /** Container size used when a block's record is read without an open menu. */
+  private containerSizeOf(name: string): number {
+    if (name === 'hopper' || name === 'brewing_stand') return 5;
+    if (name === 'furnace' || name === 'blast_furnace' || name === 'smoker') return 3;
+    return 27;
+  }
+
+  private isContainerFull(container: Container): boolean {
+    const size = container.getContainerSize();
+    if (size <= 0) return true;
+    for (let i = 0; i < size; i++) {
+      const stack = container.getItem(i);
+      if (stack.isEmpty()) return false;
+      if (stack.getCount() < Math.min(container.getMaxStackSize(), stack.getMaxStackSize())) return false;
+    }
+    return true;
+  }
+
+  /** tryTakeInItemFromSlot: moves one item from the first non-empty source slot that fits. */
+  private insertOneFrom(source: Container, target: Container, targetName: string, face: string): boolean {
+    for (let i = 0; i < source.getContainerSize(); i++) {
+      const stack = source.getItem(i);
+      if (stack.isEmpty()) continue;
+      if (!this.insertIntoContainer(target, stack.copyWithCount(1), targetName, face)) continue;
+      stack.shrink(1);
+      if (stack.isEmpty()) source.setItem(i, ItemStack.EMPTY);
+      return true;
+    }
+    return false;
+  }
+
+  /** First merge into a matching stack, then use the first empty slot. */
+  private insertIntoContainer(target: Container, one: ItemStack, targetName: string, face: string): boolean {
+    const max = Math.min(one.getMaxStackSize(), target.getMaxStackSize());
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < target.getContainerSize(); i++) {
+        if (!this.canInsertIntoSlot(targetName, face, i)) continue;
+        const existing = target.getItem(i);
+        if (pass === 0) {
+          if (existing.isEmpty() || !ItemStack.isSameItemSameComponents(existing, one)) continue;
+          if (existing.getCount() >= max) continue;
+          existing.grow(1);
+          target.setItem(i, existing);
+          target.setChanged();
+          return true;
+        }
+        if (!existing.isEmpty()) continue;
+        target.setItem(i, one.copyWithCount(1));
+        target.setChanged();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** WorldlyContainer slot masks: only furnaces filter inserted items by face. */
+  private canInsertIntoSlot(name: string, face: string, slot: number): boolean {
+    if (name === 'furnace' || name === 'blast_furnace' || name === 'smoker') {
+      if (face === 'up') return slot === 0;
+      if (face === 'down') return false;
+      return slot === 1;
+    }
+    return true;
+  }
+
+  /** AbstractFurnaceBlockEntity.canTakeItemThroughFace: only the output leaves downward. */
+  private canExtractFromSlot(name: string, slot: number): boolean {
+    if (name === 'furnace' || name === 'blast_furnace' || name === 'smoker') return slot === 2;
+    return true;
+  }
+
+  /**
+   * Seeds hopper states from the block entity records of a decoded chunk. The chunk may not
+   * be registered in the level yet (WorldSaveManager.load decodes before addChunksBulk), so
+   * the record is read directly instead of going through ensureHopperState -> Level.getChunk.
+   */
+  private restoreHopperStates(chunk: LevelChunk): void {
+    for (const [packed, rec] of chunk.blockEntities) {
+      if (rec.type.replace(/^minecraft:/, '') !== 'hopper') continue;
+      const wx = chunk.x * 16 + (packed & 15);
+      const wz = chunk.z * 16 + ((packed >> 4) & 15);
+      const wy = ((packed >> 12) << 4) + ((packed >> 8) & 15);
+      const key = `${wx},${wy},${wz}`;
+      if (this.hoppers.has(key)) continue;
+      const container = new SimpleContainer(HOPPER_SIZE);
+      const items = Array.isArray((rec.data as { items?: unknown }).items)
+        ? (rec.data as { items: unknown[] }).items : [];
+      for (const raw of items) {
+        const slot = Number((raw as { slot?: unknown } | null)?.slot);
+        if (!Number.isInteger(slot) || slot < 0 || slot >= HOPPER_SIZE) continue;
+        const stack = this.stackFromData(raw);
+        if (!stack.isEmpty()) container.setItem(slot, stack);
+      }
+      this.hoppers.set(key, { container, cooldown: 0 });
+    }
+  }
+
+  /** Called once per save cycle: freeze every live hopper into its block entity. */
+  private persistHoppers(): void {
+    for (const [key, state] of this.hoppers) {
+      const [x, y, z] = key.split(',').map(Number);
+      this.writeBlockContainer('hopper', x, y, z, state.container);
+    }
   }
 
   /**
@@ -4027,6 +4296,7 @@ export class Game {
     for (const extra of plan.extras) this.updateNeighbors(extra.x, extra.y, extra.z);
     // CarvedPumpkinBlock.onPlace: the four-iron-block pattern creates a golem.
     this.trySpawnIronGolem(plan.x, plan.y, plan.z);
+    if (item.block === 'hopper') this.ensureHopperState(plan.x, plan.y, plan.z);
     if (this.options.gamemode !== 'creative') this.survival.inventory.removeFromSelected(false);
   }
 
@@ -5147,6 +5417,7 @@ export class Game {
     this.survival.tick(moved);
     this.syncPotionMovement();
     this.redstone.tick();
+    this.tickHoppers();
     this.tickStatistics(moved.jumped);
     this.tickSleep();
     this.tickVillageGolemSpawn();
@@ -5290,6 +5561,7 @@ export class Game {
               const chunk = ChunkSerializer.fromBytes(saved, this.mc, this.chunkCodec);
               this.level.addChunksBulk([chunk]);
               this.restoreJukeboxRecords(chunk);
+              this.restoreHopperStates(chunk);
               this.level.markDirtyAround(cx << 4, this.level.minY, cz << 4);
               this.entityManager.markChunkKnown(cx, cz);
               savedLoads++;
@@ -5955,11 +6227,14 @@ export class Game {
   }
 }
 
+/** HopperBlockEntity.CONTAINER_SIZE. */
+const HOPPER_SIZE = 5;
+
 /** Blocks that open a container GUI on right click (PlayerGameMode.useItemOn). */
 function isContainerBlock(blockName: string): boolean {
   return blockName === 'crafting_table' || blockName === 'chest'
     || blockName === 'trapped_chest' || blockName === 'furnace' || blockName === 'enchanting_table'
-    || blockName === 'brewing_stand';
+    || blockName === 'brewing_stand' || blockName === 'hopper';
 }
 
 /** Approximate PotionContents.getColor for the lingering cloud particles. */

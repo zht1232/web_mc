@@ -972,6 +972,15 @@ function stateForBlock(s: PlacementSession, blockName: string): number | null {
     const state = mc.stateOf(blockName);
     return set(mc, state, 'facing', sideName(orderedByNearest(s.yaw, s.pitch)[0]));
   }
+  if (cls === 'HopperBlock') {
+    // HopperBlock.getStateForPlacement: vertical clicks always point down, horizontal clicks
+    // point at the block that was clicked; ENABLED is the inverse of the redstone signal.
+    const dir = opposite(s.face);
+    return setAll(mc, mc.stateOf(blockName), {
+      facing: axisOf(dir) === 1 ? 'down' : sideName(dir),
+      enabled: hasSignal(s, sessionPos(s)) ? 'false' : 'true',
+    });
+  }
   if (cls === 'PistonBaseBlock') {
     // PistonBaseBlock.getStateForPlacement: push side = opposite of the nearest look direction.
     return setAll(mc, mc.stateOf(blockName), {

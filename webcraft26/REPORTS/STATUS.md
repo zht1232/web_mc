@@ -890,7 +890,19 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 验证：`test-double-chest` **8/8**（54 格、比较器 2、两半记录 3/2 格、
   重开恢复含 27/53 槽、破坏掉落 320 个物品、剩余半箱为空 27 格），
   回归 `test-container-persistence` 8/8、`test-redstone` 28/28。
-- 未完成：漏斗仍是 27 格菜单（原版 5 格）且没有漏斗传输 tick。
+- 漏斗（2026-11-28）：`HopperMenu` 5 格（槽位 `(44+18i,20)`、玩家背包 `(8,51)`），
+  `HopperScreen` 176×133 + 贴图 `gui/container/hopper`，替换原先的 27 格箱子菜单；
+  `Game.tickHoppers` 按原版 `HopperBlockEntity.tryMoveItems` 每 tick 向朝向容器
+  推 1 件、从上方容器拉 1 件（push/pull 可同 tick），成功移动后 cooldown=8
+  （8 tick 节奏）；红石供能时 `enabled=false` 并暂停传输，去电恢复。
+  比较器按 5 格 `Container.getRedstoneSignalFromContainer` 计算。内容写入
+  `minecraft:hopper` 方块实体（每次移动 + `beforeSave`），区块解码时
+  `restoreHopperStates` 恢复；破坏掉落全部内容并清记录。放置朝向按
+  `HopperBlock.getStateForPlacement`（竖直点击朝下、水平点击朝向被点击方块）。
+- 验证：`test-hopper` **15/15**（5 格 GUI/41 槽、首个传输、32 tick 移动 4 件、
+  锁定 20 tick 冻结后恢复、比较器 1→0、保存重载内容/朝向/比较器恢复、
+  破坏掉落 3 钻石、放置朝向 west/down），回归 `test-container-persistence`
+  8/8、`test-redstone` 28/28；`tsc` 0。
 
 
 

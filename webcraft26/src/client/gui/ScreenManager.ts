@@ -44,6 +44,7 @@ import { CreativeModeInventoryScreen } from './screens/inventory/CreativeModeInv
 import { CraftingScreen } from './screens/inventory/CraftingScreen.js';
 import { FurnaceScreen } from './screens/inventory/FurnaceScreen.js';
 import { ChestScreen } from './screens/inventory/ChestScreen.js';
+import { HopperScreen } from './screens/inventory/HopperScreen.js';
 import { EnchantingScreen } from './screens/inventory/EnchantingScreen.js';
 import { BrewingScreen } from './screens/inventory/BrewingScreen.js';
 import { MerchantScreen } from './screens/inventory/MerchantScreen.js';
@@ -53,7 +54,7 @@ const PRELOAD_TEXTURES = [
   'gui/menu_background', 'gui/inworld_menu_background',
   'gui/header_separator', 'gui/footer_separator',
   'gui/container/inventory', 'gui/container/crafting_table', 'gui/container/furnace',
-  'gui/container/generic_54', 'gui/container/enchanting_table', 'gui/container/brewing_stand',
+  'gui/container/generic_54', 'gui/container/hopper', 'gui/container/enchanting_table', 'gui/container/brewing_stand',
   'gui/container/villager',
   'gui/recipe_book',
   'gui/container/creative_inventory/tab_items',
@@ -144,6 +145,7 @@ export class ScreenManager {
       crafting: () => new CraftingScreen(e),
       furnace: () => new FurnaceScreen(e),
       chest: (rows?: unknown) => new ChestScreen(e, typeof rows === 'number' ? rows : 3),
+      hopper: () => new HopperScreen(e),
       enchanting: () => new EnchantingScreen(e),
       brewing: () => new BrewingScreen(e),
       merchant: () => new MerchantScreen(e),

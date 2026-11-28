@@ -23,6 +23,7 @@ import { InventoryMenu } from '../world/inventory/InventoryMenu.js';
 import { CraftingMenu } from '../world/inventory/CraftingMenu.js';
 import { FurnaceMenu } from '../world/inventory/FurnaceMenu.js';
 import { ChestMenu } from '../world/inventory/ChestMenu.js';
+import { HopperMenu } from '../world/inventory/HopperMenu.js';
 import { EnchantingMenu } from '../world/inventory/EnchantingMenu.js';
 import { BrewingMenu } from '../world/inventory/BrewingMenu.js';
 import { MerchantMenu } from '../world/inventory/MerchantMenu.js';
@@ -469,6 +470,13 @@ export class SurvivalState implements FoodTickPlayer, MenuPlayer {
   /** Chest minecart: a 27-slot menu bound to the cart's own container. */
   openStorageContainer(container: import('../world/inventory/Container.js').Container): ChestMenu {
     const menu = new ChestMenu(0, this.inventory, container);
+    this.activeMenu = menu;
+    return menu;
+  }
+
+  /** HopperMenu: five slots bound to the block's own container (see Game.tickHoppers). */
+  openHopper(container: import('../world/inventory/Container.js').Container): HopperMenu {
+    const menu = new HopperMenu(0, this.inventory, container);
     this.activeMenu = menu;
     return menu;
   }

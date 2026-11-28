@@ -156,9 +156,11 @@ export class Player {
 
     let vy = this.vel.y;
     if (this.flying) {
-      if (input.jump) vy = SPEED.fly;
-      else if (input.sneak) vy = -SPEED.fly;
-      else vy *= 0.85;
+      // LocalPlayer.aiStep: delta.y += inputYa * abilities.getFlyingSpeed() * 3 every tick, and
+      // Player.travel then restores delta.y = originalMovementY * 0.6 (no gravity while flying).
+      const inputYa = (input.jump ? 1 : 0) - (input.sneak ? 1 : 0);
+      if (inputYa !== 0) vy += inputYa * 0.05 * 3;
+      vy *= 0.6;
     } else {
       if (waterTravel && input.sneak) vy -= 0.04;
       if (input.jump) {

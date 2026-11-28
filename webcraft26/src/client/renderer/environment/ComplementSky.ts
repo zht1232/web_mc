@@ -103,6 +103,9 @@ vec3 complementSky(vec3 dir, float dither, bool doGlare, bool doGround) {
                           vec3(1.5, 0.7, 0.3) + vec3(0.0, 0.5, 0.5) * uNoonFactor,
                           uSunVisibility);
     glare *= 1.0 - 0.8 * uRainFactor;
+    // RAIN_STYLE 1 default: glareDesaturateFactor = 0.5 * rainFactor.
+    float glareLum = dot(glareColor, vec3(0.299, 0.587, 0.114));
+    glareColor = mix(glareColor, vec3(glareLum), 0.5 * uRainFactor);
 
     finalSky += glareColor * glare * uShadowTime;
   }

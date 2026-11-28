@@ -83,20 +83,24 @@ export class InventoryScreen extends AbstractContainerScreen {
     this.recipeBook.render(g, rx, this.topPos, mx, my);
   }
 
-  private previewCache: { yaw: number; canvas: HTMLCanvasElement } | null = null;
+  private previewCache: { yaw: number; pitch: number; canvas: HTMLCanvasElement } | null = null;
 
-  /** Vanilla's mouse-following player model: a real 3D render when the game provides one. */
+  /**
+   * InventoryScreen.extractEntityInInventoryFollowsMouse: xAngle = atan((centreX - mouseX)/40)
+   * turns the figure, yAngle = atan((centreY - mouseY)/40) pitches the camera and the head.
+   */
   private drawEntityPreview(g: GuiGraphics, x0: number, y0: number, x1: number, y1: number): void {
     const render = this.env.deps.renderEntityPreview;
     const cx = (x0 + x1) / 2;
-    const dx = this.xMouse - (this.leftPos + cx);
-    // EntityRenderState yaw from the mouse: atan2(dx, 40), clamped to +/- 40 degrees.
-    const yaw = Math.max(-0.7, Math.min(0.7, Math.atan2(dx, 40)));
-    const key = Math.round(yaw * 40) / 40;
+    const cy = (y0 + y1) / 2;
+    const xAngle = Math.atan((this.leftPos + cx - this.xMouse) / 40);
+    const yAngle = Math.atan((this.topPos + cy - this.yMouse) / 40);
+    const keyYaw = Math.round(xAngle * 40) / 40;
+    const keyPitch = Math.round(yAngle * 40) / 40;
     if (render) {
-      if (!this.previewCache || this.previewCache.yaw !== key) {
-        const canvas = render(120, key);
-        if (canvas) this.previewCache = { yaw: key, canvas };
+      if (!this.previewCache || this.previewCache.yaw !== keyYaw || this.previewCache.pitch !== keyPitch) {
+        const canvas = render(120, keyYaw, keyPitch);
+        if (canvas) this.previewCache = { yaw: keyYaw, pitch: keyPitch, canvas };
       }
       if (this.previewCache) {
         const img = this.previewCache.canvas;

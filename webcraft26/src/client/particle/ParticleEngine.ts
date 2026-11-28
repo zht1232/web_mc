@@ -80,6 +80,13 @@ export class ParticleEngine {
   blockLayerForState: ((stateId: number) => number) | null = null;
 
   /**
+   * Optional callback: TerrainParticle's block tint (BlockTintSource#colorAsTerrainParticle).
+   * Grass/fern/leaf sprites are greyscale, so without the biome colour their break particles
+   * were grey instead of green.
+   */
+  blockTintForState: ((stateId: number, x: number, y: number, z: number) => [number, number, number]) | null = null;
+
+  /**
    * Optional callback: packed light level (0..15) at a world position. Vanilla multiplies every
    * non-full-bright particle by the lightmap, which is why break particles must darken in caves
    * and at night instead of glowing at full brightness.
@@ -323,6 +330,8 @@ export function spawnBlockBreakParticles(
   const e = ParticleEngine.get();
   const rng = e.random;
   const layer = e.blockLayerForState?.(stateId) ?? (stateId % 1230);
+  // TerrainParticle: the tint source colour is applied to every particle of the burst.
+  const tint = e.blockTintForState?.(stateId, x, y, z) ?? [1, 1, 1];
   let made = 0;
   for (let i = 0; i < count; i++) {
     const idx = e.add({
@@ -332,6 +341,7 @@ export function spawnBlockBreakParticles(
       z: z + 0.5 + spread(rng, 0.4),
       vx: spread(rng, 0.12), vy: rng.nextFloat() * 0.1 + 0.05, vz: spread(rng, 0.12),
       blockLayer: layer,
+      color: tint,
       // Deterministic quadrant selector; block particles are not sprite-animated.
       spriteFrame: Math.floor(rng.nextFloat() * 4),
       size: 0.1 + rng.nextFloat() * 0.08,

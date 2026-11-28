@@ -289,10 +289,17 @@ export class EntityRenderDispatcher {
     level: { getSkyLight(x: number, y: number, z: number): number; getBlockLight(x: number, y: number, z: number): number },
     size: number,
     yawRad: number,
+    pitchRad = 0,
+    equipment: readonly (string | null)[] = [],
   ): HTMLCanvasElement | null {
     // The client Player is a physics object, not an Entity subclass; the renderers only need the
-    // render-state fields, so build the minimal record here.
-    const entity = playerStub(player, level);
+    // render-state fields, so build the minimal record here. Vanilla's GUI entity is lit by
+    // Lighting.Entry.ENTITY_IN_UI (packed light 0xF000F0), i.e. full sky + full block light; every
+    // other level query (shadow collision, brightness) still goes to the real level.
+    const brightLevel = Object.create(level) as typeof level;
+    brightLevel.getSkyLight = () => 15;
+    brightLevel.getBlockLight = () => 15;
+    const entity = playerStub(player, brightLevel, equipment);
     const gl = this.gl;
     const w = Math.max(8, Math.floor(size));
     const h = Math.max(8, Math.floor(size * 1.35));
@@ -326,7 +333,7 @@ export class EntityRenderDispatcher {
     // showed up as `screens` 30 ms spikes and a 35 fps dip. The preview only changes with the
     // size and the mouse-follow yaw, so reuse the last canvas unless the yaw moved ~1.4 degrees
     // (or 200 ms passed, which covers an equipment change).
-    const key = `${w}x${h}|${Math.round(yawRad * 40)}`;
+    const key = `${w}x${h}|${Math.round(yawRad * 40)}|${Math.round(pitchRad * 40)}|${equipment.join(',')}`;
     const now = performance.now();
     if (this.previewCanvas && key === this.previewKey && now - this.previewAt < 200) {
       return this.previewCanvas;
@@ -334,28 +341,41 @@ export class EntityRenderDispatcher {
     this.previewKey = key;
     this.previewAt = now;
 
-    // InventoryScreen#extractEntityInInventoryFollowsMouse(x0,y0,x1,y1, 30, 0.0625, mouseX, mouseY):
-    // the figure is a 3/4 view (vanilla applies ~30 deg of body yaw plus the mouse delta), seen
-    // slightly from above, and fills about 70% of the 49x70 box. A straight-on, head-cropped
-    // close-up is what made the preview look unlike vanilla.
+    // InventoryScreen.extractEntityInInventoryFollowsMouse (26.2):
+    //   bodyRot = 180 + xAngle*20, head yRot = xAngle*20, head xRot = -yAngle*20
+    //   camera orientation = conj(R_X(yAngle*20)) * R_Y(180)
+    // The GUI camera is fixed and the figure turns; bodyRot 180 puts the model's front toward
+    // the +Z camera. Both angles stay within +-24 degrees at the box edge.
     const cx = entity.x;
     const cy = entity.y;
     const cz = entity.z;
-    const targetY = cy + 0.95;
+    const targetY = cy + 1.8 / 2 + 0.0625;   // player bounding box height 1.8 + GUI offsetY
     const dist = 4.55;
-    const bodyYaw = -0.52 + yawRad; // ~30 deg three-quarter view + mouse follow
-    const camX = cx + Math.sin(bodyYaw) * dist;
-    const camZ = cz + Math.cos(bodyYaw) * dist;
-    const camY = targetY + 0.42; // look down a little, like the vanilla inventory camera
+    const yawDeg = yawRad * 20;
+    const pitchDeg = pitchRad * 20;
+    const camPitch = (pitchDeg * Math.PI) / 180;
+    const camX = cx;
+    const camY = targetY - Math.sin(camPitch) * dist;
+    const camZ = cz + Math.cos(camPitch) * dist;
     lookAt(this.previewView, camX, camY, camZ, cx, targetY, cz);
     perspective(this.previewProj, (30 * Math.PI) / 180, w / h, 0.05, 16);
     mul4(this.previewVp, this.previewProj, this.previewView);
 
-    // Face the camera: body yaw points away from it (the model is rotated by 180 - bodyRot).
-    const stub = entity as unknown as { yBodyRot: number; yHeadRot: number };
-    entity.yaw = (bodyYaw * 180) / Math.PI;
-    stub.yBodyRot = entity.yaw;
-    stub.yHeadRot = entity.yaw;
+    // Sync the *O fields as well: render() receives partialTick 0 and would otherwise interpolate
+    // from the stub's zeroed previous rotation (which froze the preview at yaw 0).
+    const stub = entity as unknown as {
+      yaw: number; yRotO: number; pitch: number; xRotO: number;
+      yBodyRot: number; yBodyRotO: number; yHeadRot: number; yHeadRotO: number;
+    };
+    const bodyRot = 180 + yawDeg;
+    entity.yaw = bodyRot;              // fallback when yBodyRot is absent
+    stub.yRotO = bodyRot;
+    stub.yBodyRot = bodyRot;
+    stub.yBodyRotO = bodyRot;
+    stub.yHeadRot = bodyRot + yawDeg;  // head turn relative to the body = xAngle*20
+    stub.yHeadRotO = stub.yHeadRot;
+    entity.pitch = -pitchDeg;
+    stub.xRotO = entity.pitch;
 
     const pixels = new Uint8Array(w * h * 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.previewFbo);
@@ -622,7 +642,14 @@ function mul4(out: Float32Array, a: Float32Array, b: Float32Array): void {
 function playerStub(
   p: { x: number; y: number; z: number },
   level: { getSkyLight(x: number, y: number, z: number): number; getBlockLight(x: number, y: number, z: number): number },
+  equipment: readonly (string | null)[] = [],
 ): Entity {
+  const armor: Record<string, string | null> = {
+    head: equipment[0] ?? null,
+    chest: equipment[1] ?? null,
+    legs: equipment[2] ?? null,
+    feet: equipment[3] ?? null,
+  };
   const stub = {
     x: p.x, y: p.y, z: p.z, xo: p.x, yo: p.y, zo: p.z,
     yaw: 0, yRotO: 0, pitch: 0, xRotO: 0,
@@ -634,6 +661,10 @@ function playerStub(
     position: () => ({ x: p.x, y: p.y, z: p.z }),
     getEyeY: () => p.y + 1.62,
     getTypeName: () => 'player',
+    getItemBySlot: (slot: { name?: string }) => {
+      const id = armor[slot?.name ?? ''];
+      return id ? { id } : null;
+    },
     isRemoved: () => false,
   };
   return stub as unknown as Entity;

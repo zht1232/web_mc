@@ -8,7 +8,7 @@ import { Player, TICK_MS, JUMP_VELOCITY, type PlayerInput } from '../vanilla/wor
 import { ModelSource } from './renderer/model/ModelSource.js';
 import { TextureManager } from './renderer/TextureManager.js';
 import { BiomeColors } from './renderer/BiomeColors.js';
-import { LevelRenderer, type Camera } from './renderer/LevelRenderer.js';
+import { LevelRenderer, redstoneWireTint, type Camera } from './renderer/LevelRenderer.js';
 import { FramePacer } from './FramePacer.js';
 import { LevelChunk as Chunk } from '../vanilla/world/level/chunk/LevelChunk.js';
 import { buildLightmap, computeSkyState, DAY_PERIOD, type SkyState } from './EnvironmentLighting.js';
@@ -66,7 +66,7 @@ import { TAB_SURVIVAL } from '../vanilla/world/inventory/CreativeInventory.js';
 import type {
   ContainerMenuLike, CreateWorldOptions, GuiOptions, ScreenRef, WorldListProvider,
 } from './gui/Types.js';
-import { SurvivalState, loadWorldData, type PlayerMoved } from '../vanilla/gameplay/SurvivalState.js';
+import { SurvivalState, loadWorldData, getWorldData, type PlayerMoved } from '../vanilla/gameplay/SurvivalState.js';
 import { SLOT_OFFHAND } from '../vanilla/world/entity/player/Inventory.js';
 import { ItemStack, type ItemComponents } from '../vanilla/world/item/ItemStack.js';
 import { ItemEntity } from '../vanilla/world/entity/item/ItemEntity.js';
@@ -535,6 +535,7 @@ export class Game {
     this.particles = new ParticleEngine(this.gl, 4000);
     ParticleEngine.setInstance(this.particles);
     this.particles.blockLayerForState = (state) => this.blockLayerFor(state);
+    this.particles.blockTintForState = (state, x, y, z) => this.particleBlockTint(state, x, y, z);
     this.ambientParticles = new AmbientParticles(this.mc);
     // First-person hand + block-breaking decal (hand package). They own their own shaders and
     // draw into whatever framebuffer is current, so they work with the HDR scene target too.
@@ -754,11 +755,23 @@ export class Game {
       options: this.options as unknown as GuiOptions,
       stats: this.stats,
       advancements: this.advancements,
+      itemTags: ((getWorldData().tags as { item?: Record<string, string[]> } | undefined)?.item) ?? {},
       playerLevel: () => this.survival.level,
       touchInput: this.touchDevice,
       container: this.containerAdapter(),
-      // 3D player preview for the survival inventory (FBO render + readback in the dispatcher).
-      renderEntityPreview: (size, yawRad) => this.entityRenderer.renderPreview(this.player.pos, this.level, size, yawRad),
+      // 3D player preview for the inventory screens (FBO render + readback in the dispatcher).
+      // Armor slots 39..36 are passed in head/chest/legs/feet order, like the render state's
+      // equipment (vanilla InventoryScreen draws the worn armor on the preview model).
+      renderEntityPreview: (size, yawRad, pitchRad) => {
+        const inv = this.survival.inventory;
+        const equipment = [39, 38, 37, 36].map((slot) => {
+          const stack = inv.getItem(slot);
+          return stack.isEmpty() ? null : (stack.item?.namespacedId ?? null);
+        });
+        return this.entityRenderer.renderPreview(
+          this.player.pos, this.level, size, yawRad, pitchRad, equipment,
+        );
+      },
       worlds: this.worldProvider(),
       callbacks: {
         onPlay: () => this.closeScreen(),
@@ -2412,6 +2425,20 @@ export class Game {
       if (layer >= 0) return layer;
     }
     return state % 1230;
+  }
+
+  /**
+   * BlockTintSource#colorAsTerrainParticle for the terrain break burst. Grass block explicitly
+   * opts out ("return -1") because its particle sprite is dirt; plant/leaf sprites are greyscale
+   * and do need the biome colour.
+   */
+  private particleBlockTint(state: number, x: number, y: number, z: number): [number, number, number] {
+    const name = this.mc.blockOf(state).name;
+    if (name === 'grass_block') return [1, 1, 1];
+    if (name === 'redstone_wire') return redstoneWireTint(this.mc.getProp(state, 'power'));
+    const bx = Math.floor(x), by = Math.floor(y), bz = Math.floor(z);
+    const biome = this.level.getBiome(bx, by, bz);
+    return this.biomeColors.blockTint(name, biome, 0, bx, bz, by);
   }
 
   /** Vanilla SoundType grouping: block.grass/stone/wood/... step + break events. */

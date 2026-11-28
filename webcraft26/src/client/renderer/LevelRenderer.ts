@@ -1366,7 +1366,7 @@ function sectionKey(cx: number, cz: number, sy: number): number {
 }
 
 /** RedStoneWireBlock.getColorForPower (vanilla COLORS table). */
-function redstoneWireTint(powerValue: string | undefined): [number, number, number] {
+export function redstoneWireTint(powerValue: string | undefined): [number, number, number] {
   const power = Math.max(0, Math.min(15, Number(powerValue ?? 0)));
   const f = power / 15;
   const r = f * 0.6 + (power > 0 ? 0.4 : 0.3);

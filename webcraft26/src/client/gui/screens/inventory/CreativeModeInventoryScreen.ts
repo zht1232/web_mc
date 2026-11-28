@@ -13,7 +13,7 @@
 import type { GuiGraphics } from '../../GuiGraphics.js';
 import type { CreativeTabData, ItemStack, MouseAction } from '../../Types.js';
 import { AbstractContainerScreen, type SlotDef } from './AbstractContainerScreen.js';
-import { inventoryMenuSlotXY, MENU_OFFHAND_SLOT } from './SlotLayout.js';
+import { MENU_OFFHAND_SLOT } from './SlotLayout.js';
 import { EditBox } from '../../components/EditBox.js';
 import {
   DEFAULT_CREATIVE_TABS,
@@ -33,7 +33,6 @@ import {
   CREATIVE_SEARCH_Y,
   CREATIVE_SEARCH_WIDTH,
   CREATIVE_SEARCH_HEIGHT,
-  INVENTORY_LOCATION,
   SLOT_GRID,
 } from '../../GuiConstants.js';
 
@@ -45,14 +44,15 @@ const SCROLLER_X = 175;
 const SCROLLER_Y = 18;
 const HOTBAR_TOP = 112;
 
-/** Item tabs use the 195x136 creative sheet; Survival Inventory grows to the 166-tall inventory. */
+/** CreativeModeInventoryScreen is 195x136 on every tab (ItemPickerMenu, Java 26.2). */
 const CREATIVE_IMAGE_WIDTH = 195;
 const CREATIVE_IMAGE_HEIGHT = 136;
-const SURVIVAL_IMAGE_HEIGHT = 166;
-const SURVIVAL_INVENTORY_WIDTH = 176;
 const DESTROY_X = 173;
 const DESTROY_Y = 112;
-const CREATIVE_TEXTURE = 'gui/container/creative_inventory/tab_items';
+// CreativeModeTab.createTextureLocation: items / item_search / inventory.
+const TAB_BACKGROUND_ITEMS = 'gui/container/creative_inventory/tab_items';
+const TAB_BACKGROUND_SEARCH = 'gui/container/creative_inventory/tab_item_search';
+const TAB_BACKGROUND_INVENTORY = 'gui/container/creative_inventory/tab_inventory';
 
 /** InventoryMenu armor slots 5..8 and the offhand slot, with their empty-slot sprites. */
 const EMPTY_SLOT_SPRITES: Record<number, string> = {
@@ -69,15 +69,18 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
   private searchBox!: EditBox;
   private currentItemIds: number[] = [];
   private allItemNames: string[] = [];
+  /** Localized display name per allItemNames entry (creativeNameSearch equivalent). */
+  private allItemLabels: string[] = [];
   private scrollOffs = 0;
   private scrolling = false;
   private xMouse = 0;
   private yMouse = 0;
-  private previewCache: { yaw: number; canvas: HTMLCanvasElement } | null = null;
+  private previewCache: { yaw: number; pitch: number; canvas: HTMLCanvasElement } | null = null;
 
   constructor(env: ConstructorParameters<typeof AbstractContainerScreen>[0]) {
-    super(env, 'container.creative', CREATIVE_IMAGE_WIDTH, CREATIVE_IMAGE_HEIGHT, CREATIVE_TEXTURE);
+    super(env, 'container.creative', CREATIVE_IMAGE_WIDTH, CREATIVE_IMAGE_HEIGHT, TAB_BACKGROUND_ITEMS);
     this.allItemNames = readItemNames(env.deps.mc);
+    this.allItemLabels = this.allItemNames.map((n) => localizedItemName(env.t, n));
     const supplied = env.deps.creativeTabs;
     this.tabs = supplied && supplied.length
       ? supplied.map((t) => ({ ...t }))
@@ -97,14 +100,16 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
   private isSurvivalTab(): boolean { return this.selectedTab === TAB_SURVIVAL; }
 
   /**
-   * The Survival Inventory tab swaps the 9x5 item grid for the real InventoryMenu layout
-   * (armor / offhand / 2x2 crafting / player preview) and grows the panel to 166 px.
+   * CreativeModeTab#getBackgroundTexture: every tab uses its own 195x136 sheet (items,
+   * item_search, inventory). The panel size never changes (Java: imageWidth 195, imageHeight 136).
    */
   private configureLayout(): void {
     const survival = this.isSurvivalTab();
     this.imageWidth = CREATIVE_IMAGE_WIDTH;
-    this.imageHeight = survival ? SURVIVAL_IMAGE_HEIGHT : CREATIVE_IMAGE_HEIGHT;
-    this.backgroundTexture = survival ? INVENTORY_LOCATION : CREATIVE_TEXTURE;
+    this.imageHeight = CREATIVE_IMAGE_HEIGHT;
+    this.backgroundTexture = survival
+      ? TAB_BACKGROUND_INVENTORY
+      : this.selectedTab === TAB_SEARCH ? TAB_BACKGROUND_SEARCH : TAB_BACKGROUND_ITEMS;
     this.relayout();
     if (this.searchBox) {
       this.searchBox.setPosition(this.leftPos + CREATIVE_SEARCH_X, this.topPos + CREATIVE_SEARCH_Y);
@@ -113,21 +118,50 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
 
   private setTab(index: number): void {
     if (index < 0 || index >= this.tabs.length) return;
+    const enteringSearch = index === TAB_SEARCH && this.selectedTab !== TAB_SEARCH;
     this.selectedTab = index;
     this.scrollOffs = 0;
-    // CreativeModeInventoryScreen: the search box only exists on the Search tab.
-    if (this.searchBox) this.searchBox.visible = index === TAB_SEARCH;
+    // Java selectTab(): entering Search clears the previous query, every other tab clears the
+    // box as well (the field only exists on the Search tab).
+    if (this.searchBox) {
+      this.searchBox.visible = index === TAB_SEARCH;
+      if (index === TAB_SEARCH) {
+        if (enteringSearch) this.searchBox.setValue('');
+      } else {
+        this.searchBox.setValue('');
+      }
+    }
     this.configureLayout();
     this.refreshItems();
   }
 
   private refreshItems(): void {
     const tab = this.tabs[this.selectedTab];
-    const query = this.searchBox?.getValue().toLowerCase().trim() ?? '';
+    const rawQuery = this.searchBox?.getValue().trim() ?? '';
+    const query = rawQuery.toLowerCase();
     let names = tab.items.length ? tab.items : (this.selectedTab === TAB_SEARCH ? this.allItemNames : []);
-    if (query) names = this.allItemNames.filter((n) => n.includes(query.replace(/\s+/g, '_')));
+    if (query) {
+      if (query.startsWith('#')) {
+        names = this.searchByTag(query.slice(1));
+      } else {
+        const needle = query.replace(/\s+/g, '_');
+        names = this.allItemNames.filter((n, i) =>
+          this.allItemLabels[i].toLowerCase().includes(query) || n.includes(needle));
+      }
+    }
     this.currentItemIds = names.map((n) => this.itemIndex(n)).filter((id) => id >= 0);
     this.writeMenuItems();
+  }
+
+  /** Java refreshSearchResults(): "#tag" searches the item tag table by tag location. */
+  private searchByTag(term: string): string[] {
+    const table = this.env.deps.itemTags ?? {};
+    const matched = new Set<string>();
+    for (const [tag, entries] of Object.entries(table)) {
+      if (!tag.includes(term)) continue;
+      for (const id of entries) matched.add(itemId(id));
+    }
+    return this.allItemNames.filter((n) => matched.has(n));
   }
 
   private writeMenuItems(): void {
@@ -143,10 +177,28 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
   protected buildSlots(): SlotDef[] {
     const out: SlotDef[] = [];
     if (this.isSurvivalTab()) {
-      // InventoryMenu: result, 2x2 craft, 4 armor, 27 main, 9 hotbar, offhand.
+      // CreativeModeInventoryScreen.selectTab (Type.INVENTORY): the InventoryMenu 2x2 crafting
+      // grid + result are parked off-screen, armor moves to (54|108, 6|33), offhand to (35,20),
+      // the main inventory to y=54/72/90 and the hotbar to y=112.
       for (let menuSlot = 0; menuSlot <= MENU_OFFHAND_SLOT; menuSlot++) {
-        const r = inventoryMenuSlotXY(menuSlot, 0, 0);
-        out.push({ index: menuSlot, x: r.x, y: r.y });
+        let x: number;
+        let y: number;
+        if (menuSlot >= 5 && menuSlot < 9) {
+          const pos = menuSlot - 5;
+          x = 54 + Math.floor(pos / 2) * 54;
+          y = 6 + (pos % 2) * 27;
+        } else if (menuSlot < 5) {
+          x = -2000;
+          y = -2000;
+        } else if (menuSlot === MENU_OFFHAND_SLOT) {
+          x = 35;
+          y = 20;
+        } else {
+          const pos = menuSlot - 9;
+          x = GRID_LEFT + (pos % 9) * SLOT_GRID;
+          y = menuSlot >= 36 ? HOTBAR_TOP : 54 + Math.floor(pos / 9) * SLOT_GRID;
+        }
+        out.push({ index: menuSlot, x, y });
       }
       return out;
     }
@@ -179,31 +231,11 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
   }
 
   protected drawLabels(g: GuiGraphics): void {
-    if (this.isSurvivalTab()) {
-      // InventoryScreen: the 2x2 crafting grid is labelled at titleLabelX = 97.
-      g.drawString(this.t('container.crafting'), 97, 6, 0xff404040, false);
-      return;
-    }
+    if (this.isSurvivalTab()) return; // CreativeModeTabs INVENTORY tab uses hideTitle()
     const tab = this.tabs[this.selectedTab];
     // CreativeModeTab#getDisplayName -> translatable "itemGroup.<name>"; drawing the raw
     // tab.key showed English labels even with a Chinese locale.
     if (tab) g.drawString(this.t(tab.key), 8, 6, -12566464, false);
-  }
-
-  /**
-   * Survival Inventory: the 176x166 inventory sheet inside the 195-wide creative frame. The
-   * extra 19 px column keeps the vanilla destroy-item slot at (173, 112) reachable.
-   */
-  protected drawContainerBackground(g: GuiGraphics): void {
-    if (!this.isSurvivalTab()) {
-      super.drawContainerBackground(g);
-      return;
-    }
-    g.fill(0, 0, this.imageWidth, this.imageHeight, 0xffc6c6c6);
-    g.outline(0, 0, this.imageWidth, this.imageHeight, 0xff555555);
-    g.blit(INVENTORY_LOCATION, 0, 0, SURVIVAL_INVENTORY_WIDTH, this.imageHeight);
-    this.drawSlotFrame(g, DESTROY_X, DESTROY_Y);
-    this.textureBacked = true;
   }
 
   protected renderBackground(g: GuiGraphics, mx: number, my: number, pt: number): void {
@@ -213,8 +245,9 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     g.pushPose();
     g.translate(this.leftPos, this.topPos);
 
-    // InventoryScreen#extractBackground: the survival tab shows the player model at (26,8)-(75,78).
-    if (this.isSurvivalTab()) this.drawEntityPreview(g, 26, 8, 75, 78);
+    // InventoryScreen#extractBackground / CreativeModeInventoryScreen#extractBackground: the
+    // player model sits at (73,6)-(105,49) on the Survival Inventory tab.
+    if (this.isSurvivalTab()) this.drawEntityPreview(g, 73, 6, 105, 49);
 
     // Tab buttons: 7 on top (y = -28), 7 on bottom (y = imageHeight - 4).
     for (let i = 0; i < this.tabs.length; i++) {
@@ -235,16 +268,19 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
       if (icon >= 0) g.renderItem(icon, x + 5, y + 8 + (isTop ? 1 : -1), 16);
     }
 
-    // Scroller: CreativeModeInventoryScreen#extractBackground draws only the thumb, over the
-    // well that is already painted into the tab background texture. Drawing a
-    // scroller_background track here added the black bar the player saw, and the old thumb
-    // formula used a 90px track instead of the vanilla 112px one.
+    // Scroller: CreativeModeInventoryScreen#extractBackground draws the thumb (or the disabled
+    // thumb) when the selected tab can scroll; the well is part of the tab background texture.
     const trackH = 112;
     const maxScroll = this.maxScroll();
-    if (!this.isSurvivalTab() && maxScroll > 0) {
-      const sprite = 'container/creative_inventory/scroller';
-      const thumbY = SCROLLER_Y + Math.round((trackH - (CREATIVE_SCROLLER_HEIGHT + 2)) * (maxScroll > 0 ? this.scrollOffs / maxScroll : 0));
-      g.blitSprite(sprite, SCROLLER_X, thumbY, CREATIVE_SCROLLER_WIDTH, CREATIVE_SCROLLER_HEIGHT);
+    if (!this.isSurvivalTab()) {
+      const canScroll = maxScroll > 0;
+      const sprite = canScroll
+        ? 'container/creative_inventory/scroller'
+        : 'container/creative_inventory/scroller_disabled';
+      const thumbY = canScroll
+        ? SCROLLER_Y + Math.round((trackH - 17) * (this.scrollOffs / maxScroll))
+        : SCROLLER_Y;
+      if (g.sprites.get(sprite)) g.blitSprite(sprite, SCROLLER_X, thumbY, CREATIVE_SCROLLER_WIDTH, CREATIVE_SCROLLER_HEIGHT);
     }
 
     // The destroy-item bin is a real Slot at (173,112) that only exists on the Survival
@@ -253,17 +289,23 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
     g.popPose();
   }
 
-  /** InventoryScreen's mouse-following player model preview (survival tab only). */
+  /**
+   * InventoryScreen.extractEntityInInventoryFollowsMouse: both mouse axes drive the preview -
+   * xAngle = atan((centreX - mouseX) / 40) turns the body/head, yAngle = atan((centreY - mouseY)/40)
+   * pitches the camera and the head.
+   */
   private drawEntityPreview(g: GuiGraphics, x0: number, y0: number, x1: number, y1: number): void {
     const render = this.env.deps.renderEntityPreview;
     const cx = (x0 + x1) / 2;
-    const dx = this.xMouse - (this.leftPos + cx);
-    const yaw = Math.max(-0.7, Math.min(0.7, Math.atan2(dx, 40)));
-    const key = Math.round(yaw * 40) / 40;
+    const cy = (y0 + y1) / 2;
+    const xAngle = Math.atan((this.leftPos + cx - this.xMouse) / 40);
+    const yAngle = Math.atan((this.topPos + cy - this.yMouse) / 40);
+    const keyYaw = Math.round(xAngle * 40) / 40;
+    const keyPitch = Math.round(yAngle * 40) / 40;
     if (render) {
-      if (!this.previewCache || this.previewCache.yaw !== key) {
-        const canvas = render(120, key);
-        if (canvas) this.previewCache = { yaw: key, canvas };
+      if (!this.previewCache || this.previewCache.yaw !== keyYaw || this.previewCache.pitch !== keyPitch) {
+        const canvas = render(120, keyYaw, keyPitch);
+        if (canvas) this.previewCache = { yaw: keyYaw, pitch: keyPitch, canvas };
       }
       if (this.previewCache) {
         g.drawCanvas(this.previewCache.canvas, x0, y0, x1 - x0, y1 - y0);
@@ -388,4 +430,13 @@ function readItemNames(mc: unknown): string[] {
   return items
     .map((i) => (i && typeof i === 'object' && 'name' in i ? String((i as { name: unknown }).name) : ''))
     .filter((n) => n.length > 0);
+}
+
+/** Item.getDescriptionId -> localized name (creativeNameSearch indexes the display name). */
+function localizedItemName(t: (key: string) => string, name: string): string {
+  for (const key of [`block.minecraft.${name}`, `item.minecraft.${name}`]) {
+    const translated = t(key);
+    if (translated !== key) return translated;
+  }
+  return name.replace(/_/g, ' ');
 }

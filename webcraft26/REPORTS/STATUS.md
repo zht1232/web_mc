@@ -90,7 +90,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 水面 | ✅ | 2026-11-28：按 Complementary Reimagined r5.9.3 源码移植——30 步 SSR（6 次细化、边界/亮度衰减）、GetSky 天空反射（三段渐变+日落带+太阳眩光）、GGX 高光、深度差水雾与 Fresnel⁴ alpha；默认档平面镜面水。未含折射/焦散与云/星空反射 |
 | 体积光/体积云 | ❌ | 当前是 billboard 云与屏幕空间光轴，不是原版 26.2 体积实现 |
 | 第一人称手/手持物 | ⚠️ | display transform 已按 JSON 移植；物品略偏大/贴边，待逐项对参考图 |
-| 粒子 | ⚠️ | 方块破碎/环境粒子已有；粒子表覆盖不完整 |
+| 粒子 | ⚠️ | 方块破碎/环境粒子已有；粒子表覆盖不完整。2026-11-28：方块破碎粒子按 `BlockTintSource.colorAsTerrainParticle` 上色——草/蕨/树叶用群系草色/叶色，草方块明确不上色（dirt 贴图），红石线按 power 上色；`test-player-motion` 实测草粒子 (0.33,0.79,0.25) |
 | 菜单/设置页帧率 | ✅ | 2026-11-21 修：菜单打开时不再绘制被立即擦掉的 HUD；菜单泥土背景改为一次缓存 + 单次 `drawImage`；HUD 改为脏标记重绘。1600x900@1.5 下暂停页 10→56 fps、视频设置 12→60 fps，`screens` 59.5→1.0 ms/帧 |
 | HUD 空转重绘 | ✅ | 同一份 HudState 不再每帧重画；静止时 0 次 `hud.render`（`test-hud-dirty`）。聊天/Toast/受伤/切槽/缩放会立即触发一次 |
 | 物品图标降级路径 | ✅ | `createImageBitmap` 不可用时不再从 3200² 图集直接 `drawImage`（真实环境曾 90 ms/9 个图标），改为按物品缓存小画布 |
@@ -124,7 +124,8 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 标题/世界选择/创建世界/暂停/选项/视频设置 | ✅ | `test-menu` 9 项 |
-| 生存背包 / 创造物品栏 | ✅ | 官方 tab 精灵、滚动、搜索、tooltip、3D 预览 |
+| 生存背包 / 创造物品栏 | ✅ | 官方 tab 精灵、滚动、搜索、tooltip、3D 预览。2026-11-28：创造背包 Survival Inventory 页按 Java `selectTab(Type.INVENTORY)` 重排——2x2/结果槽移到 -2000 隐藏、盔甲槽 (54|108, 6|33)、副手 (35,20)、主背包 y=54/72/90、热栏 y=112、销毁槽 (173,112)，面板维持 195x136 并切到 `tab_inventory`；搜索页使用 `tab_item_search`，按本地化名称匹配并支持 `#tag`，切页清空；`test-creative-inventory` 10 项 |
+| 玩家 3D 预览 | ✅ | 2026-11-28：按 `InventoryScreen.extractEntityInInventoryFollowsMouse` 双向鼠标角度（xAngle 转体、yAngle 抬头/压低相机）、bodyRot 180 基准、*O 插值字段同步（此前 partialTick=0 导致预览永远朝 0°）、GUI 全亮光照、盔甲（材质层）随预览渲染；创造背包预览框改到 (73,6)-(105,49) |
 | 容器点击规则（左右键/Shift/拖拽/数字键/F/Q/双击） | ✅ | `test-containers` 19 项；`AbstractContainerScreen` |
 | 合成台/箱子/熔炉/配方书 | ✅ | 真实配方、箱子会话内持久、熔炉 GUI 打开时推进 |
 | 村民交易界面 | ✅ | `MerchantScreen` 276x166：7 行报价列表/滚轮与拖动滚动/悬停高亮、3 个交易槽、经验条、等级标题、缺货印章、折扣划线、玩家背包；`test-villager-trade` |
@@ -137,7 +138,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 ### 玩法
 | 项 | 状态 | 说明 |
 |---|---|---|
-| 移动/跳跃/疾跑/飞行/游泳/碰撞 | ✅ | 含 step-up、双击飞行、疾跑 FOV |
+| 移动/跳跃/疾跑/飞行/游泳/碰撞 | ✅ | 含 step-up、双击飞行、疾跑 FOV。2026-11-28：创造飞行垂直速度改为 `LocalPlayer.aiStep` 口径——每 tick `delta.y += inputYa * 0.05 * 3`，随后 `Player.travel` 保留 `originalMovementY * 0.6`（此前直接赋固定 ±0.5395，起落瞬移）；`test-player-motion` 实测首 tick 0.09、终速 ±0.225、松键回悬停 |
 | 挖掘/放置/生存（血量/饥饿/掉落/重生） | ✅ | |
 | 合成/熔炼/箱子 | ✅ | 见上 |
 | 剪刀（羊） | ✅ | 见「实体」；其他剪刀用途（树叶、藤蔓）未接 |
@@ -724,4 +725,31 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 仍未完成：水面折射/焦散、天空的云与星空进入反射（pack 默认
   `DETAIL_QUALITY>=3` 才开 `SKY_EFFECT_REFLECTION_TRANSLUCENT`）、体积光/云、
   景深、完整 gbuffer 管线。
+
+### 创造背包 / 玩家预览 / 创造飞行 / 粒子染色（2026-11-28）
+
+均以仓库内 `_src/thirdparty/.../src-vanilla` 的 26.2 Java 源码为准（不再按记忆）：
+
+- 创造背包 Survival Inventory 页（`CreativeModeInventoryScreen.selectTab(Type.INVENTORY)`）：
+  2x2 合成格与结果槽移到 (-2000,-2000) 隐藏；盔甲槽 `(54 + col*54, 6 + row*27)`；
+  副手 `(35,20)`；主背包 `y=54/72/90`、热栏 `y=112`；面板保持 195x136，
+  背景切到 `tab_inventory`；搜索页用 `tab_item_search`，其余页 `tab_items`；
+  搜索按本地化显示名（`item.minecraft.*`/`block.minecraft.*`）匹配并支持 `#tag`
+  （`tags.json.item`），进入/离开搜索页都会清空输入；`Search Items` 页无物品时画
+  `scroller_disabled`。
+- 玩家 3D 预览：`InventoryScreen.extractEntityInInventoryFollowsMouse` 的
+  `xAngle=atan((cx-mx)/40)`、`yAngle=atan((cy-my)/40)`、`bodyRot=180+xAngle*20`、
+  头相对转角 `xAngle*20`、抬头 `-yAngle*20`；同步 `yRotO/yBodyRotO/yHeadRotO/xRotO`
+  （此前 partialTick=0 从 0 插值，预览根本不随鼠标转）；GUI 用全亮光照
+  （`Lighting.Entry.ENTITY_IN_UI`）；盔甲槽内容随预览渲染；创造背包预览框改到
+  `(73,6)-(105,49)`。
+- 创造飞行：`delta.y += inputYa * 0.05 * 3` 后乘 0.6（`LocalPlayer.aiStep` +
+  `Player.travel`），不再直接赋 ±0.5395；首 tick 0.09、终速 ±0.225。
+- 方块破碎粒子：按 `BlockTintSource.colorAsTerrainParticle` 取群系草色/叶色，
+  草方块按 Java 返回 -1（保持 dirt 原色），红石线按 power；`BRIGHT_CAVE_WATER`
+  等 pack 光照补偿仍待完整 gbuffer。
+- 验证：`tsc` 0；`test-creative-inventory` **10/10**、
+  `test-player-motion` **6/6**（飞行三速 + 草/草方块粒子色）、
+  `test-water-reflect` 7/7、`test-mob-equipment` 13/13。
+
 

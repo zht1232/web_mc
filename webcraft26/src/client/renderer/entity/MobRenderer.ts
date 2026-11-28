@@ -85,6 +85,8 @@ const HUMAN_ARMOR_TYPES: ReadonlySet<string> = new Set([
   'zombie', 'husk', 'drowned', 'zombie_villager',
   'skeleton', 'stray', 'bogged', 'parched', 'wither_skeleton',
   'zombified_piglin',
+  // InventoryScreen preview: the local player is rendered through this renderer too.
+  'player',
 ]);
 const WHITE: readonly [number, number, number] = [1, 1, 1];
 /** VillagerProfessionLayer.LEVEL_LOCATIONS. */

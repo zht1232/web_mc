@@ -162,11 +162,14 @@ export interface ScreenDeps {
   i18n?: (key: string) => string;
   worlds?: WorldListProvider;
   creativeTabs?: CreativeTabData[];
+  /** tags.json item table (tag id -> item ids) for the creative search "#tag" queries. */
+  itemTags?: Record<string, string[]>;
   /**
    * Renders the local player into an offscreen canvas for the survival-inventory preview.
-   * `size` is the GUI-pixel height of the box, `yawRad` the orbit angle from the mouse.
+   * `size` is the GUI-pixel height of the box, `yawRad`/`pitchRad` the two mouse-follow angles
+   * from InventoryScreen.extractEntityInInventoryFollowsMouse.
    */
-  renderEntityPreview?(size: number, yawRad: number): HTMLCanvasElement | null;
+  renderEntityPreview?(size: number, yawRad: number, pitchRad: number): HTMLCanvasElement | null;
   /** Active container menu for inventory/chest/furnace/crafting screens. */
   container?: ContainerMenuLike;
   callbacks: ScreenCallbacks;

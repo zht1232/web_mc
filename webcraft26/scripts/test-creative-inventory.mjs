@@ -142,6 +142,53 @@ try {
   check('worn armor is passed to the preview renderer',
     armor.skipped === true || (armor.equipment && armor.equipment[0] === 'minecraft:iron_helmet'), armor);
 
+  // CreativeModeInventoryScreen.slotClicked: a creative-grid click with a different item on
+  // the cursor destroys the carried stack (no swap), the (173,112) bin deletes the cursor
+  // stack, and shift-clicking the bin empties the whole inventory.
+  const destroy = await ev(async () => {
+    const m = window.__mc;
+    const s = m.screens.current;
+    const mod = await import('/src/vanilla/world/item/ItemStack.ts');
+    const registry = m.survival.registry;
+    const empty = (i) => m.survival.inventory.getItem(i).isEmpty();
+    s.setTab(13);
+    m.survival.inventory.setItem(0, new mod.ItemStack(registry.byName('dirt'), 32));
+    s.menu.click(36, 0, false, 'PICKUP');          // creative hotbar slot 36 -> inventory 0
+    const carried = s.menu.getCarried();
+    const picked = { item: carried?.itemId ?? -1, count: carried?.count ?? 0, slotEmpty: empty(0) };
+    s.setTab(0);                                    // Building Blocks
+    // Find a creative entry that is not the carried dirt.
+    let idx = -1;
+    for (let i = 0; i < 45; i++) {
+      const item = s.menu.getItem(i);
+      if (item && item.itemId >= 0 && item.itemId !== carried?.itemId) { idx = i; break; }
+    }
+    s.menu.click(idx, 0, false, 'PICKUP');
+    const afterGrid = s.menu.getCarried();
+    const gridIdx = idx;
+
+    // Trash bin at (173,112) on the Survival tab: delete the cursor stack.
+    s.setTab(13);
+    m.survival.inventory.setItem(1, new mod.ItemStack(registry.byName('stone'), 16));
+    s.menu.click(37, 0, false, 'PICKUP');          // hotbar slot 37 -> inventory 1
+    const beforeBin = s.menu.getCarried();
+    s.mouseEvent(s.leftPos + 173 + 8, s.topPos + 112 + 8, 0, 'down');
+    const afterBin = s.menu.getCarried();
+
+    // Shift-click the bin: every inventory slot is emptied.
+    for (const i of [0, 1, 9]) m.survival.inventory.setItem(i, new mod.ItemStack(registry.byName('stone'), 3));
+    m.screens.setModifiers(1);
+    s.mouseEvent(s.leftPos + 173 + 8, s.topPos + 112 + 8, 0, 'down');
+    m.screens.setModifiers(0);
+    const cleared = [0, 1, 9].map(empty);
+    return { picked, gridIdx, afterGrid, beforeBin, afterBin, cleared };
+  });
+  check('clicking a different creative item destroys the carried stack (vanilla, no swap)',
+    destroy.picked.item >= 0 && destroy.picked.count === 32 && destroy.picked.slotEmpty
+    && destroy.gridIdx >= 0 && destroy.afterGrid === null, destroy);
+  check('the creative trash slot deletes the cursor stack', destroy.afterBin === null, destroy);
+  check('shift-clicking the trash slot empties the inventory', destroy.cleared.every(Boolean), destroy);
+
   check('no page errors while using the creative screens', errors.length === 0, errors.slice(0, 2));
 } finally {
   const failed = results.filter((r) => !r.ok).length;

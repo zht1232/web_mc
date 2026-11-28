@@ -130,6 +130,8 @@ export interface ContainerMenuLike {
   setCarried(stack: ItemStack | null): void;
   /** Creative inventory writes its virtual tab grid through this (optional for real menus). */
   setItem?(index: number, stack: ItemStack): void;
+  /** Shift-click on the creative trash slot clears the whole inventory (vanilla slotClicked). */
+  clearAll?(): void;
   /** Enchanting table: offer costs + affordability for the three buttons. */
   enchantInfo?(playerLevels: number): { costs: number[]; canEnchant: boolean[] };
   /** Enchanting table: apply offer `slot` (0..2); true when it was consumed. */

@@ -45,7 +45,8 @@ export interface WorldSaveManagerOptions {
 
 export interface LoadedWorld {
   level: NbtCompound;
-  chunks: Map<string, Uint8Array>;
+  /** Keys of every stored chunk ("<world>:<dim>:<cx>,<cz>"); bytes load on demand. */
+  chunkKeys: Set<string>;
   player: NbtCompound | null;
   pets: SavedPet[];
   villagers: SavedVillager[];
@@ -192,23 +193,37 @@ export class WorldSaveManager implements WorldListProvider {
     return id;
   }
 
-  /** Full load: level.dat NBT, all chunk NBT bytes, and the player NBT. Binds as current. */
+  /**
+   * Full load: level.dat NBT, the key set of every saved chunk (bytes are read with
+   * readChunkBytes on demand) and the player NBT. Binds as current.
+   */
   async loadWorld(id: string): Promise<LoadedWorld> {
     const rec = await this.db.worlds.get(id) as WorldRecord | undefined;
     const level: NbtCompound = rec
       ? await LevelStorage.deserialize(rec.levelDat)
       : new CompoundTag();
 
-    const chunkEntries = await this.db.chunks.entries(`${id}:`);
-    const chunks = new Map<string, Uint8Array>();
-    for (const [k, v] of chunkEntries) chunks.set(k, v as Uint8Array);
+    const chunkKeys = await this.chunkKeysFor(id);
 
     const pbytes = await this.db.players.get(`${id}:${this.dim}:player`);
     const player: NbtCompound | null = pbytes instanceof Uint8Array ? NbtIo.read(pbytes) : null;
 
     if (rec) { rec.lastPlayed = Date.now(); await this.db.worlds.put(id, rec); }
-    this.bind(id, new Set(chunks.keys()));
-    return { level, chunks, player, pets: rec?.pets ?? [], villagers: rec?.villagers ?? [] };
+    this.bind(id, new Set(chunkKeys));
+    return { level, chunkKeys, player, pets: rec?.pets ?? [], villagers: rec?.villagers ?? [] };
+  }
+
+  /**
+   * Reads one saved chunk's serialized bytes on demand, so opening a long-played world
+   * no longer pulls (and decodes) every chunk from IndexedDB on the loading screen.
+   */
+  async readChunkBytes(cx: number, cz: number): Promise<Uint8Array | null> {
+    const id = this.currentWorldId;
+    if (!id) return null;
+    const key = this.chunkKey(id, cx, cz);
+    if (!this.savedKeys.has(key)) return null;
+    const value = await this.db.chunks.get(key);
+    return value instanceof Uint8Array ? value : null;
   }
 
   // ---- per-frame dirty chunk persistence ----------------------------------

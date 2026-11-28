@@ -126,7 +126,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 标题/世界选择/创建世界/暂停/选项/视频设置 | ✅ | `test-menu` 9 项 |
-| 生存背包 / 创造物品栏 | ✅ | 官方 tab 精灵、滚动、搜索、tooltip、3D 预览。2026-11-28：创造背包 Survival Inventory 页按 Java `selectTab(Type.INVENTORY)` 重排——2x2/结果槽移到 -2000 隐藏、盔甲槽 (54|108, 6|33)、副手 (35,20)、主背包 y=54/72/90、热栏 y=112、销毁槽 (173,112)，面板维持 195x136 并切到 `tab_inventory`；搜索页使用 `tab_item_search`，按本地化名称匹配并支持 `#tag`，切页清空；`test-creative-inventory` 10 项 |
+| 生存背包 / 创造物品栏 | ✅ | 官方 tab 精灵、滚动、搜索、tooltip、3D 预览。2026-11-28：创造背包 Survival Inventory 页按 Java `selectTab(Type.INVENTORY)` 重排——2x2/结果槽移到 -2000 隐藏、盔甲槽 (54|108, 6|33)、副手 (35,20)、主背包 y=54/72/90、热栏 y=112、销毁槽 (173,112)，面板维持 195x136 并切到 `tab_inventory`；搜索页使用 `tab_item_search`，按本地化名称匹配并支持 `#tag`，切页清空；`test-creative-inventory` 13 项。2026-11-28 修：拿着物品左键点创造页物品栏里的其它物品时按原版**销毁手上物品**（不再交换）；(173,112) 销毁槽清空光标/Shift 清空整个背包 |
 | 玩家 3D 预览 | ✅ | 2026-11-28：按 `InventoryScreen.extractEntityInInventoryFollowsMouse` 双向鼠标角度（xAngle 转体、yAngle 抬头/压低相机）、bodyRot 180 基准、*O 插值字段同步（此前 partialTick=0 导致预览永远朝 0°）、GUI 全亮光照、盔甲（材质层）随预览渲染；创造背包预览框改到 (73,6)-(105,49) |
 | 容器点击规则（左右键/Shift/拖拽/数字键/F/Q/双击） | ✅ | `test-containers` 19 项；`AbstractContainerScreen` |
 | 合成台/箱子/熔炉/配方书 | ✅ | 真实配方、箱子会话内持久、熔炉 GUI 打开时推进 |
@@ -184,9 +184,24 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
    `shots/ref/ref-day-6000-hand-stone.png` 逐项比对——顶部 y=553、左缘 x=1070、
    宽 182、高 62 完全一致，灰色像素数 7729 vs 7713（0.2%）。手持方块与参考图已对齐。
 3. 水面远处/加载瞬间偶发灰色平面：本轮未复现，保留观察；复现后查水体层/光照贴图时序。
+4. 视觉观感与 BetterMC 整合包差距（用户反馈，持续）：资源/光影综合观感，逐项按下面
+   光影清单推进，并对照 `shots/ref/*` 真值图。
+
+**光影 / 视觉清单（Complementary Reimagined r5.9.3 源码为真值，逐项打勾）**
+- [x] 水 SSR（30 步、6 次细化、边界/亮度衰减）、GetSky 天空反射、GGX 高光、水雾/菲涅尔 alpha
+- [ ] 水折射：`lib/materials/materialMethods/refraction.glsl` 的 `DoRefraction`
+      （colortex6 材质掩码 + `noisetex` 偏移、深度差/掩码二次校验）。当前是 forward
+      水着色器，需把已渲染场景色按折射偏移采样；没有 noise 纹理时先用项目现有噪声/抖动
+- [ ] 水下焦散（caustics.glsl 对应效果；当前只做了 `BRIGHT_CAVE_WATER` 颜色补偿）
+- [ ] 体积光 / 体积云：当前是 billboard 云 + 屏幕空间光轴，不是 26.2 体积实现
+- [ ] 景深（DOF，`program/deferred*/final` 中的手部/近景模糊）
+- [ ] 云/星空进入水面反射：zip 的 `SKY_EFFECT_REFLECTION_TRANSLUCENT` 仅在
+      DETAIL_QUALITY>=3 定义，当前按默认档 2 关闭；高画质档需要补
+- [ ] 阴影/水面远景灰面（见 P0 #3）
+- [ ] 与 BetterMC（Iris+Complementary 综合包）并排观感对照：草地/树叶色彩、云层体积感、日/月/星空
 
 **P1（原版核心玩法缺口）**
-4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；~~野生动物实体存档~~ ✅ 已完成区块级实体存档（见「区块实体持久化」）；剩余：幼年专用模型、项圈渲染、大型世界的数据库按需区块加载。
+4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；~~野生动物实体存档~~ ✅ 已完成区块级实体存档（见「区块实体持久化」）；~~大型世界的数据库按需区块加载~~ ✅ 2026-11-28：启动只同步 5×5 区块，其余 IndexedDB 按需读取/解码（见「区块实体持久化」）；剩余：幼年专用模型、项圈渲染、马科/更多生物 AI。
 5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；~~TNT 归属与爆炸掉落衰减~~ ✅ 已按 `ServerExplosion` 射线算法 + `ApplyExplosionDecay` + `PrimedTnt.owner` 重写；~~药箭~~ ✅；~~爆炸可见度（`getSeenPercent` 遮挡）~~ ✅ 16³ AABB 采样 + 碰撞体射线；剩余：比较器/活塞等红石长尾。
 6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成 + 8 类触发器（含 `villager_trade` 与 Y 坐标谓词）；~~树状布局/连接线~~ ✅ 原版 28px 网格、父节点居中、拖动/滚轮/滚动条与悬停 tooltip；剩余：完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
 7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；~~村民繁殖与铁傀儡~~ ✅ 已加入食物点繁殖/宝宝模型与南瓜图案生成的铁傀儡；~~村民农业~~ ✅ 农民收割/补种/烤面包 + 食物分享；~~村民睡眠/工作日程（昼夜作息与床）~~ ✅ 已加入日落入睡/日出醒来、床认领与躺姿、受击/床毁唤醒，~~村庄八卦生成铁傀儡~~ ✅ 简化为 5 名最近 24000 tick 内睡过的村民生成（无 gossip 系统），~~工作/聚集时段~~ ✅ 已按原版日程加入工作站点工作、钟声会议与农民工作时段门控，生成村庄已带床/工作站点/钟，~~流浪商人~~ ✅ 已加入生成周期、9 条 26.2 报价、交易界面与商人羊驼；剩余：地图交易（需已填充地图/结构定位）、袭击。
@@ -473,9 +488,16 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   数量、生命、坐标、物品与经验值；断言没有重复生成；再传送到 1024 格外并确认区块已卸载，
   返回后从保存字节恢复方块与实体）；回归 `test-minecart` 11/11、`test-boat` 16/16、
   `test-villager-trade` 14/14、`test-taming` 7/7、`smoke` 19/19。
-- 剩余：启动时仍会把 IndexedDB 里的全部已保存区块解码进内存（`loaded.chunks`），大型
-  世界应改成只载入玩家附近、其余按需从数据库读取；箭/投掷物/TNT 等瞬时实体的存档、
-  实体装备/药水效果等 NBT 长尾也待补。
+- 剩余：箭/投掷物/TNT 等瞬时实体的存档、实体装备/药水效果等 NBT 长尾待补。
+- 2026-11-28 启动提速（大世界）：`WorldSaveManager.loadWorld` 不再把 IndexedDB 里
+  全部区块字节读进内存（`LoadedWorld.chunks` → `chunkKeys`），新增
+  `readChunkBytes(cx,cz)` 按需读取；`restoreWorld` 只同步读取/解码玩家周围 5×5
+  区块（从存档玩家坐标出发，先于 `ensureChunk`，避免把存档覆盖成重新生成），
+  其余区块由 `ensureChunksAround` 每 tick 最多取 2 个（读取→下 tick 解码），
+  失败则删键回退到正常生成。验收：`tsc` 0、`test-save` **49/49**（含新的
+  chunkKeys 断言）、`test-entity-save` **11/11**（远行返回时区块确实从
+  IndexedDB 按需读取恢复）、`test-boot-time` 3/3（新世界 ~2.6–3.1 s 到
+  Ready，同步存档恢复 ≤25 区块）。
 
 ### 铁傀儡 + 村民繁殖（2026-11-28）
 

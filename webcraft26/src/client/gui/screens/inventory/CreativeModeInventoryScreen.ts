@@ -365,11 +365,15 @@ export class CreativeModeInventoryScreen extends AbstractContainerScreen {
         return true;
       }
       // Deletes the carried stack: the Survival Inventory tab's destroy slot at (173,112).
+      // Shift-click empties every inventory slot (vanilla slotClicked destroyItemSlot branch).
       if (this.selectedTab === TAB_SURVIVAL) {
         const tx = this.leftPos + 173;
         const ty = this.topPos + 112;
         if (mx >= tx && mx < tx + 16 && my >= ty && my < ty + 16) {
-          this.menu.setCarried(null);
+          const shift = (this.env.mods & 1) !== 0;
+          if (shift) this.menu.clearAll?.();
+          else this.menu.setCarried(null);
+          this.pressedSlot = -1;
           return true;
         }
       }

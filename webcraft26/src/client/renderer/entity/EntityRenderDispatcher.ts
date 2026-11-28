@@ -260,28 +260,34 @@ export class EntityRenderDispatcher {
 
   private async loadTextures(base: string): Promise<void> {
     const gl = this.gl;
+    // Fetch every PNG in parallel: the 120+ entity skins used to be awaited one by one,
+    // which cost ~65 sequential network/RTT latencies on a cold load.
+    const jobs: { slot: number; url: string }[] = [];
     for (let i = 0; i < this.n; i++) {
       const key = ALL_TEXTURE_KEYS[i];
       if (key === WHITE_TEXTURE || key === ITEM_ICON_TEXTURE || this.textures[i]) continue;
-      try {
-        // `block/...` keys (PrimedTnt) live under textures/block, not textures/entity.
-        const url = key.startsWith('block/')
-          ? `${base.slice(0, base.lastIndexOf('/'))}/${key}.png`
-          : `${base}/${key}.png`;
-        const img = await loadImage(url);
-        const tex = gl.createTexture()!;
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        // vanilla entity textures: UV (0,0) is the top-left texel, no Y flip
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, img);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        this.textures[i] = tex;
-      } catch {
-        // leave null: entities using this texture are skipped until it loads
-      }
+      // `block/...` keys (PrimedTnt) live under textures/block, not textures/entity.
+      const url = key.startsWith('block/')
+        ? `${base.slice(0, base.lastIndexOf('/'))}/${key}.png`
+        : `${base}/${key}.png`;
+      jobs.push({ slot: i, url });
+    }
+    const images = await Promise.all(jobs.map(async (job) => {
+      try { return await loadImage(job.url); } catch { return null; }
+    }));
+    for (let k = 0; k < jobs.length; k++) {
+      const img = images[k];
+      if (!img) continue; // missing asset: entities using this texture are skipped
+      const tex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      // vanilla entity textures: UV (0,0) is the top-left texel, no Y flip
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      this.textures[jobs[k].slot] = tex;
     }
   }
 

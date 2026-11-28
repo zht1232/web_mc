@@ -298,7 +298,7 @@ check('5.2 flushDirty wrote dirty chunks', flushed >= 2, `wrote ${flushed}`);
 
 const loaded = await mgr.loadWorld(worldId);
 check('5.3 loadWorld returns level NBT', loaded.level instanceof CompoundTag);
-check('5.4 loadWorld returns chunk map', loaded.chunks instanceof Map && loaded.chunks.size >= 2, `chunks=${loaded.chunks.size}`);
+check('5.4 loadWorld returns the saved chunk key set', loaded.chunkKeys instanceof Set && loaded.chunkKeys.size >= 2, `chunks=${loaded.chunkKeys.size}`);
 
 const data = loaded.level.getCompound('Data')!;
 check('5.5 seed fully restored', data.getLong('RandomSeed') === SEED, `seed=${data.getLong('RandomSeed')}`);
@@ -329,8 +329,8 @@ const bundle = await mgr.exportWorld(worldId);
 const importedId = await mgr.importWorld(bundle.buffer.slice(bundle.byteOffset, bundle.byteOffset + bundle.byteLength) as ArrayBuffer);
 const imported = await mgr.loadWorld(importedId);
 check('5.16 exportWorld/importWorld round-trips chunks + player',
-  imported.chunks.size === loaded.chunks.size && imported.player !== null,
-  `chunks=${imported.chunks.size}`);
+  imported.chunkKeys.size === loaded.chunkKeys.size && imported.player !== null,
+  `chunks=${imported.chunkKeys.size}`);
 check('5.17 imported seed preserved', imported.level.getCompound('Data')!.getLong('RandomSeed') === SEED);
 
 // exportRegion produces a real .mca
@@ -339,7 +339,7 @@ check('5.18 exportRegion() returns a valid aligned .mca', mcaFromWorld.length % 
 
 await mgr.delete(worldId);
 check('5.19 delete() clears world metadata', !(await mgr.list()).some((w) => w.id === worldId));
-check('5.20 delete() clears chunks/player/regions', (await mgr.getSummary(worldId)) === null && (await mgr.loadWorld(worldId)).chunks.size === 0);
+check('5.20 delete() clears chunks/player/regions', (await mgr.getSummary(worldId)) === null && (await mgr.loadWorld(worldId)).chunkKeys.size === 0);
 
 // ===========================================================================
 // 6. Performance: single chunk < 2ms, 100-chunk flush respects budget

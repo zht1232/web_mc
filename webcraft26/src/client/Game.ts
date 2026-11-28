@@ -370,6 +370,10 @@ export class Game {
   private entityChunkKey = '';
   /** Serialized saved chunks (chunkKey -> NBT bytes) used to restore unloaded chunks. */
   private readonly savedChunkBytes = new Map<number, Uint8Array>();
+  /** Every chunk the save holds (coords), including ones not read into memory yet. */
+  private readonly savedChunkCoords = new Set<number>();
+  /** Chunk keys with an IndexedDB read in flight (no duplicate fetches / generation). */
+  private readonly pendingSavedChunks = new Set<number>();
   /**
    * World-level snapshots for entities deliberately excluded from chunk records
    * (villagers, tamed pets). Live entries are keyed by entity id; after a chunk
@@ -1295,9 +1299,14 @@ export class Game {
         const stack = slot ? slot.getItem() : ItemStack.EMPTY;
         return plain(stack);
       },
-      click: (index, button, _shift, action) => {
+      click: (index, button, shift, action) => {
         const active = menu();
         if (isCreativeItemTab() && index >= 0 && index < 45) {
+          // CreativeModeInventoryScreen.slotClicked (slot.container == CONTAINER):
+          //   SWAP -> max copy into the hotbar slot, CLONE -> max copy onto the cursor,
+          //   THROW -> drop, quickKey -> max stack, otherwise grow/shrink by one.
+          // A left click on a *different* item while carrying a stack empties the
+          // cursor (the carried stack is destroyed), it never swaps back.
           const item = this.survival.registry.get(creativeGrid[index].itemId);
           if (!item) { active.setCarried(ItemStack.EMPTY); return; }
           const stack = new ItemStack(item, 1);
@@ -1305,19 +1314,34 @@ export class Game {
           const carried = active.getCarried();
           if (action === 'SWAP') {
             this.survival.inventory.setItem(button, stack.copyWithCount(max));
-          } else if (action === 'THROW') {
+            return;
+          }
+          if (action === 'THROW') {
             this.survival.drop(stack.copyWithCount(button === 1 ? max : 1));
-          } else if (action === 'CLONE' || action === 'QUICK_MOVE') {
-            active.setCarried(stack.copyWithCount(max));
-          } else if (action === 'PICKUP' || action === 'SPLIT') {
-            if (carried.isEmpty()) active.setCarried(stack);
-            else if (ItemStack.isSameItemSameComponents(carried, stack)) {
-              carried.setCount(Math.max(0, Math.min(max, carried.getCount() + (button === 1 ? -1 : 1))));
+            return;
+          }
+          if (action === 'CLONE') {
+            if (carried.isEmpty()) active.setCarried(stack.copyWithCount(max));
+            return;
+          }
+          const quickKey = action === 'QUICK_MOVE' || shift;
+          if (!carried.isEmpty() && ItemStack.isSameItemSameComponents(carried, stack)) {
+            if (button === 0) {
+              if (quickKey) carried.setCount(max);
+              else if (carried.getCount() < max) carried.setCount(carried.getCount() + 1);
             } else {
-              // Creative: clicking a different item replaces what you are carrying instead of
-              // silently emptying the cursor.
-              active.setCarried(stack);
+              carried.setCount(carried.getCount() - 1);
+              if (carried.getCount() <= 0) active.setCarried(ItemStack.EMPTY);
             }
+            return;
+          }
+          if (carried.isEmpty()) {
+            active.setCarried(quickKey ? stack.copyWithCount(max) : stack);
+          } else if (button === 0) {
+            active.setCarried(ItemStack.EMPTY);
+          } else {
+            carried.setCount(carried.getCount() - 1);
+            if (carried.getCount() <= 0) active.setCarried(ItemStack.EMPTY);
           }
           return;
         }
@@ -1343,6 +1367,12 @@ export class Game {
       },
       setItem: (index, stack) => {
         if (isCreativeItemTab() && index >= 0 && index < 45) creativeGrid[index] = { itemId: stack.itemId, count: stack.count };
+      },
+      // CreativeModeInventoryScreen.slotClicked: shift-clicking the destroy slot empties
+      // every slot of the inventory menu (main inventory, hotbar, armor, offhand).
+      clearAll: () => {
+        const active = menu();
+        for (let i = 0; i < active.slots.length; i++) active.slots[i].set(ItemStack.EMPTY);
       },
       enchantInfo: (levels) => {
         const active = menu();
@@ -1441,8 +1471,8 @@ export class Game {
       if (target) {
         const loaded = await this.saveManager.loadWorld(target.id);
         this.currentWorldId = target.id;
-        this.restoreWorld(loaded);
-        console.log(`[save] restored "${target.name}" (${target.id}): ${loaded.chunks.size} chunks, player ${loaded.player ? 'yes' : 'no'}`);
+        await this.restoreWorld(loaded);
+        console.log(`[save] restored "${target.name}" (${target.id}): ${loaded.chunkKeys.size} saved chunks, player ${loaded.player ? 'yes' : 'no'}`);
       } else {
         this.currentWorldId = await this.saveManager.createWorld({
           name: 'World',
@@ -1477,23 +1507,42 @@ export class Game {
   }
 
   /** Replaces generated chunks with the saved ones and restores player/level state. */
-  private restoreWorld(loaded: LoadedWorld): void {
+  private async restoreWorld(loaded: LoadedWorld): Promise<void> {
     const started = performance.now();
-    const decoded: LevelChunk[] = [];
-    // Keep the serialized saved chunks: a chunk that leaves the retention band is
-    // restored from these bytes when the player returns, instead of being
-    // regenerated from the seed (which would lose its blocks and entity records).
+    // Keep the key set of every serialized chunk; bytes are read from IndexedDB on
+    // demand and decode when the player first reaches them (ensureChunksAround,
+    // max 2/tick). Reading/decoding the whole save here froze the main thread for
+    // seconds on long-played worlds ("Opening world save 99%" / page not responding).
     this.savedChunkBytes.clear();
+    this.savedChunkCoords.clear();
+    this.pendingSavedChunks.clear();
+    for (const key of loaded.chunkKeys) {
+      const m = /(-?\d+),(-?\d+)$/.exec(key);
+      if (m) this.savedChunkCoords.add(chunkKey(Number(m[1]), Number(m[2])));
+    }
     // World-level villager/pet snapshots from a previous world must not leak into this one.
     this.villagerSnapshots.clear();
     this.petSnapshots.clear();
-    for (const bytes of loaded.chunks.values()) {
-      try {
-        const chunk = ChunkSerializer.fromBytes(bytes, this.mc, this.chunkCodec);
-        decoded.push(chunk);
-        this.savedChunkBytes.set(chunkKey(chunk.x, chunk.z), bytes);
-      } catch (err) {
-        console.warn('[save] unreadable chunk:', err);
+
+    // Read + decode only the 5x5 saved chunks around the saved player synchronously;
+    // the rest stream in with the normal chunk pipeline as the player moves.
+    const savedPos = loaded.player ? PlayerData.fromNbt(loaded.player).pos : null;
+    const pcx = Math.floor((savedPos ?? this.player.pos).x) >> 4;
+    const pcz = Math.floor((savedPos ?? this.player.pos).z) >> 4;
+    const decoded: LevelChunk[] = [];
+    for (let dz = -2; dz <= 2; dz++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const cx = pcx + dx, cz = pcz + dz;
+        const k = chunkKey(cx, cz);
+        if (!this.savedChunkCoords.has(k)) continue;
+        const bytes = await this.saveManager?.readChunkBytes(cx, cz) ?? null;
+        if (!bytes) continue;
+        this.savedChunkBytes.set(k, bytes);
+        try {
+          decoded.push(ChunkSerializer.fromBytes(bytes, this.mc, this.chunkCodec));
+        } catch (err) {
+          console.warn('[save] unreadable chunk:', err);
+        }
       }
     }
     // Saved chunks already carry their light data; skip the per-chunk full relight.
@@ -1501,7 +1550,7 @@ export class Game {
     // These chunks were generated (and their passive animals spawned) before the save;
     // mark them known so the chunk-generation spawn pass does not add a second wave.
     for (const chunk of decoded) this.entityManager.markChunkKnown(chunk.x, chunk.z);
-    console.log(`[save] restored ${count} chunks in ${Math.round(performance.now() - started)} ms`);
+    console.log(`[save] restored ${count}/${loaded.chunkKeys.size} saved chunks near the player in ${Math.round(performance.now() - started)} ms`);
 
     if (loaded.player) {
       PlayerData.applyToPlayer(loaded.player, this.player);
@@ -4885,7 +4934,8 @@ export class Game {
           const cx = pcx + dx;
           const cz = pcz + dz;
           if (this.level.hasChunk(cx, cz)) continue;
-          const saved = savedLoads < 2 ? this.savedChunkBytes.get(chunkKey(cx, cz)) : undefined;
+          const key = chunkKey(cx, cz);
+          const saved = savedLoads < 2 ? this.savedChunkBytes.get(key) : undefined;
           if (saved) {
             try {
               const chunk = ChunkSerializer.fromBytes(saved, this.mc, this.chunkCodec);
@@ -4897,6 +4947,18 @@ export class Game {
             } catch (err) {
               console.warn('[save] unreadable saved chunk:', err);
             }
+          }
+          // Saved but not read yet: fetch its bytes (one read per chunk), decode on the
+          // next tick. Falling through to request() would generate over the save.
+          if (savedLoads < 2 && this.savedChunkCoords.has(key) && !this.pendingSavedChunks.has(key)) {
+            this.pendingSavedChunks.add(key);
+            savedLoads++;
+            void this.saveManager?.readChunkBytes(cx, cz).then((bytes) => {
+              if (bytes) this.savedChunkBytes.set(key, bytes);
+              else this.savedChunkCoords.delete(key); // missing record: allow generation
+            }).catch(() => this.savedChunkCoords.delete(key))
+              .finally(() => this.pendingSavedChunks.delete(key));
+            continue;
           }
           this.chunkProvider.request(cx, cz, dx * dx + dz * dz);
         }

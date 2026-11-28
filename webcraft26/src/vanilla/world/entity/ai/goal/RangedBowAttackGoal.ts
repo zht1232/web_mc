@@ -23,7 +23,12 @@ export class RangedBowAttackGoal extends Goal {
 
   canContinueToUse(): boolean { return this.canUse(); }
 
-  start(): void { this.attackTime = 0; this.strafeTime = 0; }
+  start(): void {
+    // Vanilla RangedBowAttackGoal.start: the skeleton only raises the bow while aggressive.
+    this.mob.setAggressive(true);
+    this.attackTime = 0;
+    this.strafeTime = 0;
+  }
 
   requiresUpdateEveryTick(): boolean { return true; }
 
@@ -60,5 +65,8 @@ export class RangedBowAttackGoal extends Goal {
     }
   }
 
-  stop(): void { this.mob.getNavigation().stop(); }
+  stop(): void {
+    this.mob.setAggressive(false);
+    this.mob.getNavigation().stop();
+  }
 }

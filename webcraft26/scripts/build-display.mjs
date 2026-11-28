@@ -4,7 +4,8 @@
  *
  *   input : public/mc/itemmodels.json            (item -> model location, built by build-itemmodels.mjs)
  *           <vanilla>/assets/minecraft/models/**  (model JSON, parent chains + "display")
- *   output: public/mc/hand/display.json          (model location -> firstperson_righthand + ground)
+ *   output: public/mc/hand/display.json          (model location -> firstperson_righthand,
+ *                                                 thirdperson_righthand/lefthand + ground)
  *
  * Run: node scripts/build-display.mjs
  * Idempotent, Node built-ins only, never writes outside public/mc/hand.
@@ -85,9 +86,13 @@ function findTopTransform(loc, context) {
 }
 
 const firstPersonRightHand = (loc) => findTopTransform(loc, 'firstperson_righthand');
+const thirdPersonRightHand = (loc) => findTopTransform(loc, 'thirdperson_righthand');
+const thirdPersonLeftHand = (loc) => findTopTransform(loc, 'thirdperson_lefthand');
 const groundTransform = (loc) => findTopTransform(loc, 'ground');
 
 const out = {};
+const thirds = {};
+const thirdsLeft = {};
 const grounds = {};
 let missing = 0;
 let inherited = 0;
@@ -102,6 +107,11 @@ for (const loc of [...wanted].sort()) {
   // which the renderer applies as the bare translate(-0.5, -0.5, -0.5).
   const g = groundTransform(loc);
   if (g) grounds[loc] = { rotation: g.rotation, translation: g.translation, scale: g.scale };
+  // THIRD_PERSON_* contexts: ItemInHandLayer draws mob-held items with them.
+  const t3 = thirdPersonRightHand(loc);
+  if (t3) thirds[loc] = { rotation: t3.rotation, translation: t3.translation, scale: t3.scale };
+  const tl = thirdPersonLeftHand(loc);
+  if (tl) thirdsLeft[loc] = { rotation: tl.rotation, translation: tl.translation, scale: tl.scale };
 }
 
 // build-itemmodels.mjs substitutes unbaked "<block>_inventory" item models with a blockstate
@@ -133,6 +143,9 @@ const doc = {
   transforms: out,
   groundCount: Object.keys(grounds).length,
   grounds,
+  thirdPersonCount: Object.keys(thirds).length,
+  thirdPerson: thirds,
+  thirdPersonLeft: thirdsLeft,
 };
 await fs.writeFile(OUT, JSON.stringify(doc, null, 1) + '\n');
 

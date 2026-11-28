@@ -57,6 +57,7 @@ import { Minecart } from '../vanilla/world/entity/vehicle/Minecart.js';
 import { Boat } from '../vanilla/world/entity/vehicle/Boat.js';
 import { EntityRenderDispatcher } from './renderer/entity/EntityRenderDispatcher.js';
 import { WorldItemRenderer } from './renderer/entity/WorldItemRenderer.js';
+import { HeldItemRenderer } from './renderer/entity/HeldItemRenderer.js';
 import { cameraBasis } from './renderer/gl/Gl.js';
 import { argbFromRgb, computeFogColor } from './renderer/environment/FogState.js';
 import { ENTITY_TYPES, isUndeadType } from '../vanilla/world/entity/EntityType.js';
@@ -200,6 +201,7 @@ export class Game {
   entityRenderer!: EntityRenderDispatcher;
   /** Dropped block items drawn with real 3D block models (GROUND display transform). */
   worldItemRenderer!: WorldItemRenderer;
+  heldItemRenderer!: HeldItemRenderer;
   screens!: ScreenManager;
   survival!: SurvivalState;
   /** Vanilla player statistics (StatsCounter): mined/crafted/killed + custom counters. */
@@ -532,6 +534,9 @@ export class Game {
     // GROUND display transform, so the icon sprite path skips them.
     this.worldItemRenderer = new WorldItemRenderer(this.gl, this.mc, this.models, this.textures);
     this.entityRenderer.setWorldItems(this.worldItemRenderer);
+    // Mobs hold the real item model (ItemInHandLayer): bow/sword are the vanilla sprites.
+    this.heldItemRenderer = new HeldItemRenderer(this.gl, this.textures);
+    this.entityRenderer.setHeldItems(this.heldItemRenderer);
     // A type without a renderer would spawn invisible and still attack: take it out of natural spawning and /summon.
     ENTITY_TYPES.forEach((t) => { if (t.factory && !this.entityRenderer.canRender(t.name)) t.factory = null; });
 
@@ -571,6 +576,7 @@ export class Game {
     this.icons.build(this.guiScale);
     await this.entityRenderer.init('/mc/textures/entity');
     await this.worldItemRenderer.init('/mc');
+    await this.heldItemRenderer.init('/mc');
     await this.skyRenderer.init();
     await this.cloudRenderer.init();
     await this.weatherRenderer.init();

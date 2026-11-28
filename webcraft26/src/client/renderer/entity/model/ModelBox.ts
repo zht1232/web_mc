@@ -119,6 +119,13 @@ export interface BakedModel {
   mats: Float64Array;
   vertexCount: number;
   animate: ModelAnimator | null;
+  /**
+   * Extra hand-pivot offset along model X for the held-item layer, in model units.
+   * SkeletonModel.translateToHand shifts the arm pivot by +1 texel before rendering
+   * the item (the skeleton arm is 2 texels wide instead of 4); every other
+   * humanoid uses 0.
+   */
+  handOffsetX?: number;
 }
 
 // ---------------------------------------------------------------------------

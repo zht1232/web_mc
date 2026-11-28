@@ -5,7 +5,7 @@
 // the shared transform in EntityRenderer. Mob-specific render state that lives
 // in the entity class itself (creeper swelling) is read here.
 
-import { EntityRenderer, type EntityLayer } from './EntityRenderer.js';
+import { EntityRenderer, stackId, type EntityLayer } from './EntityRenderer.js';
 import {
   MODEL_REGISTRY, SHEEP_WOOL_MODEL, SHEEP_WOOL_TEXTURE,
   ARMOR_LAYER1_TEXTURE, ARMOR_LAYER2_TEXTURE, IRON_GOLEM_CRACK_TEXTURES, type ModelEntry,
@@ -209,22 +209,22 @@ export class MobRenderer extends EntityRenderer<Entity> {
       const living = e as LivingEntity;
       let n = 0;
       const head = living.getItemBySlot(EquipmentSlot.HEAD);
-      const headMat = head ? armorMaterial(head.id) : null;
+      const headMat = head ? armorMaterial(stackId(head)) : null;
       if (headMat) {
         this.armorLayers[n++] = { model: ArmorHelmetModel, texture: ARMOR_LAYER1_TEXTURE(headMat), tint: WHITE };
       }
       const chest = living.getItemBySlot(EquipmentSlot.CHEST);
-      const chestMat = chest ? armorMaterial(chest.id) : null;
+      const chestMat = chest ? armorMaterial(stackId(chest)) : null;
       if (chestMat) {
         this.armorLayers[n++] = { model: ArmorChestModel, texture: ARMOR_LAYER1_TEXTURE(chestMat), tint: WHITE };
       }
       const legs = living.getItemBySlot(EquipmentSlot.LEGS);
-      const legsMat = legs ? armorMaterial(legs.id) : null;
+      const legsMat = legs ? armorMaterial(stackId(legs)) : null;
       if (legsMat) {
         this.armorLayers[n++] = { model: ArmorLegsModel, texture: ARMOR_LAYER2_TEXTURE(legsMat), tint: WHITE };
       }
       const feet = living.getItemBySlot(EquipmentSlot.FEET);
-      const feetMat = feet ? armorMaterial(feet.id) : null;
+      const feetMat = feet ? armorMaterial(stackId(feet)) : null;
       if (feetMat) {
         this.armorLayers[n++] = { model: ArmorBootsModel, texture: ARMOR_LAYER1_TEXTURE(feetMat), tint: WHITE };
       }

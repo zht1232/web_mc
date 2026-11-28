@@ -19,7 +19,7 @@
 | `src/client/Game.ts` | 启动、世界生命周期、输入、渲染循环、菜单接线 | 单文件较大，改前先搜调用点 |
 | `src/client/gui/` | 原版 GUI 移植：ScreenManager、Title/SelectWorld/CreateWorld/Options、HUD、物品栏/容器、配方书 | GUI 是 Canvas2D，与 3D 分离 |
 | `src/client/renderer/` | WebGL2：区块网格、实体、天空/云/天气、阴影、后处理、第一人称手 | |
-| `src/client/renderer/entity/` | 实体批渲染 + 模型/动画（`model/EntityModels.ts`） | 羊毛/弓等层级模型都在这里 |
+| `src/client/renderer/entity/` | 实体批渲染 + 模型/动画（`model/EntityModels.ts`） | 羊毛等层级模型在这里；手持物品走 `HeldItemRenderer` |
 | `src/client/world/` | 区块流式加载、出生点、IndexedDB 存档、区块 worker | |
 | `src/vanilla/` | 26.2 类库的 TS 移植（实体/AI/物品/容器/worldgen/光照/NBT） | 尽量保持 Java 类名与方法名 |
 | `scripts/` | `build-*` 资源导入；`test-*` 单测；`smoke/shot/probe-*` 浏览器验证 | |
@@ -105,9 +105,9 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 |---|---|---|
 | 25 种可渲染生物 | ✅ | 34 个 mob 工厂 + 数据驱动模型；变体共用基础模型/贴图；`test-mobs-render` 20 项 |
 | 羊的羊毛层 | ✅ | 2026-11-21 修：`SheepFurModel` + DyeColor tint + 随机毛色；剪毛后隐藏（测试 [20]） |
-| 骷髅弓 | ✅ | 2026-11-21 修：弓弦从瞄准方向正面翻到射手一侧 |
+| 骷髅弓 | ✅ | 2026-11-28：改为原版弓物品模型（通用 `ItemInHandLayer` + `thirdperson_righthand` 姿态 + 16×16 物品纹理），自绘方块弓已移除；弓姿按原版只在 aggressive 且持弓时抬起 |
 | 药箭 | ✅ | 2026-11-28：`crafting_imbue` 配方（3x3 全满、中心滞留药水、其余 8 格箭 → 8 支带 `potion` 组件的药箭，消耗全部 9 格且不返还玻璃瓶）；弓发射 `tipped_arrow` 时箭实体携带药水并按原版 `POTION_DURATION_SCALE=0.125` 缩短时长、命中后施加效果（含立即伤害/治疗的亡灵反转）；`#minecraft:tradeable` 41 种药水（含 turtle_master 双效果）；`test-tipped-arrow` 10 项。缺口：药箭图标/实体未按药水颜色着色（cosmetic） |
-| 生物装备/手持物 | ✅ | 主手物品层（骷髅弓/凋灵骷髅石剑）+ 人形四层护甲（equipment/humanoid 贴图）；2026-11-28 起按原版 `Mob.populateDefaultEquipmentSlots` 生成护甲（15% 触发、皮革/铜/金/锁链/铁/钻石六档、头→靴每格 25% 停止），僵尸 1% 铁剑/铁矛/铁锹，骷髅弓，凋灵骷髅石剑且无甲，溺尸 10% 三叉戟/钓竿 + 3% 鹦鹉螺壳副手，僵尸猪灵金剑/金矛；`test-mob-equipment` |
+| 生物装备/手持物 | ✅ | 通用主手物品层（所有人形生物按 `ItemInHandLayer` 持真实物品模型：骷髅弓/凋灵骷髅石剑/僵尸剑/溺尸三叉戟/猪灵金剑）+ 人形四层护甲（equipment/humanoid 贴图）；2026-11-28 起按原版 `Mob.populateDefaultEquipmentSlots` 生成护甲（15% 触发、皮革/铜/金/锁链/铁/钻石六档、头→靴每格 25% 停止），僵尸 1% 铁剑/铁矛/铁锹，骷髅弓，凋灵骷髅石剑且无甲，溺尸 10% 三叉戟/钓竿 + 3% 鹦鹉螺壳副手，僵尸猪灵金剑/金矛；`test-mob-equipment` |
 | 亡灵日照燃烧 | ✅ | 2026-11-28 修：`Mob.tick` 覆盖 `LivingEntity.tick` 后漏调 `tickDamageOverTime()`，僵尸/骷髅等会着火但永远不掉血（白天越积越多）。现在火焰/岩浆伤害对 mob 生效，`test-review-fixes` 实测 100 tick 掉 2 血并持续燃烧 |
 | 剪羊毛 | ✅ | 2026-11-21：剪刀右键羊 → `sheared`、掉落 1–3 个对应颜色羊毛、播放 `entity.sheep.shear`；重复点击不再掉落 |
 | 鸡下蛋 / 投蛋 | ✅ | 成年鸡 6000–12000 tick 下蛋（幼鸡不下蛋）；投掷蛋落地/命中生物后 1/8 概率孵化幼鸡 |
@@ -584,6 +584,30 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 - 剩余：昼夜作息/床与睡眠、农民 `UseBonemeal`、堆肥桶产出骨粉、工作站点走路聚集、
   玩家破坏耕地的 AI 反应。
 
+### 生物手持物品模型（ItemInHandLayer，2026-11-28）
+
+- 新增 `HeldItemRenderer`：世界空间的真实物品模型通道。姿势逐行移植
+  `ItemInHandLayer.submitArmWithItem`——`translateToHand` → `RX(-90)` → `RY(180)` →
+  `T(1/16, 2/16, -10/16)`，再套 `ItemTransform.apply(THIRD_PERSON_RIGHT_HAND)`（弓：
+  rotation `-80/260/-40`、scale 0.9，见 `build-display.mjs` 新烘焙的 `thirdPerson` 表），
+  最后 `translate(-0.5)`。
+- 几何：`itemmodels.json` 的 `flat` 模型走 `ItemModelGenerator` 挤出网格
+  （`hand/Mesh.ts buildFlatMesh`），直接采 16×16 物品纹理数组（不是 GUI 图标图集），
+  与第一人称手部同一套像素。
+- 手部矩阵：`EntityRenderer.appendModel` 在 body 模型 append 时捕获右臂枢轴
+  （`BakedModel.mats`），存入 `handMatrix`；`SkeletonModel.handOffsetX = 1` 复刻
+  `SkeletonModel.translateToHand` 的 +1 texel 手部偏移。`EntityRenderDispatcher`
+  逐实体收集后，在实体批次之后、掉落物之前绘制。
+- 移除骷髅自绘弓/剑层（`SkeletonRenderer` 只剩 MobRenderer 的默认层）；弓姿改为原版
+  条件 `isAggressive && isHoldingBow`，`RangedBowAttackGoal.start/stop` 补
+  `setAggressive`，待机时手臂自然下垂、持弓不举。
+- 同时修正装备读取：装备槽里既有 `ItemStack` 也有 `{id, count}` 轻量对象，
+  `isHoldingBow` 与护甲层改用 `stackId()`（原先 `mainHand.id` 直接读 ItemStack 会抛异常）。
+- 验证：`tsc` 0；`test-mobs-render` 20/20；`test-item-entity` 13/13；
+  `test-mob-equipment` 13/13；截图 `shots/diag/held-skeleton-front/right.png`、
+  `held-wither-front.png`、`held-piglin-front.png`（骷髅待机下垂 + 握弓、凋灵骷髅石剑、
+  僵尸猪灵金剑）。
+
 ### 怪物装备与稀有掉落（2026-11-28）
 
 - 护甲：`Monster.equipRandomArmor` 逐行移植 `Mob.populateDefaultEquipmentSlots`（普通
@@ -601,8 +625,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   头/胸/腿/靴分布与材质集合、1% 武器池、200 骷髅弓、120 凋灵骷髅石剑无甲、300 溺尸
   武器/鹦鹉螺壳、100 僵尸猪灵金剑/金矛；300 僵尸玩家击杀稀有掉落、100 环境死亡无稀有、
   300 凋灵骷髅头、200 溺尸铜锭）；`npx tsx scripts/test-entities.mts` 全过。
-- 剩余：非骷髅类人形生物的通用主手物品渲染（僵尸剑/溺尸三叉戟/猪灵金剑目前只影响
-  掉落，不显示在手）、附魔装备生成、僵尸增援/敲门、溺尸三叉戟投掷与鹦鹉螺坐骑。
+- 剩余：副手物品（左手）渲染、附魔装备生成、僵尸增援/敲门、溺尸三叉戟投掷与鹦鹉螺坐骑。
 
 ### 爆炸模型重写（2026-11-28）
 

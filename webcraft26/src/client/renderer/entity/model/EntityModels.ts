@@ -303,8 +303,8 @@ export const ZombieModel: BakedModel = withAnimator(bakeModel(humanoid(
 });
 
 /** Source: net.minecraft.client.model.monster.skeleton.SkeletonModel.setupAnim. */
-// The bow is an equipment layer (SkeletonRenderer.getLayers), not a model child: it is drawn
-// only while the skeleton's main hand actually contains a bow.
+// The held bow/sword is the real item model drawn by the held-item pass (ItemInHandLayer);
+// this model only supplies the BOW_AND_ARROW arm pose and the +1 texel hand pivot.
 export const SkeletonModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32, [
   P('head', 0, 0, 0, [B(-4, -8, -4, 8, 8, 8, 0, 0)]),
   P('body', 0, 0, 0, [B(-4, 0, -2, 8, 12, 4, 16, 16)]),
@@ -316,8 +316,9 @@ export const SkeletonModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32
   humanoidAnim(model, ctx);
   const rightArm = pose(model, 'right_arm');
   const leftArm = pose(model, 'left_arm');
-  if (ctx.isHoldingBow) {
-    // HumanoidModel.ArmPose.BOW_AND_ARROW (SkeletonRenderer always reports a bow)
+  // AbstractSkeletonRenderer.getArmPose: BOW_AND_ARROW only while aggressive and holding a bow.
+  if (ctx.isAggressive && ctx.isHoldingBow) {
+    // HumanoidModel.ArmPose.BOW_AND_ARROW
     rightArm.ry = -0.1 + ctx.headYaw;
     leftArm.ry = 0.1 + ctx.headYaw + 0.4;
     rightArm.rx = -HALF_PI + ctx.headPitch;
@@ -337,6 +338,8 @@ export const SkeletonModel: BakedModel = withAnimator(bakeModel(makeModel(64, 32
     bobModelPart(leftArm, ctx.ageInTicks, -1.0);
   }
 });
+// SkeletonModel.translateToHand: the right arm pivot moves +1 texel for the held item.
+SkeletonModel.handOffsetX = 1;
 
 /** Source: net.minecraft.client.model.monster.enderman.EndermanModel.setupAnim. */
 export const EndermanModel: BakedModel = withAnimator(bakeModel(humanoid(

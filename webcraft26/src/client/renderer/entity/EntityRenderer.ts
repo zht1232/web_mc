@@ -43,7 +43,7 @@ interface LivingLike {
   deathTime?: number;
   hurtTime?: number;
   isAggressive?: () => boolean;
-  getMainHandItem?: () => { id: string; count: number } | null;
+  getMainHandItem?: () => MainHandStack | null;
   swell?: number;
   /** LivingEntity.isSleeping(): the body is drawn lying on a bed. */
   sleeping?: boolean;
@@ -53,6 +53,23 @@ interface LivingLike {
 
 const DEG = Math.PI / 180;
 const ZERO_OFFSET: readonly [number, number, number] = [0, 0, 0];
+
+/**
+ * The main-hand stack as the renderers see it. The live entity class returns an ItemStack,
+ * whose item id lives on `item.namespacedId`; test render states pass a bare `{ id }`.
+ * Reading `.id` directly on an ItemStack is undefined and used to throw inside the frame.
+ */
+export interface MainHandStack {
+  id?: string;
+  item?: { namespacedId?: string; name?: string } | null;
+}
+
+/** Namespaced id of an equipment stack (`''` when empty). */
+export function stackId(stack: MainHandStack | null | undefined): string {
+  if (!stack) return '';
+  if (stack.item) return stack.item.namespacedId ?? stack.item.name ?? '';
+  return stack.id ?? '';
+}
 
 /** floats per entity vertex: pos3 uv2 tint3 light2 overlay2 */
 export const FLOATS_PER_VERTEX = 12;
@@ -285,8 +302,16 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
   /** Extra world-space Y offset applied before the entity rotation (ItemEntity bob). */
   getRenderYOffset(_e: T, _partialTick: number): number { return 0; }
 
+  /**
+   * World matrix of the right-arm pivot captured from the last body-model append
+   * (HumanoidModel.translateToHand). 3x4 row-major like `BakedModel.mats`; the
+   * held-item pass places the real item model with it.
+   */
+  readonly handMatrix = new Float64Array(12);
+  handCaptured = false;
+
   append(e: T, batch: EntityBatch, texId: number, partialTick: number): void {
-    this.appendModel(e, this.getModel(e), this.getTint(e), batch, texId, partialTick);
+    this.appendModel(e, this.getModel(e), this.getTint(e), batch, texId, partialTick, undefined, true);
   }
 
   /**
@@ -341,6 +366,8 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     partialTick: number,
     /** World-space offset added after the root matrix (ItemEntity stacked copies). */
     offset: readonly [number, number, number] = ZERO_OFFSET,
+    /** Capture the right-arm pivot into `handMatrix` (body model only, not layers). */
+    captureHand = false,
   ): void {
     const rx = e.xo + (e.x - e.xo) * partialTick;
     const ry = e.yo + (e.y - e.yo) * partialTick;
@@ -381,7 +408,7 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     ctx.isAggressive = typeof mob.isAggressive === 'function' ? mob.isAggressive() : false;
     // SkeletonRenderer: state.isHoldingBow = main hand item is a bow.
     const mainHand = typeof mob.getMainHandItem === 'function' ? mob.getMainHandItem() : null;
-    ctx.isHoldingBow = !!mainHand && mainHand.id.endsWith('bow');
+    ctx.isHoldingBow = stackId(mainHand).endsWith('bow');
     ctx.swell = typeof mob.swell === 'number' ? Math.min(1, Math.max(0, mob.swell)) : 0;
     // ChickenModel/ParrotModel: flapAngle = (sin(flap) + 1) * flapSpeed. The flap
     // counters live in the survival package's Chicken/Parrot classes; approximate
@@ -445,6 +472,24 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
         mulInto(mats, mo, mE, mL);
       } else {
         mulInto2(mats, mo, mats, part.parent * 12, mL);
+      }
+    }
+
+    // ---- held-item hand pose (ItemInHandLayer.translateToHand) --------------
+    if (captureHand) {
+      const arm = model.byName.get('right_arm');
+      this.handCaptured = arm !== undefined;
+      if (arm !== undefined) {
+        const part = model.parts[arm];
+        const p = poses[arm];
+        // SkeletonModel.translateToHand shifts the arm pivot +1 texel along model X.
+        poseMatrix(
+          mL,
+          part.ox + p.x / 16 + (model.handOffsetX ?? 0) / 16, part.oy + p.y / 16, part.oz + p.z / 16,
+          part.rx + p.rx, part.ry + p.ry, part.rz + p.rz,
+        );
+        if (part.parent < 0) mulInto(this.handMatrix, 0, mE, mL);
+        else mulInto2(this.handMatrix, 0, mats, part.parent * 12, mL);
       }
     }
 

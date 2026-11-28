@@ -23,7 +23,7 @@
 
 import { GlProgram, createTexture2D, loadImage } from '../gl/Gl.js';
 import { ENTITY_VERT, ENTITY_FRAG, SHADOW_VERT, SHADOW_FRAG } from './EntityShaders.js';
-import { EntityBatch, EntityRenderer, FLOATS_PER_VERTEX } from './EntityRenderer.js';
+import { EntityBatch, EntityRenderer, FLOATS_PER_VERTEX, stackId } from './EntityRenderer.js';
 import { MobRenderer } from './MobRenderer.js';
 import { MinecartRenderer } from './MinecartRenderer.js';
 import { BoatRenderer } from './BoatRenderer.js';
@@ -38,6 +38,7 @@ import { computeFog, argbFromRgb } from '../environment/FogState.js';
 import type { SkyState } from '../../EnvironmentLighting.js';
 import type { Entity } from '../../../vanilla/world/entity/Entity.js';
 import type { WorldItemRenderer, WorldItemFog } from './WorldItemRenderer.js';
+import type { HeldItemRenderer } from './HeldItemRenderer.js';
 
 export interface EntityCamera { x: number; y: number; z: number; }
 
@@ -84,6 +85,12 @@ export class EntityRenderDispatcher {
 
   /** Dropped block items drawn with their 3D block models (set by Game after init). */
   private worldItems: WorldItemRenderer | null = null;
+
+  /** Mob held items drawn from the real item model (ItemInHandLayer). */
+  private heldItems: HeldItemRenderer | null = null;
+  private readonly heldEntities: Entity[] = [];
+  private heldMatrices = new Float64Array(12 * 32);
+  private heldCount = 0;
   private readonly worldItemFog: WorldItemFog = {
     color: [1, 1, 1], envStart: 0, envEnd: 1024, renderStart: 128, renderEnd: 192,
   };
@@ -182,6 +189,31 @@ export class EntityRenderDispatcher {
 
   /** True when this entity type has a renderer (types without one would spawn invisible). */
   canRender(typeName: string): boolean { return this.renderers.has(typeName); }
+
+  /** Wires the world-space held-item pass (ItemInHandLayer: real item model in the hand). */
+  setHeldItems(items: HeldItemRenderer): void { this.heldItems = items; }
+
+  /**
+   * ItemInHandLayer: remembers the right-arm pose of a mob whose main hand holds an
+   * item (the body append captured it), so the held-item pass can draw the real item
+   * model after the batched entity pass.
+   */
+  private collectHeldItem(e: Entity, renderer: EntityRenderer<Entity>): void {
+    if (this.heldItems === null || !renderer.handCaptured) return;
+    const main = (e as unknown as {
+      getMainHandItem?: () => { id?: string; item?: { namespacedId?: string } | null } | null;
+    }).getMainHandItem?.();
+    if (stackId(main) === '') return;
+    if (this.heldCount === this.heldEntities.length) this.heldEntities.length = this.heldCount + 32;
+    if ((this.heldCount + 1) * 12 > this.heldMatrices.length) {
+      const grown = new Float64Array(this.heldMatrices.length * 2);
+      grown.set(this.heldMatrices);
+      this.heldMatrices = grown;
+    }
+    this.heldEntities[this.heldCount] = e;
+    this.heldMatrices.set(renderer.handMatrix, this.heldCount * 12);
+    this.heldCount++;
+  }
 
   /** Supplies the GUI's baked item-icon atlas; dropped items then draw real icons. */
   setItemIconAtlas(atlas: ItemIconSource): void {
@@ -439,6 +471,7 @@ export class EntityRenderDispatcher {
   render(entities: Iterable<Entity>, viewProj: Float32Array, camera: EntityCamera, partialTick: number): void {
     const gl = this.gl;
     this.batch.reset();
+    this.heldCount = 0;
     this.syncItemIconTexture();
     const maxDist2 = this.renderDistance * this.renderDistance;
 
@@ -451,6 +484,7 @@ export class EntityRenderDispatcher {
       const texId = this.texIdByKey.get(renderer.getTextureKey(e));
       if (texId === undefined || !this.textures[texId]) continue;
       renderer.append(e, this.batch, texId, partialTick);
+      this.collectHeldItem(e, renderer);
       // Extra render layers (e.g. SheepRenderer's tinted wool over the skin).
       const layers = renderer.getLayers(e);
       for (let i = 0; i < layers.length; i++) {
@@ -513,8 +547,17 @@ export class EntityRenderDispatcher {
       gl.bindVertexArray(null);
     }
 
-    // Dropped block items: real 3D models in the same world space, right after the
-    // batched entity pass (vanilla submit order: entity models, then shadows).
+    // Mob held items: the real item model (ItemInHandLayer), drawn right after the
+    // batched entity pass because it needs the arm matrices captured during it.
+    if (this.heldItems !== null && this.heldCount > 0) {
+      this.heldItems.render(
+        this.heldEntities, this.heldMatrices, this.heldCount,
+        viewProj, camera, partialTick, this.worldItemFog, this.renderDistance,
+      );
+    }
+
+    // Dropped block items: real 3D models in the same world space (vanilla submit order:
+    // entity models, then item entities, then shadows).
     this.worldItems?.render(entities, viewProj, camera, partialTick, this.worldItemFog, this.renderDistance);
 
     // vanilla draws entity shadows right after the models (ShadowFeatureRenderer)

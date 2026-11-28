@@ -45,6 +45,10 @@ interface LivingLike {
   isAggressive?: () => boolean;
   getMainHandItem?: () => { id: string; count: number } | null;
   swell?: number;
+  /** LivingEntity.isSleeping(): the body is drawn lying on a bed. */
+  sleeping?: boolean;
+  /** Bed head yaw in radians (Villager.sleepYaw). */
+  sleepYaw?: number;
 }
 
 const DEG = Math.PI / 180;
@@ -106,6 +110,7 @@ const ROOT: M34 = new Float64Array([
 ]);
 
 const mT: M34 = new Float64Array(12);
+const mT2: M34 = new Float64Array(12);
 const mRy: M34 = new Float64Array(12);
 const mRz: M34 = new Float64Array(12);
 const mRx: M34 = new Float64Array(12);
@@ -297,6 +302,23 @@ export abstract class EntityRenderer<T extends Entity = Entity> {
     // T(pos) * S(scale) * RY(180 - bodyRot) * RX(pitch) * RZ(death) * ROOT
     translation(mT, rx, ry + this.getRenderYOffset(e, partialTick), rz);
     scaleMat(mS, mExtra[0] * entityScale, mExtra[1] * entityScale, mExtra[2] * entityScale);
+
+    const le = e as unknown as LivingLike;
+    if (le.sleeping === true) {
+      // LivingEntityRenderer.setupRotations (Pose.SLEEPING): the standing body is
+      // laid along the bed. RX(-90) turns the model's +Y into +Z, RY(sleepYaw)
+      // aims it at the pillow, and T(0,-h/2,0) centres the body on the bed.
+      rotY(mRy, le.sleepYaw ?? 0);
+      rotX(mRx, -Math.PI / 2);
+      translation(mT2, 0, -e.getHeight() / 2, 0);
+      mul(mA, mT, mS);
+      mul(mB, mA, mRy);
+      mul(mA, mB, mRx);
+      mul(mB, mA, mT2);
+      mul(out, mB, ROOT);
+      return;
+    }
+
     rotY(mRy, (180 - bodyRot) * DEG);
     rotZ(mRz, deathDeg * DEG);
     rotX(mRx, this.getRotX(e));

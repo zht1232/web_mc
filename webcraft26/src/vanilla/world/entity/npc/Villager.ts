@@ -13,6 +13,12 @@
 // two breeding-ready villagers pair through the shared BreedGoal, consume 12
 // points each and spawn a baby with the vanilla biome/50-25-25 type roll. The
 // vanilla vacant-bed requirement is skipped (the port has no bed POI owner).
+//
+// Sleep schedule: the vanilla brain's Sleep activity is simplified to a goal
+// that claims a nearby bed at sunset (time 12000..24000), walks to it and lies
+// down. Villagers wake at sunrise, when the bed is destroyed or when hurt. The
+// renderer draws the sleeping pose (EntityRenderer rootMatrix). `lastSleptGameTime`
+// feeds the simplified village golem spawn in Game.tickVillageGolemSpawn.
 
 import { Mob } from '../Mob.js';
 import { FloatGoal } from '../ai/goal/FloatGoal.js';
@@ -21,8 +27,10 @@ import { RandomStrollGoal } from '../ai/goal/RandomStrollGoal.js';
 import { LookAtPlayerGoal } from '../ai/goal/LookAtPlayerGoal.js';
 import { RandomLookAroundGoal } from '../ai/goal/RandomLookAroundGoal.js';
 import { FarmerHarvestGoal } from '../ai/goal/FarmerHarvestGoal.js';
+import { VillagerSleepGoal } from '../ai/goal/VillagerSleepGoal.js';
 import { ItemEntity } from '../item/ItemEntity.js';
 import { entityType } from '../EntityType.js';
+import type { Targetable } from '../Entity.js';
 import type { ClientLevel } from '../../level/ClientLevel.js';
 import type { ItemRegistry } from '../../item/Item.js';
 import type { ItemStack } from '../../item/ItemStack.js';
@@ -79,10 +87,27 @@ const WORKSTATION_PROFESSION: Readonly<Record<string, string>> = {
 const JOB_SCAN_RADIUS = 16;
 const JOB_SCAN_INTERVAL = 40;
 
+/** Villager Sleep activity: beds are claimed from a 32-block POI-style scan. */
+const BED_SCAN_RADIUS = 32;
+const BED_SUFFIX = '_bed';
+/** BedBlock.FACING -> unit vector toward the head (pillow) half. */
+const BED_FACING: Readonly<Record<string, readonly [number, number]>> = {
+  north: [0, -1], south: [0, 1], west: [-1, 0], east: [1, 0],
+};
+
 interface JobSite { x: number; y: number; z: number; profession: string }
+
+/** A claimed bed: head block coordinates + head direction. */
+export interface VillagerBed {
+  hx: number; hy: number; hz: number;
+  fx: number; fz: number;
+}
 
 /** One villager per workstation, like the vanilla POI owner. */
 const CLAIMED_SITES = new Map<string, Villager>();
+
+/** One villager per bed, keyed by the head block like the vanilla POI owner. */
+const CLAIMED_BEDS = new Map<string, Villager>();
 
 function siteKey(x: number, y: number, z: number): string {
   return `${x},${y},${z}`;
@@ -125,6 +150,16 @@ export class Villager extends Mob implements Merchant {
   private nextFarmTick = 0;
   private typeFinalized = false;
 
+  // ---- sleep (brain Sleep activity) ---------------------------------------
+  /** True while lying in a bed; the renderer draws the sleeping pose. */
+  sleeping = false;
+  /** Claimed bed (kept while walking to it and while asleep). */
+  bed: VillagerBed | null = null;
+  /** Render yaw (radians) of the lying body, aligned with the bed's head. */
+  sleepYaw = 0;
+  /** level.gameTime of the last time this villager fell asleep (golem memory). */
+  lastSleptGameTime = -1;
+
   constructor(level: ClientLevel) {
     super(entityType('villager'), level);
     this.speed = 0.5;
@@ -133,6 +168,7 @@ export class Villager extends Mob implements Merchant {
   }
 
   protected registerGoals(): void {
+    this.goalSelector.addGoal(0, new VillagerSleepGoal(this));
     this.goalSelector.addGoal(0, new FloatGoal(this));
     this.goalSelector.addGoal(1, new BreedGoal(this, 0.5));
     this.goalSelector.addGoal(2, new FarmerHarvestGoal(this, 0.5));
@@ -196,6 +232,137 @@ export class Villager extends Mob implements Merchant {
     this.world?.onAnimalLove?.(this);
     this.world?.onAnimalLove?.(partner);
     this.world?.onAnimalBred?.(this);
+  }
+
+  // ---- sleep schedule (Villager brain Sleep activity) ---------------------
+
+  /** Sleep activity window: lie down at sunset (12000) and wake at sunrise (0). */
+  isNight(): boolean {
+    const t = ((this.level.time % 24000) + 24000) % 24000;
+    return t >= 12000;
+  }
+
+  /** True while the claimed bed still exists (head or foot half). */
+  hasBed(): boolean {
+    const bed = this.bed;
+    if (!bed) return false;
+    const mc = this.level.mc;
+    if (mc.blockOf(this.level.getBlockState(bed.hx, bed.hy, bed.hz)).name.endsWith(BED_SUFFIX)) return true;
+    const fx = bed.hx - bed.fx, fz = bed.hz - bed.fz;
+    return mc.blockOf(this.level.getBlockState(fx, bed.hy, fz)).name.endsWith(BED_SUFFIX);
+  }
+
+  /** True while the claim map still points this bed at this villager. */
+  ownsBed(): boolean {
+    const bed = this.bed;
+    return !!bed && CLAIMED_BEDS.get(siteKey(bed.hx, bed.hy, bed.hz)) === this;
+  }
+
+  /** True when the bed block still exists and its claim is free (or ours). */
+  canClaimBed(bed: VillagerBed): boolean {
+    const owner = CLAIMED_BEDS.get(siteKey(bed.hx, bed.hy, bed.hz));
+    if (owner && owner !== this && !owner.isRemoved() && !owner.dead) return false;
+    const mc = this.level.mc;
+    const head = this.level.getBlockState(bed.hx, bed.hy, bed.hz);
+    if (head !== 0 && mc.blockOf(head).name.endsWith(BED_SUFFIX)) return true;
+    const foot = this.level.getBlockState(bed.hx - bed.fx, bed.hy, bed.hz - bed.fz);
+    return foot !== 0 && mc.blockOf(foot).name.endsWith(BED_SUFFIX);
+  }
+
+  /**
+   * Finds the nearest unclaimed bed within 32 blocks. Bed blocks come in
+   * head/foot pairs; the head block is canonical so two villagers cannot claim
+   * the same bed from opposite halves.
+   */
+  findAvailableBed(): VillagerBed | null {
+    const mc = this.level.mc;
+    const ox = Math.floor(this.x), oy = Math.floor(this.y), oz = Math.floor(this.z);
+    let best: VillagerBed | null = null;
+    let bestD = Infinity;
+    for (let dy = -4; dy <= 4; dy++) {
+      const y = oy + dy;
+      for (let dz = -BED_SCAN_RADIUS; dz <= BED_SCAN_RADIUS; dz++) {
+        for (let dx = -BED_SCAN_RADIUS; dx <= BED_SCAN_RADIUS; dx++) {
+          const x = ox + dx, z = oz + dz;
+          const state = this.level.getBlockState(x, y, z);
+          if (state === 0) continue;
+          if (!mc.blockOf(state).name.endsWith(BED_SUFFIX)) continue;
+          const [fx, fz] = BED_FACING[String(mc.getProp(state, 'facing') ?? 'north')] ?? BED_FACING.north;
+          const isHead = String(mc.getProp(state, 'part') ?? 'foot') === 'head';
+          if (!isHead) {
+            // A foot half only counts when its head block is really there.
+            const headState = this.level.getBlockState(x + fx, y, z + fz);
+            if (headState === 0 || !mc.blockOf(headState).name.endsWith(BED_SUFFIX)) continue;
+          }
+          const hx = isHead ? x : x + fx;
+          const hz = isHead ? z : z + fz;
+          const owner = CLAIMED_BEDS.get(siteKey(hx, y, hz));
+          if (owner && owner !== this && !owner.isRemoved() && !owner.dead) continue;
+          const d = this.distanceToSqr(x + 0.5, y + 0.5, z + 0.5);
+          if (d < bestD) { bestD = d; best = { hx, hy: y, hz, fx, fz }; }
+        }
+      }
+    }
+    return best;
+  }
+
+  claimBed(bed: VillagerBed): void {
+    this.releaseBed();
+    CLAIMED_BEDS.set(siteKey(bed.hx, bed.hy, bed.hz), this);
+    this.bed = bed;
+  }
+
+  releaseBed(): void {
+    const bed = this.bed;
+    if (!bed) return;
+    const key = siteKey(bed.hx, bed.hy, bed.hz);
+    if (CLAIMED_BEDS.get(key) === this) CLAIMED_BEDS.delete(key);
+    this.bed = null;
+  }
+
+  /**
+   * SleepInBed: lie down on the claimed bed. The entity moves to the centre of
+   * the two-block bed, gravity is disabled and the renderer lays the body along
+   * the bed's head direction.
+   */
+  startSleeping(bed: VillagerBed): void {
+    this.claimBed(bed);
+    this.sleeping = true;
+    this.sleepYaw = Math.atan2(bed.fx, bed.fz);
+    const footX = bed.hx - bed.fx, footZ = bed.hz - bed.fz;
+    this.x = footX + 0.5 + bed.fx * 0.5;
+    this.z = footZ + 0.5 + bed.fz * 0.5;
+    this.y = bed.hy + 0.8;
+    this.xo = this.x; this.yo = this.y; this.zo = this.z;
+    this.vx = 0; this.vy = 0; this.vz = 0;
+    this.yaw = this.sleepYaw * (180 / Math.PI);
+    this.yBodyRot = this.yaw;
+    this.yHeadRot = this.yaw;
+    this.noGravity = true;
+    this.moveControl.reset();
+    this.navigation.stop();
+    this.lastSleptGameTime = this.level.gameTime;
+  }
+
+  /** Sleep.wakeUp: stand back up, restore gravity and release the bed. */
+  wakeUp(): void {
+    if (!this.sleeping) { this.releaseBed(); return; }
+    this.sleeping = false;
+    this.noGravity = false;
+    this.releaseBed();
+    this.moveControl.reset();
+    this.navigation.stop();
+  }
+
+  private tickSleep(): void {
+    if (!this.sleeping) return;
+    if (!this.isNight() || !this.hasBed()) this.wakeUp();
+  }
+
+  /** LivingEntity wakes sleeping villagers when they take damage. */
+  override hurt(amount: number, attacker: Targetable | null): void {
+    if (this.sleeping) this.wakeUp();
+    super.hurt(amount, attacker);
   }
 
   /** Finds the nearest mature crop within `radius` blocks (HarvestFarmland.validPos). */
@@ -313,9 +480,9 @@ export class Villager extends Mob implements Merchant {
     }
   }
 
-  /** AbstractVillager: a trading villager holds still until the screen closes. */
+  /** AbstractVillager: a trading or sleeping villager holds still. */
   override serverAiStep(): void {
-    if (this.tradingPlayer != null) {
+    if (this.tradingPlayer != null || this.sleeping) {
       this.moveControl.reset();
       this.navigation.stop();
       this.setTarget(null);
@@ -328,6 +495,9 @@ export class Villager extends Mob implements Merchant {
     super.tick();
     if (this.dead) {
       this.releaseJobSite();
+      this.releaseBed();
+      this.sleeping = false;
+      this.noGravity = false;
       return;
     }
     if (!this.typeFinalized) {
@@ -339,6 +509,7 @@ export class Villager extends Mob implements Merchant {
       this.levelUpTimer--;
       if (this.levelUpTimer === 0) this.levelUp();
     }
+    this.tickSleep();
     this.tickJobSite();
     this.tickRestock();
     this.tickFoodPickup();

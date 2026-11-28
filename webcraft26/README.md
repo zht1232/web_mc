@@ -115,6 +115,7 @@ node scripts/test-boat.mjs            # boats/rafts: buoyancy, paddling, placeme
 node scripts/test-entity-save.mjs     # chunk entities: animals, carts, boats, drops and XP survive a reload (browser)
 node scripts/test-golem-villager.mjs  # iron golem pattern/combat/cracks + villager food, breeding and baby model (browser)
 node scripts/test-village-life.mjs    # farmer harvesting/replanting, bread baking and villager food sharing (browser)
+node scripts/test-villager-sleep.mjs  # villager day/night sleep schedule, bed pose and village golem spawn (browser)
 node scripts/test-mob-equipment.mjs   # monster armor/weapon population and rare player-kill loot (browser)
 node scripts/test-explosion.mjs       # vanilla explosion rays, blast resistance, drop decay and TNT owner (browser)
 node scripts/test-containers.mjs      # container click rules

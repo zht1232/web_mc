@@ -56,6 +56,7 @@ node scripts/test-boat.mjs                    # 船/筏：浮力/划桨/转向/�
 node scripts/test-entity-save.mjs             # 区块实体存档：野生生物/矿车/船/掉落物/经验球 保存+重载 11 项
 node scripts/test-golem-villager.mjs          # 铁傀儡 + 村民繁殖：图案生成/裂纹/治疗/战斗/食物拾取/宝宝 22 项
 node scripts/test-village-life.mjs            # 村民农业：食物分享/收割补种/面包烘焙/存档 8 项
+node scripts/test-villager-sleep.mjs          # 村民睡眠/昼夜作息 + 村庄铁傀儡生成 13 项
 node scripts/test-mob-equipment.mjs           # 怪物装备与稀有掉落：护甲分布/武器/骷髅头/铜锭 13 项
 node scripts/test-explosion.mjs               # 爆炸：射线弹坑/抗性/掉落衰减/TNT 归属 6 项
 node scripts/test-icons.mjs                   # 物品图标
@@ -99,7 +100,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 | Q 丢弃物品 | ✅ | Q 丢 1 个 / Ctrl+Q 丢整组，40 tick 拾取延迟，`dropped`/`drop` 统计 |
 | 繁殖 / 喂养 / 幼年 | ✅ | 牛/猪/羊/鸡/兔/猫/豹猫/蘑菇牛：食物标签、600 tick 恋爱、6000 tick 冷却、幼年 0.5 缩放与成长、繁殖 XP、幼年无掉落；幼年专用几何体未接 |
 | 驯服（狼/猫） | ✅ | 骨头（狼）/生鳕鱼或鲑鱼（猫）1/3 驯服并消耗、`owner`、空白点击坐下/站起、坐下时停止 AI、驯服后不再以玩家为目标、`FollowOwnerGoal` 跟随并在 12 格外交互传送；驯服宠物随世界存档持久化；项圈渲染未接 |
-| 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化。2026-11-28：食物点（面包 4 / 胡萝卜·马铃薯·甜菜根 1）拾取、12 点繁殖门槛、BreedGoal 配对、50/25/25 生物群系皮肤遗传、`BabyVillagerModel` + 宝宝贴图与 0.49×0.98 碰撞箱、年龄/食物点存档；`test-villager-trade` 14 项 + `test-golem-villager`。2026-11-28：农民 `HarvestFarmland` 目标（8 格内成熟作物→走近→收割并补种，小麦种子 0–3、胡萝卜/马铃薯/甜菜根 1–4/1–3）、3 小麦→1 面包（4 食物点）、`TradeWithVillager` 食物分享（≥24 点分给 4 格内 <12 点的村民）、小麦/种子库存存档；`test-village-life` |
+| 村民 | ✅ | 2026-11-22：13 种职业工作站点认领（composter→farmer 等，单站点单村民）、职业等级/经验（0/10/70/150/250）、26.2 `trade_set → villager_trade` 数据生成的报价与补货、7 种生物群系皮肤 + 职业/等级叠加层、交易统计 `traded_with_villager`、`adventure/trade` 进度；职业/等级/报价/工作站点随世界存档持久化。2026-11-28：食物点（面包 4 / 胡萝卜·马铃薯·甜菜根 1）拾取、12 点繁殖门槛、BreedGoal 配对、50/25/25 生物群系皮肤遗传、`BabyVillagerModel` + 宝宝贴图与 0.49×0.98 碰撞箱、年龄/食物点存档；`test-villager-trade` 14 项 + `test-golem-villager`。2026-11-28：农民 `HarvestFarmland` 目标（8 格内成熟作物→走近→收割并补种，小麦种子 0–3、胡萝卜/马铃薯/甜菜根 1–4/1–3）、3 小麦→1 面包（4 食物点）、`TradeWithVillager` 食物分享（≥24 点分给 4 格内 <12 点的村民）、小麦/种子库存存档；`test-village-life`。2026-11-28：昼夜作息——time ≥ 12000 时 `VillagerSleepGoal` 认领 32 格内空闲床（头/脚统一为床头键、一床一人），走近后躺下（`startSleeping`，关重力、`EntityRenderer` 躺姿），日出/床被破坏/受击醒来；最近 24000 tick 内睡过的 5 名村民触发村庄铁傀儡（非玩家创建）并清空睡眠记忆；`test-villager-sleep` |
 | 矿车 | ✅ | 2026-11-22：普通/箱子矿车实体与模型；`NewMinecartBehavior` 轨道跟随（直线/拐弯/坡道/摩擦/动力轨加速/未供能动力轨刹停）、检测铁轨占用供电、物品放置、右键乘坐与潜行下车、箱子矿车 27 格 GUI、生存破坏掉落；`test-minecart` 11 项 |
 | 船 / 筏 | ✅ | 2026-11-23：10 种木材 × 普通/箱船（含竹筏）实体与模型；`AbstractBoat` 状态扫描/浮力/划桨/转向/陆地摩擦、水面吸附、物品放置（方块面或流体表面）、右键乘坐与潜行下船、箱子船 27 格 GUI（潜行右键）、`VehicleEntity` 伤害累计 40 与掉落；`test-boat` 16 项（含受控场景像素差分） |
 | 区块实体存档 | ✅ | 2026-11-23：区块 NBT `Entities` 保存野生生物（类型/位置/速度/生命/年龄/羊毛色）、矿车与船（含箱内物品）、掉落物（物品与组件）、经验球；读档按区块激活生成，不重复跑区块初始生物生成；已保存区块卸载后从保留的 NBT 字节恢复（方块与实体一起），不再按种子重生成；区块离开保留带前写回实体；村民/已驯服宠物仍走世界级存档；`test-entity-save` 11 项 |
@@ -167,7 +168,7 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
 4. ~~羊繁殖/幼年~~ ✅ 已完成通用动物繁殖（见实体表）；~~狼/猫驯服~~ ✅ 已完成驯服/坐下/跟随与宠物存档；~~野生动物实体存档~~ ✅ 已完成区块级实体存档（见「区块实体持久化」）；剩余：幼年专用模型、项圈渲染、大型世界的数据库按需区块加载。
 5. ~~玩家弓/箭、桶、TNT~~ ✅ 已完成；红石信号点燃 TNT 已接；~~TNT 归属与爆炸掉落衰减~~ ✅ 已按 `ServerExplosion` 射线算法 + `ApplyExplosionDecay` + `PrimedTnt.owner` 重写；剩余：药箭、爆炸可见度（`getSeenPercent` 遮挡）、比较器/活塞等红石长尾。
 6. ~~统计界面~~ ✅ 已完成 General/Items/Mobs 三页与计数器；~~进度（Advancements）界面与基础触发器~~ ✅ 已完成列表界面 + 8 类触发器（含 `villager_trade` 与 Y 坐标谓词）；剩余：树状布局/连接线、完整 criteria 条件（生物群系/结构/物品谓词/count/components）、配方解锁联动。
-7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；~~村民繁殖与铁傀儡~~ ✅ 已加入食物点繁殖/宝宝模型与南瓜图案生成的铁傀儡；~~村民农业~~ ✅ 农民收割/补种/烤面包 + 食物分享；剩余：地图交易（需已填充地图/结构定位）、流浪商人、袭击、村民睡眠/工作日程（昼夜作息与床）、村庄八卦生成铁傀儡。
+7. ~~村民交易~~ ✅ 已完成职业工作站点、等级/经验、26.2 报价数据、补货、交易界面与存档；~~村民繁殖与铁傀儡~~ ✅ 已加入食物点繁殖/宝宝模型与南瓜图案生成的铁傀儡；~~村民农业~~ ✅ 农民收割/补种/烤面包 + 食物分享；~~村民睡眠/工作日程（昼夜作息与床）~~ ✅ 已加入日落入睡/日出醒来、床认领与躺姿、受击/床毁唤醒，~~村庄八卦生成铁傀儡~~ ✅ 简化为 5 名最近 24000 tick 内睡过的村民生成（无 gossip 系统）；剩余：工作/聚集时段细化、地图交易（需已填充地图/结构定位）、流浪商人、袭击。
 8. ~~夜间怪物装备/掉落表与自然生成权重对齐~~ ✅ 已完成原版护甲分布/武器/副手与玩家击杀稀有掉落（僵尸铁锭·胡萝卜·马铃薯、溺尸铜锭、凋灵骷髅头）；自然生成权重本就来自 vanilla `worldgen.json` 的 biome spawners。
 
 **P2（长尾一致性）**
@@ -552,3 +553,26 @@ node scripts/shot-mobs.mjs                    # 生物截图（day/night/hurt/de
   铁傀儡打到 72.6 且 `lastHurtBy` 为玩家）；回归 `test-redstone` 28/28、`smoke` 19/19。
 - 剩余：`getSeenPercent` 方块遮挡对伤害/击退的削减、爆炸掉落堆叠合并、TNT 矿车、
   爆炸击退对玩家的 `hurtMarked` 处理。
+
+### 村民睡眠与村庄铁傀儡（2026-11-28）
+
+- 睡眠日程：新增 `VillagerSleepGoal`——time 12000–24000（`Villager.isNight`）时在 32 格内
+  扫描 `*_bed`，把 head/foot 两半统一成床头坐标并登记 `CLAIMED_BEDS`（一床一人），
+  以 0.5 速度走到两格床中心，距离 <1.5 后 `Villager.startSleeping`：位置吸附到两格床中心、
+  关闭重力、清空速度、停止 AI，并记录 `lastSleptGameTime`。
+- 醒来：日出（time 回到 0–12000）、床方块被破坏或受到伤害时 `wakeUp`，恢复重力并释放
+  床的认领；睡眠期间 `serverAiStep` 冻结移动与目标。
+- 躺姿：`EntityRenderer.rootMatrix` 增加睡眠分支
+  `T(pos)·S·RY(sleepYaw)·RX(-90°)·T(0,-h/2,0)·ROOT`，身体沿床头方向水平躺在两格床上；
+  `Villager.sleepYaw` 由床的 `facing` 计算。
+- 村庄铁傀儡：`Game.tickVillageGolemSpawn` 每 20 tick 统计 `lastSleptGameTime` 在最近
+  24000 tick 内的村民；≥5 人且 32 格内没有存活铁傀儡时，在村民质心 ±10 格随机尝试
+  10 个 `getHeight+1` 的 3 格空气落点，生成非 `playerCreated` 的铁傀儡并清空这些村民
+  的睡眠记忆（下一次需要重新睡一觉）。
+- 验证：`tsc` 0；`npm run build`；`node scripts/test-villager-sleep.mjs` **13/13**
+  （白天站立为高瘦剪影、夜里走到床边入睡且 y=床+0.8/无重力、躺姿像素包围盒横向
+  174×66、单床只容一人、日出唤醒并释放床、5 个睡眠记忆村民生成非玩家铁傀儡且
+  记忆清零）；回归 `test-village-life` 8/8、`test-golem-villager` 22/22、
+  `test-villager-trade` 14/14、`smoke` 19/19。
+- 剩余：工作/聚集时段（白天工作站点聚集、钟声会议）、袭击/流浪商人、床的 `occupied`
+  状态与 POI 全量、睡眠状态跨存档（当前读档后夜里会重新入睡）。

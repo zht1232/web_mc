@@ -3300,6 +3300,53 @@ export class Game {
     if (golem instanceof IronGolem) golem.playerCreated = true;
   }
 
+  private nextVillageGolemCheck = 0;
+
+  /**
+   * Simplified village golem spawn (vanilla: villagers' sleep gossip). Five
+   * villagers that slept within the last 24000 ticks summon one iron golem on a
+   * free three-block column within 10 blocks of their average position. The
+   * sleep memory is cleared after a successful spawn, so a new golem needs a
+   * fresh night's sleep.
+   */
+  private tickVillageGolemSpawn(): void {
+    if (this.tickCount < this.nextVillageGolemCheck) return;
+    this.nextVillageGolemCheck = this.tickCount + 20;
+    const gameTime = this.level.gameTime;
+    let sleepers = 0;
+    let cx = 0, cz = 0;
+    for (const e of this.entityManager.getEntities()) {
+      if (!(e instanceof Villager) || e.isRemoved() || e.dead) continue;
+      if (e.lastSleptGameTime < 0 || gameTime - e.lastSleptGameTime > 24000) continue;
+      sleepers++;
+      cx += e.x; cz += e.z;
+    }
+    if (sleepers < 5) return;
+    cx /= sleepers; cz /= sleepers;
+    // One village protector at a time.
+    for (const e of this.entityManager.getEntities()) {
+      if (!(e instanceof IronGolem) || e.isRemoved()) continue;
+      if ((e.x - cx) ** 2 + (e.z - cz) ** 2 <= 32 * 32) return;
+    }
+    const r = this.entityManager.random;
+    for (let i = 0; i < 10; i++) {
+      const x = Math.floor(cx) + r.nextInt(21) - 10;
+      const z = Math.floor(cz) + r.nextInt(21) - 10;
+      const y = this.level.getHeight(x, z) + 1;
+      if (y <= this.level.minY || y + 2 >= this.level.minY + this.level.height) continue;
+      if (this.level.getBlockState(x, y, z) !== 0) continue;
+      if (this.level.getBlockState(x, y + 1, z) !== 0) continue;
+      if (this.level.getBlockState(x, y + 2, z) !== 0) continue;
+      if (this.level.getBlockState(x, y - 1, z) === 0) continue;
+      this.entityManager.spawn('iron_golem', x + 0.5, y, z + 0.5);
+      for (const e of this.entityManager.getEntities()) {
+        if (!(e instanceof Villager) || e.isRemoved() || e.dead) continue;
+        if (e.lastSleptGameTime >= 0 && gameTime - e.lastSleptGameTime <= 24000) e.lastSleptGameTime = -1;
+      }
+      return;
+    }
+  }
+
   /** EggItem.use: throw a ThrownEgg toward the crosshair. */
   private throwEgg(held: ItemStack): void {
     const dir = this.lookVector();
@@ -4285,6 +4332,7 @@ export class Game {
     this.redstone.tick();
     this.tickStatistics(moved.jumped);
     this.tickSleep();
+    this.tickVillageGolemSpawn();
     this.survival.tickEnvironment(inLava, this.player.inWater, this.playerFireTicks > 0);
     // Container GUIs: open furnace menus cook one tick and mirror their progress into the screen.
     this.tickActiveMenu();
